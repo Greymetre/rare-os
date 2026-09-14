@@ -1,0 +1,27 @@
+name: Foundation checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: node scripts/setup.mjs
+      - run: docker compose up -d --build
+      - run: npx playwright install chrome
+      - run: npm run test:e2e
+      - run: docker compose run --rm --no-deps seed node scripts/test-db.mjs
+      - run: npm run backup:verify
+      - if: always()
+        run: docker compose down

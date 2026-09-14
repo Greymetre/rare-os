@@ -1,0 +1,131 @@
+name: rare-os
+x-app-env: &app-env
+  NODE_ENV: production
+  APP_URL: ${APP_URL}
+  AUTH_URL: ${AUTH_URL}
+  AUTH_INTERNAL_URL: http://keycloak:8080
+  DATABASE_URL: postgres://rare_app:${APP_DB_PASSWORD}@db:5432/rare_os
+  REDIS_URL: redis://redis:6379
+  SESSION_SECRET: ${SESSION_SECRET}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+  IDENTITY_CLIENT_SECRET: ${IDENTITY_CLIENT_SECRET:?Run setup or add IDENTITY_CLIENT_SECRET}
+  EMAIL_ENABLED: 'true'
+  LOCAL_EMAIL: 'true'
+  COOKIE_SECURE: 'false'
+x-logging: &logging
+  driver: json-file
+  options: { max-size: '10m', max-file: '3' }
+services:
+  mailpit:
+    image: axllent/mailpit:v1.27.8
+    ports: ['127.0.0.1:4312:8025']
+    restart: unless-stopped
+    logging: *logging
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rare_owner
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: rare_os
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U rare_owner -d rare_os']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    logging: *logging
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes', --maxmemory, 256mb, --maxmemory-policy, noeviction]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    logging: *logging
+  migrate:
+    build: { context: ., dockerfile: infra/docker/Dockerfile, target: runtime }
+    command: [node, scripts/migrate.mjs]
+    environment:
+      DATABASE_URL: postgres://rare_owner:${DB_PASSWORD}@db:5432/rare_os
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+    depends_on:
+      db: { condition: service_healthy }
+    logging: *logging
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.3
+    command: [start, --http-enabled=true, --hostname-strict=true]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      KC_DB_USERNAME: rare_keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+      KC_HOSTNAME: ${AUTH_URL}
+      KC_HTTP_ENABLED: 'true'
+      KC_HEALTH_ENABLED: 'true'
+      JAVA_OPTS_KC_HEAP: '-Xms128m -Xmx512m'
+    ports: ['127.0.0.1:4311:8080']
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    logging: *logging
+  seed:
+    build: { context: ., dockerfile: infra/docker/Dockerfile, target: runtime }
+    command: [node, scripts/seed.mjs]
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgres://rare_owner:${DB_PASSWORD}@db:5432/rare_os
+      KC_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD}
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
+      SMTP_FROM: no-reply@rareos.local
+    depends_on:
+      keycloak: { condition: service_started }
+      mailpit: { condition: service_started }
+    logging: *logging
+  api:
+    build: { context: ., dockerfile: infra/docker/Dockerfile, target: runtime }
+    environment: *app-env
+    depends_on:
+      seed: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *logging
+  worker:
+    build: { context: ., dockerfile: infra/docker/Dockerfile, target: runtime }
+    command: [node, apps/workers/dist/main.js]
+    environment: *app-env
+    depends_on:
+      seed: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+    logging: *logging
+  web:
+    build: { context: ., dockerfile: infra/docker/Dockerfile, target: web }
+    ports: ['127.0.0.1:4310:80']
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+    logging: *logging
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,14 @@
+{$APP_DOMAIN} {
+ handle /api/* {
+  reverse_proxy api:4000
+ }
+ handle {
+  reverse_proxy web:80
+ }
+}
+{$AUTH_DOMAIN} {
+ # Keycloak management API remains private; use a controlled SSH tunnel for administration.
+ @management path /admin/* /metrics /health*
+ respond @management 403
+ reverse_proxy keycloak:8080
+}

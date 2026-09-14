@@ -1,0 +1,45 @@
+# Production override: requires real HTTPS APP_URL and AUTH_URL in a separate env file.
+# Validate with: docker compose --env-file .env.production -f compose.yaml -f compose.hostinger.yaml config --quiet
+services:
+  mailpit:
+    profiles: [local-mail]
+    ports: !reset []
+  seed:
+    depends_on:
+      mailpit: !reset null
+    environment:
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      LOCAL_EMAIL: 'false'
+  web:
+    ports: !reset []
+  keycloak:
+    ports: !reset []
+    environment:
+      KC_PROXY_HEADERS: xforwarded
+  api:
+    environment:
+      COOKIE_SECURE: 'true'
+      LOCAL_EMAIL: 'false'
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+  caddy:
+    image: caddy:2-alpine
+    ports: ['80:80', '443:443']
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN without https}
+      AUTH_DOMAIN: ${AUTH_DOMAIN:?Set AUTH_DOMAIN without https}
+    volumes:
+      - ./infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_started }
+    restart: unless-stopped
+volumes:
+  caddy_data:
+  caddy_config:

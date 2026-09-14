@@ -1,0 +1,34 @@
+{
+  "name": "rare-os",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @rare-os/api && npm run build -w @rare-os/workers && npm run build -w @rare-os/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "playwright test",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:seed": "node scripts/seed.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "backup:local": "node scripts/backup-local.mjs",
+    "backup:verify": "node scripts/backup-local.mjs --verify"
+  },
+  "dependencies": {
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.0.0",
+    "prettier": "3.6.2",
+    "typescript": "^5.9.0"
+  },
+  "overrides": {
+    "multer": "2.4.0"
+  }
+}

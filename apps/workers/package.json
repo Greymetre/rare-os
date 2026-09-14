@@ -1,0 +1,18 @@
+{
+  "name": "@rare-os/workers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "bullmq": "6.3.6",
+    "pg": "8.16.3",
+    "redis": "^5.8.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0"
+  }
+}
