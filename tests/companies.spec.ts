@@ -90,6 +90,12 @@ test('SaaS onboarding, company isolation, switching and status', async ({
   let mistakenIdentityId = '';
   let smtpStopped = false;
   let customer: any, second: any;
+  // Check the fresh-seed contract before creating shared memberships. A mismatch must
+  // fail here, rather than time out at company switching and affect later login tests.
+  expect(
+    sql("SELECT code FROM tenants WHERE id='10000000-0000-4000-8000-000000000001'"),
+    'Default workspace must be seeded with the stable RARE company code',
+  ).toBe('RARE');
   await login(page);
   const me = await (await page.request.get('/api/me')).json();
   const call = (path: string, method = 'GET', data?: unknown) =>

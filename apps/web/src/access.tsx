@@ -83,7 +83,9 @@ export function AccessManagement({
   refreshKey: number;
   onChanged: () => void;
 }) {
-  const manage = permissions.includes(kind + '.manage');
+  const canCreate = permissions.includes(kind + '.create');
+  const canEdit = permissions.includes(kind + '.update');
+  const canDelete = permissions.includes(kind + '.delete');
   const [plantUser, setPlantUser] = useState<Account | null>(null);
   const [rows, setRows] = useState<(Role | Account)[]>([]),
     [cursor, setCursor] = useState<string | null>(null),
@@ -212,7 +214,7 @@ export function AccessManagement({
       <section className="panel">
         <div className="panel-heading">
           <h2>{kind === 'roles' ? 'Company roles' : 'Company users'}</h2>
-          {manage && (
+          {canCreate && (
             <button
               className="button primary"
               onClick={() => {
@@ -290,14 +292,14 @@ export function AccessManagement({
                                 className="text-button"
                                 onClick={() => void open(x)}
                                 aria-label={
-                                  (x.is_system || x.is_own || !manage ? 'View' : 'Edit') +
+                                  (x.is_system || x.is_own || !canEdit ? 'View' : 'Edit') +
                                   ' role ' +
                                   x.name
                                 }
                               >
-                                {x.is_system || x.is_own || !manage ? 'View' : 'Edit'}
+                                {x.is_system || x.is_own || !canEdit ? 'View' : 'Edit'}
                               </button>
-                              {manage && !x.is_system && !x.is_own && (
+                              {canDelete && !x.is_system && !x.is_own && (
                                 <button
                                   className="text-button danger"
                                   onClick={() => setRemove(x)}
@@ -347,8 +349,8 @@ export function AccessManagement({
                           ) : null}
                         </td>
                         <td>
-                          {manage && (
-                            <div className="row-actions">
+                          <div className="row-actions">
+                            {canEdit && (
                               <button
                                 className="text-button"
                                 aria-label={'Edit user ' + x.name}
@@ -356,26 +358,28 @@ export function AccessManagement({
                               >
                                 Edit
                               </button>
-                              {permissions.includes('sites.manage') && (
-                                <button
-                                  className="text-button"
-                                  aria-label={'Plant access for ' + x.name}
-                                  onClick={() => setPlantUser(x)}
-                                >
-                                  Plant access
-                                </button>
-                              )}
-                              {x.sync_state !== 'ready' ? (
-                                <button
-                                  className="text-button"
-                                  onClick={() => void action(x, 'retry')}
-                                >
-                                  Retry setup
-                                </button>
-                              ) : (
-                                x.active && (
+                            )}
+                            {permissions.includes('users.assign_plants') && (
+                              <button
+                                className="text-button"
+                                aria-label={'Plant access for ' + x.name}
+                                onClick={() => setPlantUser(x)}
+                              >
+                                Plant access
+                              </button>
+                            )}
+                            {x.sync_state !== 'ready'
+                              ? permissions.includes('users.retry_setup') && (
+                                  <button
+                                    className="text-button"
+                                    onClick={() => void action(x, 'retry')}
+                                  >
+                                    Retry setup
+                                  </button>
+                                )
+                              : x.active && (
                                   <>
-                                    {!x.first_login_at && (
+                                    {!x.first_login_at && permissions.includes('users.invite') && (
                                       <button
                                         className="text-button"
                                         disabled={!settings?.emailEnabled}
@@ -385,19 +389,19 @@ export function AccessManagement({
                                         Send invitation
                                       </button>
                                     )}
-                                    <button
-                                      className="text-button"
-                                      disabled={!settings?.emailEnabled}
-                                      aria-label={'Reset password for ' + x.name}
-                                      onClick={() => void action(x, 'reset-password')}
-                                    >
-                                      Reset password
-                                    </button>
+                                    {permissions.includes('users.reset_password') && (
+                                      <button
+                                        className="text-button"
+                                        disabled={!settings?.emailEnabled}
+                                        aria-label={'Reset password for ' + x.name}
+                                        onClick={() => void action(x, 'reset-password')}
+                                      >
+                                        Reset password
+                                      </button>
+                                    )}
                                   </>
-                                )
-                              )}
-                            </div>
-                          )}
+                                )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -494,7 +498,7 @@ export function AccessManagement({
           csrf={csrf}
           catalog={catalog}
           allowed={permissions}
-          canEdit={manage}
+          canEdit={edit === 'new' ? canCreate : canEdit}
           onClose={() => setEdit(null)}
           onSaved={saved}
         />
@@ -502,6 +506,7 @@ export function AccessManagement({
       {edit && kind === 'users' && (
         <UserForm
           initial={edit as Account | 'new'}
+          permissions={permissions}
           csrf={csrf}
           onClose={() => setEdit(null)}
           onSaved={saved}
@@ -627,12 +632,14 @@ function RoleForm({
   );
 }
 function UserForm({
+  permissions,
   initial,
   csrf,
   onClose,
   onSaved,
 }: {
   initial: Account | 'new';
+  permissions: string[];
   csrf: string;
   onClose: () => void;
   onSaved: (m: string) => void;
@@ -769,7 +776,7 @@ function UserForm({
               required
               value={roleId}
               onChange={(e) => setRoleId(e.target.value)}
-              disabled={busy || roleBusy}
+              disabled={busy || roleBusy || (!!old && !permissions.includes('users.assign_role'))}
             >
               <option value="">{roleBusy ? 'Loading roles…' : 'Select a role'}</option>
               {roles.map((r) => (
@@ -799,7 +806,7 @@ function UserForm({
               Account status
               <select
                 value={active ? 'active' : 'inactive'}
-                disabled={busy}
+                disabled={busy || !permissions.includes('users.change_status')}
                 onChange={(e) => setActive(e.target.value === 'active')}
               >
                 <option value="active">Active</option>

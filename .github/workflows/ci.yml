@@ -26,6 +26,12 @@ jobs:
       - run: npm run test:e2e
       - run: docker compose run --rm --no-deps seed node scripts/test-db.mjs
       - run: npm run backup:verify
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failures
+          path: test-results/
+          retention-days: 7
       - if: always()
         run: docker compose down
 

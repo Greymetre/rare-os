@@ -7,6 +7,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:4310',
     headless: true,
+    actionTimeout: 15000,
     channel: 'chrome',
     trace: 'off',
     screenshot: 'only-on-failure',

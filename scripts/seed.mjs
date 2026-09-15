@@ -177,10 +177,16 @@ await db.connect();
 try {
   await db.query('BEGIN');
   await db.query('SELECT pg_advisory_xact_lock(421110)');
-  await db.query('INSERT INTO tenants(id,name) VALUES($1,$2) ON CONFLICT DO NOTHING', [
+  await db.query('INSERT INTO tenants(id,name,code) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [
     tenant,
     'RARE OS Workspace',
+    'RARE',
   ]);
+  // Fresh databases ran 003_companies before this tenant existed and received a random default code.
+  await db.query(
+    "UPDATE tenants SET code='RARE' WHERE id=$1 AND code ~ '^[0-9A-F]{8}$' AND NOT EXISTS(SELECT 1 FROM tenants WHERE lower(code)='rare')",
+    [tenant],
+  );
   for (const [code, module, description] of permissions)
     await db.query(
       'INSERT INTO permissions(code,module,description) VALUES($1,$2,$3) ON CONFLICT(code) DO UPDATE SET module=excluded.module,description=excluded.description',

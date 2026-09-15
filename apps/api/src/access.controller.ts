@@ -1,3 +1,4 @@
+import { requiredPermissions } from '../../../packages/schema/permissions.mjs';
 import { Controller, Get, Post, Patch, Delete, Req, Param, HttpException } from '@nestjs/common';
 import type { Request } from 'express';
 import type { PoolClient } from 'pg';
@@ -126,18 +127,14 @@ async function chosenPermissions(db: PoolClient, actor: any, value: unknown) {
       'DASHBOARD_REQUIRED',
       'Dashboard access is required so users can enter their workspace.',
     );
-  for (const [action, required] of [
-    ['users.manage', 'users.read'],
-    ['users.manage', 'roles.read'],
-    ['roles.manage', 'roles.read'],
-    ['sites.manage', 'sites.read'],
-  ])
-    if (list.includes(action) && !list.includes(required))
-      fail(
-        400,
-        'DEPENDENCY_REQUIRED',
-        action + ' also requires ' + required + '. Select both permissions.',
-      );
+  for (const [action, dependencies] of Object.entries(requiredPermissions))
+    for (const required of dependencies)
+      if (list.includes(action) && !list.includes(required))
+        fail(
+          400,
+          'DEPENDENCY_REQUIRED',
+          action + ' also requires ' + required + '. Select both permissions.',
+        );
   canGrant(actor, list);
   return list;
 }
@@ -220,50 +217,54 @@ async function provision(tenant: string, userId: string, actor: any) {
   }
 }
 async function email(req: Request, userId: string, invite: boolean) {
-  const saved = await mutate(req, 'users.manage', async (db, actor) => {
-    const user = await account(db, userId);
-    canGrant(actor, (await role(db, user.role_id)).permissions);
-    const shared = (await db.query('SELECT identity_is_shared($1) AS shared', [user.identity_id]))
-      .rows[0].shared;
-    if (shared && !invite)
-      fail(
-        409,
-        'SHARED_LOGIN',
-        'This login is shared across companies. Ask the user to use Forgot password on the sign-in screen.',
+  const saved = await mutate(
+    req,
+    invite ? 'users.invite' : 'users.reset_password',
+    async (db, actor) => {
+      const user = await account(db, userId);
+      canGrant(actor, (await role(db, user.role_id)).permissions);
+      const shared = (await db.query('SELECT identity_is_shared($1) AS shared', [user.identity_id]))
+        .rows[0].shared;
+      if (shared && !invite)
+        fail(
+          409,
+          'SHARED_LOGIN',
+          'This login is shared across companies. Ask the user to use Forgot password on the sign-in screen.',
+        );
+      if (!user.active || user.sync_state !== 'ready')
+        fail(
+          409,
+          'ACCOUNT_NOT_READY',
+          'Activate this user and complete account setup before sending email.',
+        );
+      if (env.EMAIL_ENABLED !== 'true')
+        fail(
+          409,
+          'EMAIL_NOT_CONFIGURED',
+          'Email delivery is not configured. Ask the system administrator to configure SMTP.',
+        );
+      if (user.email_attempt_at && Date.now() - new Date(user.email_attempt_at).getTime() < 60000)
+        fail(
+          429,
+          'EMAIL_COOLDOWN',
+          'An email was requested recently. Wait one minute before sending again.',
+        );
+      await db.query(
+        'UPDATE app_users SET email_attempt_at=now(),auth_version=auth_version+$2 WHERE id=$1',
+        [userId, invite ? 0 : 1],
       );
-    if (!user.active || user.sync_state !== 'ready')
-      fail(
-        409,
-        'ACCOUNT_NOT_READY',
-        'Activate this user and complete account setup before sending email.',
+      await audit(
+        db,
+        actor,
+        invite ? 'user.invite_requested' : 'user.reset_requested',
+        'user',
+        userId,
+        null,
+        { channel: env.LOCAL_EMAIL === 'true' ? 'local-inbox' : 'email' },
       );
-    if (env.EMAIL_ENABLED !== 'true')
-      fail(
-        409,
-        'EMAIL_NOT_CONFIGURED',
-        'Email delivery is not configured. Ask the system administrator to configure SMTP.',
-      );
-    if (user.email_attempt_at && Date.now() - new Date(user.email_attempt_at).getTime() < 60000)
-      fail(
-        429,
-        'EMAIL_COOLDOWN',
-        'An email was requested recently. Wait one minute before sending again.',
-      );
-    await db.query(
-      'UPDATE app_users SET email_attempt_at=now(),auth_version=auth_version+$2 WHERE id=$1',
-      [userId, invite ? 0 : 1],
-    );
-    await audit(
-      db,
-      actor,
-      invite ? 'user.invite_requested' : 'user.reset_requested',
-      'user',
-      userId,
-      null,
-      { channel: env.LOCAL_EMAIL === 'true' ? 'local-inbox' : 'email' },
-    );
-    return { user, actor, shared };
-  });
+      return { user, actor, shared };
+    },
+  );
   try {
     await sendActionEmail(saved.user.identity_id, invite, saved.shared);
     await scoped(saved.actor.tenant_id, async (db) => {
@@ -336,7 +337,7 @@ export class AccessController {
   @Post('roles') async createRole(@Req() req: Request) {
     const b = body(req, ['name', 'permissions']);
     const name = text(b.name, 'Role name');
-    return mutate(req, 'roles.manage', async (db, actor) => {
+    return mutate(req, 'roles.create', async (db, actor) => {
       const perms = await chosenPermissions(db, actor, b.permissions);
       const rid = randomUUID();
       await db.query('INSERT INTO roles(id,tenant_id,name) VALUES($1,$2,$3)', [
@@ -358,7 +359,7 @@ export class AccessController {
     const b = body(req, ['name', 'permissions', 'version']),
       v = version(b.version),
       name = text(b.name, 'Role name');
-    return mutate(req, 'roles.manage', async (db, actor) => {
+    return mutate(req, 'roles.update', async (db, actor) => {
       const old = await role(db, rid);
       if (old.is_system)
         fail(
@@ -403,7 +404,7 @@ export class AccessController {
     id(rid);
     const b = body(req, ['version']),
       v = version(b.version);
-    return mutate(req, 'roles.manage', async (db, actor) => {
+    return mutate(req, 'roles.delete', async (db, actor) => {
       const old = await role(db, rid);
       if (old.is_system) fail(409, 'SYSTEM_ROLE', 'Main Admin cannot be deleted.');
       if (old.version !== v)
@@ -455,7 +456,7 @@ export class AccessController {
       userId = id(b.requestId);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress))
       fail(400, 'INVALID_EMAIL', 'Enter a valid email address, for example name@company.com.');
-    const saved = await mutate(req, 'users.manage', async (db, actor) => {
+    const saved = await mutate(req, 'users.create', async (db, actor) => {
       const selected = await role(db, roleId);
       canGrant(actor, selected.permissions);
       const existing = await db.query('SELECT * FROM app_users WHERE id=$1', [userId]);
@@ -499,8 +500,10 @@ export class AccessController {
       return { actor, existing: false, linkedIdentity: !!linkedIdentity };
     });
     const result = await provision(saved.actor.tenant_id, userId, saved.actor);
-    let inviteMessage = '';
-    if (result.ready && !saved.existing) {
+    let inviteMessage = saved.actor.permissions.includes('users.invite')
+      ? ''
+      : 'Ask a user with Send invitations permission to send the setup email.';
+    if (result.ready && !saved.existing && saved.actor.permissions.includes('users.invite')) {
       try {
         inviteMessage = (await email(req, userId, true)).message;
       } catch (e) {
@@ -527,7 +530,7 @@ export class AccessController {
       name = text(b.name, 'Full name', 2, 120),
       roleId = id(b.roleId);
     if (typeof b.active !== 'boolean') fail(400, 'VALIDATION_ERROR', 'Choose Active or Inactive.');
-    const saved = await mutate(req, 'users.manage', async (db, actor) => {
+    const saved = await mutate(req, 'users.update', async (db, actor) => {
       const old = await account(db, uid);
       if (old.version !== v)
         fail(
@@ -537,8 +540,12 @@ export class AccessController {
         );
       canGrant(actor, (await role(db, old.role_id)).permissions);
       canGrant(actor, (await role(db, roleId)).permissions);
+      if (old.role_id !== roleId && !actor.permissions.includes('users.assign_role'))
+        fail(403, 'PERMISSION_DENIED', 'Change user role permission is required.');
+      if (old.active !== b.active && !actor.permissions.includes('users.change_status'))
+        fail(403, 'PERMISSION_DENIED', 'Activate/deactivate users permission is required.');
       await protectAdmin(db, old, roleId, b.active);
-      if (uid === actor.id && (!b.active || old.role_id !== roleId))
+      if (old.id === actor.id && (!b.active || old.role_id !== roleId))
         fail(
           409,
           'SELF_ACCESS_CHANGE',
@@ -588,7 +595,7 @@ export class AccessController {
   }
   @Post('users/:id/retry') async retry(@Req() req: Request, @Param('id') uid: string) {
     id(uid);
-    const actor = await access(req, 'users.manage');
+    const actor = await access(req, 'users.retry_setup');
     await scoped(actor.tenant_id, async (db) =>
       canGrant(actor, (await role(db, (await account(db, uid)).role_id)).permissions),
     );

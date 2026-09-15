@@ -1129,3 +1129,68 @@ footer span {
     transition: none;
   }
 }
+
+.permission-matrix-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line, #e3e5ed);
+  border-radius: 12px;
+}
+.permission-matrix {
+  min-width: 750px;
+  width: 100%;
+}
+.permission-matrix th {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 13px;
+}
+.permission-matrix thead th {
+  background: #f5f6fa;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.permission-matrix th:first-child {
+  min-width: 145px;
+}
+.permission-matrix th label,
+.matrix-choice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.permission-matrix th small,
+.matrix-choice small {
+  display: block;
+  font-weight: 400;
+  margin-top: 5px;
+  color: #72788b;
+}
+.permission-matrix input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: #d76b21;
+}
+.matrix-choice {
+  padding: 7px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+.permission-matrix td {
+  vertical-align: top;
+}
+.permission-matrix tr:hover td {
+  background: #fffaf5;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -1,3 +1,4 @@
+import { permissions as catalog } from '../packages/schema/permissions.mjs';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -53,7 +54,7 @@ test('real Keycloak login, seed UI, worker, permission denial, expiry and logout
   await login(page);
   await expect(page.getByText('Connected', { exact: true })).toBeVisible();
   const me = await (await page.request.get('/api/me')).json();
-  expect(me.user.permissions).toHaveLength(23);
+  expect(me.user.permissions).toHaveLength(catalog.length);
   const cookie = (await page.context().cookies()).find((x) => x.name === 'rare.sid');
   expect(cookie?.httpOnly).toBe(true);
   expect(cookie?.sameSite).toBe('Lax');

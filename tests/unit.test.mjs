@@ -9,6 +9,13 @@ test('permission catalog has unique action codes and descriptions', () => {
   }
 });
 test('critical approvals have their own permission', () => {
-  for (const p of ['purchase.approve', 'schedule.publish', 'inventory.adjust', 'users.manage'])
+  for (const p of [
+    'purchase.approve',
+    'schedule.publish',
+    'inventory.adjust',
+    'users.assign_role',
+    'users.reset_password',
+    'roles.update',
+  ])
     assert.ok(permissions.some((x) => x[0] === p));
 });

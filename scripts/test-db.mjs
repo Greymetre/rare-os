@@ -1,3 +1,4 @@
+import { permissions } from '../packages/schema/permissions.mjs';
 import pg from 'pg';
 import assert from 'node:assert/strict';
 const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
@@ -10,8 +11,8 @@ try {
   );
   assert.ok(counts.rows[0].users >= 1);
   assert.ok(counts.rows[0].roles >= 1);
-  assert.equal(counts.rows[0].permissions, 23);
-  console.log('PASS seed: admin/roles preserved, 23 permissions');
+  assert.equal(counts.rows[0].permissions, permissions.length);
+  console.log('PASS seed: admin/roles preserved, current permission catalog');
   await db.query('BEGIN');
   await db.query('INSERT INTO tenants(id,name) VALUES($1,$2)', [other, 'Isolation fixture']);
   await db.query(

@@ -16,7 +16,7 @@ import {
   canGrant,
 } from './access.controller.js';
 export function allPlants(actor: any) {
-  return !!actor.is_system || actor.permissions.includes('sites.manage');
+  return !!actor.is_system || actor.permissions.includes('sites.read_all');
 }
 // Reuse this check before every future plant-scoped business query/mutation.
 export async function requirePlant(db: PoolClient, actor: any, plantId: string) {
@@ -80,12 +80,18 @@ export class PlantsController {
   }
   @Post('plants') async create(@Req() req: Request) {
     const b = fields(req);
-    return mutate(req, 'sites.manage', async (db, actor) => {
+    return mutate(req, 'sites.create', async (db, actor) => {
       const plantId = randomUUID();
       await db.query(
         'INSERT INTO sites(id,tenant_id,code,name,location,timezone) VALUES($1,$2,$3,$4,$5,$6)',
         [plantId, actor.tenant_id, b.code, b.name, b.location, b.timezone],
       );
+      if (!allPlants(actor))
+        await db.query('INSERT INTO user_sites(tenant_id,user_id,site_id) VALUES($1,$2,$3)', [
+          actor.tenant_id,
+          actor.id,
+          plantId,
+        ]);
       await audit(db, actor, 'plant.created', 'plant', plantId, null, b);
       return { id: plantId, message: 'Plant created. Assign users from Users → Plant access.' };
     });
@@ -94,8 +100,10 @@ export class PlantsController {
     id(plantId);
     const b = fields(req, true),
       v = version(b.version);
-    return mutate(req, 'sites.manage', async (db, actor) => {
+    return mutate(req, 'sites.update', async (db, actor) => {
       const old = await requirePlant(db, actor, plantId);
+      if (old.active !== b.active && !actor.permissions.includes('sites.change_status'))
+        fail(403, 'PERMISSION_DENIED', 'Activate/deactivate plants permission is required.');
       if (old.version !== v)
         fail(409, 'STALE_RECORD', 'Plant changed elsewhere. Refresh before saving.');
       await db.query(
@@ -107,12 +115,12 @@ export class PlantsController {
     });
   }
   @Get('users/:id/plants') async grants(@Req() req: Request, @Param('id') userId: string) {
-    const actor = await access(req, 'users.manage');
-    if (!actor.permissions.includes('sites.manage'))
+    const actor = await access(req, 'users.assign_plants');
+    if (!actor.permissions.includes('sites.read_all'))
       fail(
         403,
         'PERMISSION_DENIED',
-        'Plant management permission is required to assign plant access.',
+        'Access all company plants permission is required to assign plant access.',
       );
     return scoped(actor.tenant_id, async (db) => {
       const target = await account(db, id(userId));
@@ -138,12 +146,12 @@ export class PlantsController {
     if (!Array.isArray(b.plantIds) || b.plantIds.length > 500)
       fail(400, 'INVALID_PLANTS', 'Select up to 500 plants.');
     const ids = [...new Set((b.plantIds as unknown[]).map(id))];
-    return mutate(req, 'users.manage', async (db, actor) => {
-      if (!actor.permissions.includes('sites.manage'))
+    return mutate(req, 'users.assign_plants', async (db, actor) => {
+      if (!actor.permissions.includes('sites.read_all'))
         fail(
           403,
           'PERMISSION_DENIED',
-          'Plant management permission is required to assign plant access.',
+          'Access all company plants permission is required to assign plant access.',
         );
       const target = await account(db, userId),
         targetRole = await role(db, target.role_id);

@@ -15,7 +15,7 @@ Open **http://localhost:4310**. Keycloak local endpoint: **http://localhost:4311
 
 Admin email `.env` ke `SEED_ADMIN_EMAIL` mein hai (initially `admin@rareos.local`). Generated password `.env` ke `SEED_ADMIN_PASSWORD` mein hai. Password git mein commit nahi karna. Same `.env` preserve rakhein: app/identity database passwords usi se initially provision hue hain.
 
-`Sign in securely` click karke Keycloak par email/password enter karein. Application has one seeded Main Admin role, one application admin, 23 permissions and one workspace tenant. Keycloak bootstrap-admin is a separate infrastructure account, not a second application user.
+`Sign in securely` click karke Keycloak par email/password enter karein. Application has one seeded Main Admin role, one application admin, 35 permissions and one workspace tenant. Keycloak bootstrap-admin is a separate infrastructure account, not a second application user.
 
 Seeder repeat-safe hai: re-run par admin duplicates/password reset nahi. Roles/catalog updated; existing admin disabled state preserved. Seed and migrate one-shot containers exit 0 normally. Other seven containers keep running.
 
@@ -118,7 +118,7 @@ Plants and per-user plant assignment are available. Company list uses bounded cu
 
 Platform Admin opens a company, creates company-local roles/users, then assigns plants from Users → Plant access. Platform access is not granted to those users. Platform Admin can reuse an existing email in another company with a different role; the password is preserved. Normal company admins do not get cross-company identity lookup.
 
-Main Admin and roles with `sites.manage` can access all plants in their company. Limited roles need `sites.read` and explicit assigned plants; no assignment means no plant access. `users.manage` plus `sites.manage` is required to assign plant access. Revocation is checked on each request. Inactive plants are hidden from limited users. Plant codes are unique per company and immutable; names, locations, IANA timezones and active status are editable with version conflict checks.
+Main Admin and roles with `sites.read_all` can access all plants in their company. Limited roles need `sites.read` and explicit assigned plants; no assignment means no plant access. `users.assign_plants` plus `sites.read_all` is required to assign plant access. Revocation is checked on each request. Inactive plants are hidden from limited users. Plant codes are unique per company and immutable; names, locations, IANA timezones and active status are editable with version conflict checks.
 
 Tenant isolation remains PostgreSQL RLS. Plant isolation is enforced in plant endpoints and dashboard queries; future inventory/planning/export endpoints must use `requirePlant` before querying plant data. Those business modules are not implemented yet. Directory permissions such as users.read and audit.read intentionally expose company-wide administration information; avoid granting them to plant-only viewers.
 
@@ -145,3 +145,5 @@ Backups contain both application and Keycloak databases, SHA-256 checksums and a
 New-host recovery also needs the preserved private environment, database roles/bootstrap and matching application version. Redis sessions and pending queue state are not included; this drill does not certify full production disaster recovery. Keep actual deployment, real SMTP and mandatory MFA rollout separate from the current local-only delivery.
 
 Current local cross-check: [LOCAL_FOUNDATION_CHECK.md](docs/LOCAL_FOUNDATION_CHECK.md). Availability and business masters have not been started.
+
+Current action-level permission matrix and migration 009 details: [Role permissions guide](docs/ROLE_PERMISSIONS_HINGLISH.md). Users, roles and plants no longer use combined Manage grants.

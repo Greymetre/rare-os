@@ -8,7 +8,8 @@ export function Plants({
   permissions: string[];
   refreshKey: number;
 }) {
-  const manage = permissions.includes('sites.manage');
+  const canCreate = permissions.includes('sites.create');
+  const canEdit = permissions.includes('sites.update');
   const [rows, setRows] = useState<any[]>([]),
     [form, setForm] = useState<any>(null),
     [busy, setBusy] = useState(false),
@@ -70,7 +71,7 @@ export function Plants({
             Search
           </button>
         </form>
-        {manage && (
+        {canCreate && (
           <button
             className="button primary"
             disabled={busy}
@@ -147,6 +148,7 @@ export function Plants({
               <label>
                 Status
                 <select
+                  disabled={busy || !permissions.includes('sites.change_status')}
                   value={String(form.active)}
                   onChange={(e) => setForm({ ...form, active: e.target.value === 'true' })}
                 >
@@ -173,7 +175,7 @@ export function Plants({
               <th>Location</th>
               <th>Timezone</th>
               <th>Status</th>
-              {manage && <th>Actions</th>}
+              {canEdit && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -184,7 +186,7 @@ export function Plants({
                 <td>{r.location}</td>
                 <td>{r.timezone}</td>
                 <td>{r.active ? 'Active' : 'Inactive'}</td>
-                {manage && (
+                {canEdit && (
                   <td>
                     <button
                       className="text-button"
@@ -201,7 +203,7 @@ export function Plants({
         </table>
         {!rows.length && !busy && (
           <div className="empty">
-            {manage
+            {canCreate
               ? 'No plants yet. Create your first plant.'
               : 'No active plants assigned. Ask your company administrator for plant access.'}
           </div>
@@ -216,8 +218,8 @@ export function Plants({
         </div>
       </section>
       <p className="notice">
-        {manage
-          ? 'Plant managers can access all company plants. To limit a user, use a role without Plants → Manage, then assign plants in Users → Plant access.'
+        {permissions.includes('sites.read_all')
+          ? 'This role can access all company plants. To limit access, remove Access all company plants and assign individual plants from Users.'
           : 'Only your assigned active plants are shown. Business modules will use the same plant access checks.'}
       </p>
     </>

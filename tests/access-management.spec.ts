@@ -1,3 +1,4 @@
+import { permissions as catalog } from '../packages/schema/permissions.mjs';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -85,7 +86,12 @@ test('role/user management, invitations, activation and safe access changes', as
     userId = '',
     identityId = '';
   let userContext: any;
-  const perms = ['dashboard.read', 'users.read', 'users.manage', 'roles.read', 'roles.manage'];
+  const perms = catalog
+    .filter(
+      ([code, module]) =>
+        ['Dashboard', 'Users', 'Roles'].includes(module) && code !== 'users.assign_plants',
+    )
+    .map(([code]) => code);
   await login(page);
   const me = await (await page.request.get('/api/me')).json();
   const call = (path: string, method = 'GET', data?: unknown) =>
@@ -99,15 +105,12 @@ test('role/user management, invitations, activation and safe access changes', as
     await page.getByRole('button', { name: 'Create role', exact: true }).click();
     const modal = page.getByRole('dialog', { name: 'Create role' });
     await modal.getByLabel('Role name', { exact: true }).fill(roleName);
-    for (const label of [
-      'View company users',
-      'Manage company users',
-      'View roles and permissions',
-      'Create, edit and delete custom roles',
-    ])
-      await modal.getByLabel(new RegExp(label)).check();
+    for (const [code, , description] of catalog.filter(
+      ([code]) => perms.includes(code) && code !== 'dashboard.read',
+    ))
+      await modal.getByRole('checkbox', { name: description, exact: true }).check();
     await modal.getByLabel('Search modules or actions').fill('roles');
-    await expect(modal.locator('fieldset')).toHaveCount(1);
+    await expect(modal.locator('[data-permission-module]')).toHaveCount(1);
     await modal.getByLabel('Search modules or actions').fill('');
     await expect(modal.getByText('Not implemented yet', { exact: true })).toHaveCount(0);
     await page.screenshot({ path: '.local/role-permissions-desktop.png', fullPage: true });
