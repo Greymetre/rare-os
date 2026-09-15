@@ -22,6 +22,8 @@ case "$(basename "$0"):$*" in
   'docker:compose build') [[ "$TEST_MODE" != build ]];;
   'docker:compose ps -q '*|'docker:compose ps -a -q '*) echo container;;
   'docker:inspect --format {{.Image}} container') echo 'sha256:fixture';;
+  'docker:image inspect sha256:fixture') [[ "$TEST_MODE" != missing-image ]];;
+  'docker:image tag '*) [[ "$TEST_MODE" != tag-failure ]];;
   'docker:inspect --format {{.State.Status}}:{{.State.ExitCode}} container') if [[ "$TEST_MODE" == migration ]]; then echo exited:1; else echo exited:0; fi;;
   'docker:inspect --format {{.State.Running}} container') echo true;;
   'node:scripts/backup-local.mjs') [[ "$TEST_MODE" != backup ]] || exit 1; echo /private/backup;;
@@ -47,6 +49,9 @@ esac
       ...result,
       events: existsSync(join(dir, 'events')) ? readFileSync(join(dir, 'events'), 'utf8') : '',
       successful: existsSync(join(dir, '.local/deploy/last-success.txt')),
+      rollback: existsSync(join(dir, '.local/deploy/rollback-images-' + revision + '.txt'))
+        ? readFileSync(join(dir, '.local/deploy/rollback-images-' + revision + '.txt'), 'utf8')
+        : '',
     };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -66,6 +71,7 @@ test('deploy builds before downtime and backs up before applying migrations and 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.successful, true);
   const steps = [
+    'docker image tag',
     'docker compose build',
     'docker compose stop',
     'node scripts/backup-local.mjs',
@@ -92,4 +98,21 @@ test('migration or health failure never records success or blindly downgrades th
     assert.equal(r.successful, false);
     assert.doesNotMatch(r.events, /docker compose start|pg_restore|docker compose down/);
   }
+});
+
+test('missing old image is recorded without tagging a new image or skipping backup', () => {
+  const r = run('missing-image');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.successful, true);
+  assert.match(r.rollback, /api sha256:fixture unavailable/);
+  assert.match(r.stderr, /Rollback requires rebuilding commit/);
+  assert.doesNotMatch(r.events, /docker image tag/);
+  assert.match(r.events, /node scripts\/backup-local.mjs/);
+  assert.match(r.events, /docker compose up/);
+});
+test('rollback tag failure stops before build, downtime or database changes', () => {
+  const r = run('tag-failure');
+  assert.notEqual(r.status, 0);
+  assert.equal(r.successful, false);
+  assert.doesNotMatch(r.events, /docker compose (build|stop|up)/);
 });

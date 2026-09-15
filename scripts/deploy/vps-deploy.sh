@@ -39,19 +39,32 @@ on_exit() {
 }
 trap on_exit EXIT
 printf 'commit=%s\nprevious=%s\n' "$target" "$previous" > .local/deploy/current-attempt.txt
+# Capture the running images before build moves the service tags. The old image
+# may already be missing after a previous build/prune; never substitute :latest.
+phase=rollback-images
+rollback_record=".local/deploy/rollback-images-$target.txt"
+: > "$rollback_record"
+for service in api worker web keycloak; do
+  container=$(docker compose ps -q "$service")
+  if [[ -n "$container" ]]; then
+    image_id=$(docker inspect --format '{{.Image}}' "$container")
+    rollback_tag="rare-os-rollback-$service:$previous"
+    if docker image inspect "$image_id" >/dev/null 2>&1; then
+      docker image tag "$image_id" "$rollback_tag"
+      printf '%s %s %s\n' "$service" "$image_id" "$rollback_tag" >> "$rollback_record"
+    else
+      # A running container can outlive its image-store reference. Database backup
+      # is still mandatory; application rollback will require rebuilding previous.
+      printf '%s %s unavailable\n' "$service" "$image_id" >> "$rollback_record"
+      echo "Warning: running $service image is unavailable for tagging. Rollback requires rebuilding commit $previous; continuing with mandatory database backup." >&2
+    fi
+  fi
+done
 # Exact commit tested by this workflow, never an unchecked pull of a newer revision.
 git checkout --detach "$target"
 docker compose config --quiet
 phase=build
 docker compose build
-# Save references for a reviewed, schema-compatible application rollback. No image pruning.
-for service in api worker web keycloak; do
-  container=$(docker compose ps -q "$service")
-  if [[ -n "$container" ]]; then
-    image_id=$(docker inspect --format '{{.Image}}' "$container")
-    docker image tag "$image_id" "rare-os-rollback-$service:$previous"
-  fi
-done
 phase=backup
 stopped=true
 docker compose stop web api worker keycloak

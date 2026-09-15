@@ -2,7 +2,7 @@
 
 ## Flow
 
-`main` push / main par Run workflow → existing format/type/unit/build/browser/database/restore checks → deploy job → restricted SSH → same tested commit → VPS build → services pause → app + Keycloak DB backup → migrations/seed/start → public HTTPS checks.
+`main` push / main par Run workflow → existing format/type/unit/build/browser/database/restore checks → deploy job → restricted SSH → running-image rollback tags → same tested commit → VPS build → services pause → app + Keycloak DB backup → migrations/seed/start → public HTTPS checks.
 
 Pull requests aur other branches deploy nahi karte. `VPS_DEPLOY_ENABLED=true` repository variable ke bina job skipped hai. Deploy concurrency aur VPS flock prevent overlapping releases. Older queued SHA agar latest main nahi hai to skip hota hai. Running deployment cancel nahi hota.
 
@@ -73,7 +73,8 @@ After this, future main pushes deploy automatically when checks pass. To pause a
 - `.local/deploy/last-success.txt`: successfully checked commit, previous checkout, completion time.
 - `.local/deploy/last-failure.txt`: failed commit, prior checkout, failing phase.
 - `.local/deploy/last-backup.txt`: validated backup directory; protect this and `.local/backups`.
-- `rare-os-rollback-api:<previous-sha>`, worker/web/keycloak tags preserve pre-deploy image IDs. No image/volume pruning is run.
+- `rare-os-rollback-api:<previous-sha>`, worker/web/keycloak tags preserve available running images BEFORE build changes tags. No image/volume pruning is run.
+- `.local/deploy/rollback-images-<target-sha>.txt` records each image and rollback tag. If an old image reference is already missing, it records `unavailable`; that service needs a rebuild of the reviewed previous commit for rollback. Never use the new `latest` tag as a substitute for the missing old image. Mandatory DB backup still runs after writes are paused and before migrations.
 
 Build fails: services remain running. Backup fails: old checkout and existing containers are restarted; no migration is applied. Apply/migration/health failure: job fails, no blind schema downgrade or automatic old-code restart. Inspect failure and logs from VPS (avoid sharing sensitive full logs); fix forward or perform a reviewed compatible rollback. A cancelled/killed runner or VPS power loss may interrupt cleanup, so check status before another release.
 
@@ -95,3 +96,9 @@ docker compose -f compose.yaml -f compose.override.yaml -f .local/deploy/rollbac
 Local shell syntax, workflow YAML formatting and isolated deployment lifecycle tests cover invalid/stale/dirty commits, build-before-downtime, backup-before-migration, backup recovery, migration/health failures. These tests use fake commands; first real GitHub → VPS run still must pass after secrets/key setup. Backups here are on the VPS; offsite backup/monitoring is point 5, not completed by this pipeline.
 
 GitHub references: [deployment controls](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments), [secrets](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions).
+
+## Installed-script update after the No such image failure
+
+The failed first deploy completed its image build but stopped while tagging an old image ID. It did not reach service stop, backup or migration. Merely retrying with the old installed script repeats this behavior. Install the reviewed repair in `/usr/local/sbin/rare-os-deploy` once; a repository push alone does not replace that root-owned file. Use `git fetch` and `git show <reviewed-sha>:scripts/deploy/vps-deploy.sh` to extract it without changing the running checkout, validate with `bash -n`, then install root-owned mode 750. Re-run the latest main workflow's failed deploy after installation; old runs may be skipped because newer main exists.
+
+Regression tests additionally check image capture before build, missing-image receipts while preserving mandatory backup, and tag failure stopping before build/downtime. Existing checkout/backup/migration safeguards remain.
