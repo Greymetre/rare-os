@@ -31,7 +31,7 @@ on_exit() {
     printf 'commit=%s\nprevious=%s\nphase=%s\nexit=%s\n' "$target" "$previous" "$phase" "$status" > .local/deploy/last-failure.txt
     if [[ "$applying" != true ]]; then
       # No migration has run. Restore the checkout and existing container instances.
-      git checkout --detach "$previous" || true
+      (umask 022; git checkout --detach "$previous") || true
       if [[ "$stopped" == true ]]; then docker compose start keycloak api worker web || true; fi
     fi
     echo "Deployment failed during $phase. See .local/deploy/last-failure.txt and the backup path in this run. No database downgrade was attempted." >&2
@@ -61,10 +61,14 @@ for service in api worker web keycloak; do
   fi
 done
 # Exact commit tested by this workflow, never an unchecked pull of a newer revision.
-git checkout --detach "$target"
+(umask 022; git checkout --detach "$target")
+node scripts/deploy/prepare-source.mjs
 docker compose config --quiet
 phase=build
 docker compose build
+# Read every migration and executable entry point as the actual runtime user before downtime.
+phase=preflight
+docker compose run --rm --no-deps migrate node scripts/deploy/check-runtime.mjs
 phase=backup
 stopped=true
 docker compose stop web api worker keycloak

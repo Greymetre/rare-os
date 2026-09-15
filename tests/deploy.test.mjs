@@ -23,6 +23,7 @@ case "$(basename "$0"):$*" in
   'docker:compose ps -q '*|'docker:compose ps -a -q '*) echo container;;
   'docker:inspect --format {{.Image}} container') echo 'sha256:fixture';;
   'docker:image inspect sha256:fixture') [[ "$TEST_MODE" != missing-image ]];;
+  'docker:compose run --rm --no-deps migrate node scripts/deploy/check-runtime.mjs') [[ "$TEST_MODE" != preflight ]];;
   'docker:image tag '*) [[ "$TEST_MODE" != tag-failure ]];;
   'docker:inspect --format {{.State.Status}}:{{.State.ExitCode}} container') if [[ "$TEST_MODE" == migration ]]; then echo exited:1; else echo exited:0; fi;;
   'docker:inspect --format {{.State.Running}} container') echo true;;
@@ -73,6 +74,7 @@ test('deploy builds before downtime and backs up before applying migrations and 
   const steps = [
     'docker image tag',
     'docker compose build',
+    'docker compose run --rm --no-deps migrate node scripts/deploy/check-runtime.mjs',
     'docker compose stop',
     'node scripts/backup-local.mjs',
     'docker compose up',
@@ -115,4 +117,11 @@ test('rollback tag failure stops before build, downtime or database changes', ()
   assert.notEqual(r.status, 0);
   assert.equal(r.successful, false);
   assert.doesNotMatch(r.events, /docker compose (build|stop|up)/);
+});
+
+test('unreadable packaged source fails preflight before downtime and migration', () => {
+  const r = run('preflight');
+  assert.notEqual(r.status, 0);
+  assert.equal(r.successful, false);
+  assert.doesNotMatch(r.events, /docker compose (stop|up)/);
 });

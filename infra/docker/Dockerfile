@@ -6,7 +6,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/workers/package.json apps/workers/package.json
 RUN npm ci
 COPY . .
-RUN npm run build
+RUN npm run build && chmod -R a+rX /app
 FROM build AS runtime
 ENV NODE_ENV=production
 USER node
