@@ -217,7 +217,7 @@ export function Plants({
       </section>
       <p className="notice">
         {manage
-          ? 'Plant managers can access all company plants. To limit a user, use a role without Manage company sites, then assign plants in Users → Plant access.'
+          ? 'Plant managers can access all company plants. To limit a user, use a role without Plants → Manage, then assign plants in Users → Plant access.'
           : 'Only your assigned active plants are shown. Business modules will use the same plant access checks.'}
       </p>
     </>

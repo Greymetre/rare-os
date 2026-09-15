@@ -1,3 +1,4 @@
+import { PermissionPicker } from './permission-picker';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 type Permission = { code: string; module: string; description: string };
 type Role = {
@@ -8,6 +9,7 @@ type Role = {
   assigned: boolean;
   permission_count: number;
   permissions?: string[];
+  is_own?: boolean;
 };
 type Account = {
   id: string;
@@ -288,12 +290,14 @@ export function AccessManagement({
                                 className="text-button"
                                 onClick={() => void open(x)}
                                 aria-label={
-                                  (x.is_system || !manage ? 'View' : 'Edit') + ' role ' + x.name
+                                  (x.is_system || x.is_own || !manage ? 'View' : 'Edit') +
+                                  ' role ' +
+                                  x.name
                                 }
                               >
-                                {x.is_system || !manage ? 'View' : 'Edit'}
+                                {x.is_system || x.is_own || !manage ? 'View' : 'Edit'}
                               </button>
-                              {manage && !x.is_system && (
+                              {manage && !x.is_system && !x.is_own && (
                                 <button
                                   className="text-button danger"
                                   onClick={() => setRemove(x)}
@@ -544,15 +548,11 @@ function RoleForm({
   onSaved: (m: string) => void;
 }) {
   const existing = initial === 'new' ? null : initial,
-    readonly = !canEdit || !!existing?.is_system;
+    readonly = !canEdit || !!existing?.is_system || !!existing?.is_own;
   const [name, setName] = useState(existing?.name || ''),
     [selected, setSelected] = useState<string[]>(existing?.permissions || ['dashboard.read']),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const modules = [...new Set(catalog.map((p) => p.module))];
-  function toggle(code: string) {
-    setSelected((p) => (p.includes(code) ? p.filter((x) => x !== code) : [...p, code]));
-  }
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -599,33 +599,18 @@ function RoleForm({
             <div className="notice">
               {existing?.is_system
                 ? 'Main Admin is protected. Its full access is maintained by the permission seeder.'
-                : 'You have read-only access to this role.'}
+                : existing?.is_own
+                  ? 'This is your assigned role. Ask another administrator to change its permissions.'
+                  : 'You have read-only access to this role.'}
             </div>
           )}
-          <p>Select permissions by module. Dashboard access is required for workspace entry.</p>
-          <div className="module-permissions">
-            {modules.map((module) => (
-              <fieldset key={module} disabled={readonly || busy}>
-                <legend>{module}</legend>
-                {catalog
-                  .filter((p) => p.module === module)
-                  .map((p) => (
-                    <label className="permission-option" key={p.code}>
-                      <input
-                        type="checkbox"
-                        checked={selected.includes(p.code)}
-                        disabled={p.code === 'dashboard.read' || !allowed.includes(p.code)}
-                        onChange={() => toggle(p.code)}
-                      />
-                      <span>
-                        {p.description}
-                        <code>{p.code}</code>
-                      </span>
-                    </label>
-                  ))}
-              </fieldset>
-            ))}
-          </div>
+          <PermissionPicker
+            catalog={catalog}
+            selected={selected}
+            allowed={allowed}
+            disabled={readonly || busy}
+            onChange={setSelected}
+          />
         </div>
         <div className="modal-actions">
           <button type="button" className="button" disabled={busy} onClick={onClose}>

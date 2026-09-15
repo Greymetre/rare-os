@@ -1003,3 +1003,103 @@ footer span {
   border-radius: 7px;
   max-width: 100%;
 }
+
+.access-dialog:has(.permission-picker) {
+  width: min(960px, 94vw);
+}
+.permission-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  align-items: center;
+  margin: 20px 0;
+}
+.permission-summary strong {
+  color: var(--orange, #d96f28);
+}
+.permission-summary span,
+.permission-choice code {
+  color: #697184;
+}
+.permission-tools {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.permission-tools .field {
+  flex: 1;
+  min-width: 200px;
+}
+.permission-future {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.permission-shortcuts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.permission-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0;
+}
+.permission-card {
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fafbfe;
+}
+.permission-card legend {
+  font-weight: 700;
+  padding: 0 8px;
+}
+.permission-card > p {
+  margin-top: 0;
+  line-height: 1.5;
+}
+.permission-count {
+  font-weight: 400;
+  color: #697184;
+  font-size: 12px;
+  margin-left: 8px;
+}
+.permission-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 8px;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+.permission-choice:has(input:checked) {
+  background: #edf4f2;
+  border-radius: 6px;
+}
+.permission-choice input {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 3px;
+  accent-color: #d96f28;
+}
+.permission-choice > span {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.permission-choice code,
+.permission-choice small {
+  font-size: 11px;
+}
+@media (max-width: 650px) {
+  .permission-cards {
+    grid-template-columns: 1fr;
+  }
+}

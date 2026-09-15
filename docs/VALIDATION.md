@@ -53,3 +53,13 @@ Database isolation/write-denial/runtime privilege checks passed. 100,000-row aud
 Final containers running; seed/migrate exited 0. After regressions: 2 actual companies, 3 memberships, 2 roles; zero timestamped QA users and zero temporary restore databases. Removed 25 timestamped regression emails only; real recipients preserved. Test source files remain. Earlier retained-demo cleanup still applies.
 
 Manual steps and limitations: [LOCAL_FOUNDATION_CHECK.md](LOCAL_FOUNDATION_CHECK.md). Production SMTP/VPS/domain, mandatory admin MFA, offsite backups and full-scale load testing remain outside the user-approved local scope.
+
+## Permission editor and self-role protection — 15 September 2026
+
+Module cards now separate Dashboard, Users, Roles, Plants and Audit log; reserved future permissions are hidden behind an explicit toggle. Search, selection count, view-only bulk selection, optional clearing and automatic required View selection are available. Existing permission codes/grants are unchanged; Manage remains a combined action permission. Roles Manage description now correctly describes custom role creation/edit/deletion.
+
+Assigned roles are shown as View, and the API blocks own-role edits using the canonical database UUID. Existing own-user role/status changes, system-role protection, tenant checks and grant limits remain enforced. Browser regression verifies own-role read-only UI, uppercase UUID self-edit denial, role navigation hiding and direct role/catalog/create API denial after permission revocation.
+
+Validation: full browser suite 7 passed, retained-demo test skipped; targeted access-management test rerun after final UUID guard change passed. Six unit/integration tests passed, including permission dependency selection and rate limiting. Container production builds, TypeScript, formatting and diff checks passed. Desktop/mobile screenshots inspected; mobile dialog has no horizontal overflow. Temporary test accounts cleaned by test teardown. Live VPS deployment has not been performed for this change.
+
+Usage guide: [ROLE_PERMISSIONS_HINGLISH.md](ROLE_PERMISSIONS_HINGLISH.md).

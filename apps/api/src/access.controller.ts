@@ -321,14 +321,17 @@ export class AccessController {
         [after, q, limit + 1],
       );
       return {
-        items: rows.rows.slice(0, limit),
+        items: rows.rows.slice(0, limit).map((r) => ({ ...r, is_own: r.id === actor.role_id })),
         nextCursor: rows.rows.length > limit ? rows.rows[limit - 1].id : null,
       };
     });
   }
   @Get('roles/:id') async getRole(@Req() req: Request, @Param('id') rid: string) {
     const actor = await access(req, 'roles.read');
-    return scoped(actor.tenant_id, (db) => role(db, id(rid)));
+    return scoped(actor.tenant_id, async (db) => {
+      const record = await role(db, id(rid));
+      return { ...record, is_own: actor.role_id === record.id };
+    });
   }
   @Post('roles') async createRole(@Req() req: Request) {
     const b = body(req, ['name', 'permissions']);
@@ -362,6 +365,12 @@ export class AccessController {
           409,
           'SYSTEM_ROLE',
           'Main Admin is a protected system role. Create a custom role to change permissions.',
+        );
+      if (actor.role_id === old.id)
+        fail(
+          409,
+          'SELF_ROLE_CHANGE',
+          'Ask another administrator to change your assigned role. You cannot edit your own permissions.',
         );
       if (old.version !== v)
         fail(

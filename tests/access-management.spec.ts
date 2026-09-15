@@ -103,9 +103,18 @@ test('role/user management, invitations, activation and safe access changes', as
       'View company users',
       'Manage company users',
       'View roles and permissions',
-      'Manage role assignments',
+      'Create, edit and delete custom roles',
     ])
       await modal.getByLabel(new RegExp(label)).check();
+    await modal.getByLabel('Search modules or actions').fill('roles');
+    await expect(modal.locator('fieldset')).toHaveCount(1);
+    await modal.getByLabel('Search modules or actions').fill('');
+    await expect(modal.getByText('Not implemented yet', { exact: true })).toHaveCount(0);
+    await page.screenshot({ path: '.local/role-permissions-desktop.png', fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await modal.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.screenshot({ path: '.local/role-permissions-mobile.png', fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 900 });
     await modal.getByRole('button', { name: 'Save role' }).click();
     await expect(modal).not.toBeVisible();
     await expect(page.getByText('Role created successfully.', { exact: true })).toBeVisible();
@@ -204,6 +213,48 @@ test('role/user management, invitations, activation and safe access changes', as
       data: { name: 'Escalated role', permissions: ['dashboard.read', 'purchase.approve'] },
     });
     expect(privileged.status()).toBe(403);
+    await userPage.getByRole('button', { name: 'Roles & permissions', exact: true }).click();
+    await userPage
+      .getByRole('button', { name: 'View role ' + roleName + ' Updated', exact: true })
+      .click();
+    await expect(
+      userPage.getByRole('dialog').getByText('This is your assigned role.', { exact: false }),
+    ).toBeVisible();
+    await expect(
+      userPage.getByRole('dialog').getByRole('button', { name: 'Save role' }),
+    ).toHaveCount(0);
+    await userPage.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+    const selfRole = await userPage.request.patch('/api/roles/' + roleId.toUpperCase(), {
+      headers: { Origin: env.APP_URL, 'X-CSRF-Token': userMe.csrfToken },
+      data: { name: roleName, permissions: perms, version: role.version },
+    });
+    expect(selfRole.status()).toBe(409);
+    expect((await selfRole.json()).error.code).toBe('SELF_ROLE_CHANGE');
+    // Removing role access must hide navigation AND deny direct API reads/writes.
+    const currentRole = await (await call('roles/' + roleId)).json();
+    expect(
+      (
+        await call('roles/' + roleId, 'PATCH', {
+          name: currentRole.name,
+          permissions: ['dashboard.read'],
+          version: currentRole.version,
+        })
+      ).ok(),
+    ).toBe(true);
+    await userPage.reload();
+    await expect(
+      userPage.getByRole('button', { name: 'Roles & permissions', exact: true }),
+    ).toHaveCount(0);
+    expect((await userPage.request.get('/api/roles')).status()).toBe(403);
+    expect((await userPage.request.get('/api/permissions')).status()).toBe(403);
+    expect(
+      (
+        await userPage.request.post('/api/roles', {
+          headers: { Origin: env.APP_URL, 'X-CSRF-Token': userMe.csrfToken },
+          data: { name: 'Forbidden', permissions: ['dashboard.read'] },
+        })
+      ).status(),
+    ).toBe(403);
     const user = await (await call('users/' + userId)).json();
     expect(
       (
