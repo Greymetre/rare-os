@@ -467,7 +467,7 @@ export class AccessController {
             'REQUEST_REUSED',
             'This request was already used with different details. Reopen the create form.',
           );
-        return { actor, existing: true };
+        return { actor, existing: true, linkedIdentity: false };
       }
       const linkedIdentity = actor.platform_access
         ? (
@@ -496,7 +496,7 @@ export class AccessController {
         roleId,
         active: true,
       });
-      return { actor, existing: false };
+      return { actor, existing: false, linkedIdentity: !!linkedIdentity };
     });
     const result = await provision(saved.actor.tenant_id, userId, saved.actor);
     let inviteMessage = '';
@@ -513,7 +513,11 @@ export class AccessController {
     return {
       id: userId,
       ready: result.ready,
-      message: result.ready ? 'User created. ' + inviteMessage : 'User saved. ' + result.message,
+      message: result.ready
+        ? (saved.linkedIdentity
+            ? 'Existing login added to this company. Use the existing password and sign in again to select the company. Role and plant access are company-specific. '
+            : 'User created. ') + inviteMessage
+        : 'User saved. ' + result.message,
     };
   }
   @Patch('users/:id') async updateUser(@Req() req: Request, @Param('id') uid: string) {

@@ -339,6 +339,11 @@ nav button:hover {
   flex: 1;
   min-width: 0;
 }
+.main > header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
 header {
   height: 86px;
   background: #fff;
@@ -1101,5 +1106,26 @@ footer span {
 @media (max-width: 650px) {
   .permission-cards {
     grid-template-columns: 1fr;
+  }
+}
+
+.login-card {
+  width: 100%;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+.login-card.login-opening {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+.login-card .primary {
+  border-radius: 12px;
+  box-shadow: 0 5px 12px #c9632218;
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-card {
+    transition: none;
   }
 }

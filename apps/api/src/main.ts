@@ -104,7 +104,9 @@ class AppController {
   }
   @Get('auth/login') async login(@Req() req: Request, @Res() res: Response) {
     if (req.get('host') !== new URL(appUrl).host) return res.redirect(appUrl + '/api/auth/login');
+    const forceLogin = req.session.forceLogin || req.query.switchAccount === 'true';
     await regen(req);
+    if (forceLogin) req.session.forceLogin = true;
     const verifier = randomBytes(48).toString('base64url'),
       state = randomBytes(32).toString('hex'),
       nonce = randomBytes(32).toString('hex');
@@ -120,6 +122,7 @@ class AppController {
       code_challenge: createHash('sha256').update(verifier).digest('base64url'),
       code_challenge_method: 'S256',
     });
+    if (forceLogin) query.set('prompt', 'login');
     if (
       req.query.action === 'CONFIGURE_TOTP' ||
       req.query.action === 'CONFIGURE_RECOVERY_AUTHN_CODES'
@@ -164,7 +167,26 @@ class AppController {
       const lookup = await pool.query('SELECT tenant_id FROM resolve_identity($1)', [payload.sub]);
       const platform = (await pool.query('SELECT is_platform_admin($1) AS allowed', [payload.sub]))
         .rows[0].allowed;
-      if (!lookup.rowCount && !platform) return res.redirect('/?authError=access');
+      if (!lookup.rowCount && !platform) {
+        // Rejected identities must not trap the browser in an automatic SSO retry loop.
+        await regen(req);
+        req.session.forceLogin = true;
+        await save(req);
+        try {
+          await fetch(internal + realm + '/protocol/openid-connect/logout', {
+            method: 'POST',
+            body: new URLSearchParams({
+              client_id: 'rare-os-web',
+              client_secret: env.OIDC_CLIENT_SECRET!,
+              refresh_token: tokens.refresh_token,
+            }),
+            signal: AbortSignal.timeout(5000),
+          });
+        } catch {
+          /* A forced interactive login still provides recovery if logout is unavailable. */
+        }
+        return res.redirect('/?authError=access');
+      }
       const memberships = (await pool.query('SELECT * FROM session_memberships($1)', [payload.sub]))
         .rows;
       await regen(req);

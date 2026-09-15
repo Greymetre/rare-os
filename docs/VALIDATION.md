@@ -63,3 +63,23 @@ Assigned roles are shown as View, and the API blocks own-role edits using the ca
 Validation: full browser suite 7 passed, retained-demo test skipped; targeted access-management test rerun after final UUID guard change passed. Six unit/integration tests passed, including permission dependency selection and rate limiting. Container production builds, TypeScript, formatting and diff checks passed. Desktop/mobile screenshots inspected; mobile dialog has no horizontal overflow. Temporary test accounts cleaned by test teardown. Live VPS deployment has not been performed for this change.
 
 Usage guide: [ROLE_PERMISSIONS_HINGLISH.md](ROLE_PERMISSIONS_HINGLISH.md).
+
+## Branded authentication layout — 15 September 2026
+
+Local-only custom Keycloak theme adds the RARE OS split layout to native login, MFA and required-action pages. Login button has an outgoing transition; identity forms have an entrance transition with reduced-motion support. Inputs, focus/error states, password visibility and submit buttons are restyled. Authentication still navigates to the identity origin; no direct password grant, iframe embedding or app-side credential handling was added.
+
+Full browser suite: 8 passed, retained-demo test skipped. This includes real account invitation/password setup/login, authenticator enrollment and OTP login, identity logout revocation, invalid credentials, show/hide password, reset form, mobile overflow and reduced-motion checks. Production build and TypeScript checks passed. Theme files are mounted read-only and selected by the seeder; actual account passwords/MFA remain unchanged. No Git push or VPS deployment performed.
+
+## Point 1 — Company admin email correction and invitation delivery — 15 September 2026
+
+Local-only delivery: explicit invitation recipient and contact/login distinction; platform-only unused-admin email correction with stale-version, existing-identity, verified/credentialled-account and first-login guards. Correction detaches the old company identity association, increments auth version, resets invitation history, then provisions a fresh login without sending mail automatically. Old identities are retained and other-company memberships are untouched. Corrections and delivery outcomes include actor and recipient in the tenant audit. Migration 008 indexes the latest per-admin delivery lookup.
+
+Company regression passed after final changes: contact edit preserves admin recipient; UI correction; existing target and stale edit rejection; old identity no longer resolves the company; email-verified identity correction rejected before first login; mismatched identity recipient blocked; real Mailpit SMTP outage records failure without success timestamp; restored SMTP resend captured at corrected recipient; cooldown; corrected account password setup and real login; company-admin API denial; activated-account correction denial; existing company isolation/switching/status checks. Local Mailpit restart polling tolerates transient socket resets. Separate access-management regression passed (roles/users/invitations/activation/access changes). Production image builds and TypeScript checks passed; formatting and diff checks passed. Seed/migration exited 0.
+
+Disposable test company/identity fixtures cleaned by test teardown; actual companies/users preserved. Test source retained. Manual review: EMAIL_SETUP_REVIEW_HINGLISH.md. Microsoft 365 real mailbox delivery and live VPS verification remain pending deployment; no Git push or live changes. Point 2 has not started.
+
+## Existing-email multi-company review — 15 September 2026
+
+Company creation returns explicit shared-login status and existing-password guidance; Admin setup displays separate company role/plant scope, fresh-sign-in requirement and global password-reset effect. Shared logins do not show the unused-account correction form. Platform user creation reports when an existing identity was linked. No actual account email/password/membership was changed by this delivery.
+
+Local Docker build/TypeScript passed. Three browser regressions passed: access management; company onboarding/correction/SMTP failure and resend plus existing-password login/company selection/isolation; rejected-login recovery. Shared-company creation message/status assertions were added. Test fixture teardown preserves real users. Manual instructions added to EMAIL_SETUP_REVIEW_HINGLISH.md. No Git push/live deployment; real SMTP is still deferred.

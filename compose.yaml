@@ -70,6 +70,8 @@ services:
       KC_HTTP_ENABLED: 'true'
       KC_HEALTH_ENABLED: 'true'
       JAVA_OPTS_KC_HEAP: '-Xms128m -Xmx512m'
+    volumes:
+      - ./infra/keycloak/themes/rare-os:/opt/keycloak/themes/rare-os:ro
     ports: ['127.0.0.1:4311:8080']
     depends_on:
       migrate: { condition: service_completed_successfully }

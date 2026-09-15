@@ -65,44 +65,88 @@ async function onboard(req: Request, companyId: string, send: boolean) {
       message: 'Company and admin saved. Configure SMTP, then send the invitation.',
     };
   const current = await operation(req, 'onboarding', { id: companyId });
-  const acquired = await scoped(companyId, (db) =>
-    db.query(
+  return scoped(companyId, async (db) => {
+    await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,72))', [current.id]);
+    if (!(await db.query('SELECT 1 FROM tenants WHERE active')).rowCount)
+      fail(409, 'COMPANY_INACTIVE', 'Activate the company before sending invitations.');
+    const fresh = (await db.query('SELECT * FROM app_users WHERE id=$1 FOR UPDATE', [current.id]))
+      .rows[0];
+    if (!fresh.active || fresh.sync_state !== 'ready' || fresh.identity_id !== current.identity_id)
+      fail(409, 'ACCOUNT_CHANGED', 'Account changed. Refresh Admin setup before sending.');
+    if (fresh.first_login_at)
+      fail(
+        409,
+        'ONBOARDING_COMPLETE',
+        'Onboarding is complete. Use Forgot password for password recovery.',
+      );
+    const acquired = await db.query(
       "UPDATE app_users SET email_attempt_at=now() WHERE id=$1 AND (email_attempt_at IS NULL OR email_attempt_at < now()-interval '60 seconds') RETURNING id",
       [current.id],
-    ),
-  );
-  if (!acquired.rowCount)
-    fail(429, 'EMAIL_COOLDOWN', 'Wait one minute before sending another invitation.');
-  try {
-    const kc = (await (
-      await identity('/users/' + encodeURIComponent(current.identity_id))
-    ).json()) as any;
-    // Existing shared accounts retain their password and other company sessions.
-    await sendActionEmail(
-      current.identity_id,
-      true,
-      kc.attributes?.rare_user_id?.[0] !== current.id,
     );
-    await scoped(companyId, async (db) => {
+    if (!acquired.rowCount)
+      fail(429, 'EMAIL_COOLDOWN', 'Wait one minute before sending another invitation.');
+    try {
+      const kc = (await (
+        await identity('/users/' + encodeURIComponent(current.identity_id))
+      ).json()) as any;
+      if (typeof kc.email !== 'string' || kc.email.toLowerCase() !== fresh.email.toLowerCase())
+        fail(
+          409,
+          'IDENTITY_EMAIL_MISMATCH',
+          'Login email and invitation recipient do not match. Ask the platform administrator to review the account.',
+        );
+      const credentials = (await (
+        await identity('/users/' + encodeURIComponent(current.identity_id) + '/credentials')
+      ).json()) as any[];
+      // Existing or activated accounts retain passwords and other company sessions.
+      await sendActionEmail(
+        current.identity_id,
+        true,
+        kc.attributes?.rare_user_id?.[0] !== current.id ||
+          kc.emailVerified ||
+          credentials.length > 0,
+      );
       await db.query('UPDATE app_users SET invitation_sent_at=now() WHERE id=$1', [current.id]);
       await db.query(
-        "INSERT INTO audit_log(tenant_id,action,entity_type,entity_id) VALUES($1,'company.admin_invited','user',$2)",
-        [companyId, current.id],
+        "INSERT INTO audit_log(tenant_id,actor_subject,action,entity_type,entity_id,details) VALUES($1,$2,'company.admin_invited','user',$3,$4)",
+        [
+          companyId,
+          req.session.subject,
+          current.id,
+          JSON.stringify({
+            recipient: fresh.email,
+            status: env.LOCAL_EMAIL === 'true' ? 'captured' : 'accepted',
+          }),
+        ],
       );
-    });
-    return {
-      ready: true,
-      message:
-        env.LOCAL_EMAIL === 'true'
-          ? 'Company ready. Invitation captured in the local inbox.'
-          : 'Company ready. Invitation accepted by SMTP.',
-    };
-  } catch (e: any) {
-    return {
-      ready: true,
-      message: 'Company saved; invitation failed. Check SMTP and retry the invitation.',
-    };
-  }
+      return {
+        ready: true,
+        message:
+          env.LOCAL_EMAIL === 'true'
+            ? 'Company ready. Invitation captured in the local inbox.'
+            : 'Company ready. Invitation accepted by SMTP.',
+      };
+    } catch (e: any) {
+      const reason =
+        e?.getResponse?.()?.code === 'IDENTITY_EMAIL_MISMATCH'
+          ? 'Login email and invitation recipient do not match. Ask the platform administrator to review the account.'
+          : 'Check SMTP configuration and retry after one minute.';
+      await db.query(
+        "INSERT INTO audit_log(tenant_id,actor_subject,action,entity_type,entity_id,details) VALUES($1,$2,'company.admin_invitation_failed','user',$3,$4)",
+        [
+          companyId,
+          req.session.subject,
+          current.id,
+          JSON.stringify({ recipient: fresh.email, status: 'failed', reason }),
+        ],
+      );
+      return {
+        ready: true,
+        emailFailed: true,
+        message: 'Invitation failed for ' + fresh.email + '. ' + reason,
+      };
+    }
+  });
 }
 @Controller('api')
 export class CompanyController {
@@ -192,7 +236,21 @@ export class CompanyController {
         ...created,
         message: 'Company already saved. Use Retry setup or Send invitation if needed.',
       };
-    return { ...created, ...(await onboard(req, data.id, true)) };
+    const result = await onboard(req, data.id, true);
+    const account = await operation(req, 'onboarding', { id: data.id });
+    const sharedLogin = (
+      await pool.query('SELECT identity_is_shared($1) AS shared', [account.identity_id])
+    ).rows[0].shared;
+    return {
+      ...created,
+      ...result,
+      sharedLogin,
+      message:
+        result.message +
+        (sharedLogin
+          ? ' Existing login linked to this company. Use the existing password; sign in again to select the new company. Roles and plant access are separate for each company.'
+          : ''),
+    };
   }
   @Patch('platform/companies/:id') async update(
     @Req() req: Request,
@@ -213,6 +271,83 @@ export class CompanyController {
         'Company updated. Status changes apply immediately; users must sign in again after reactivation.',
     };
   }
+  @Patch('platform/companies/:id/admin-email') async correctAdminEmail(
+    @Req() req: Request,
+    @Param('id') companyId: string,
+  ) {
+    const b = body(req, ['email', 'version']);
+    const target = email(b.email),
+      expectedVersion = version(b.version);
+    const current = await operation(req, 'onboarding', { id: id(companyId) });
+    if (!current) fail(404, 'COMPANY_NOT_FOUND', 'Company admin not found.');
+    await scoped(companyId, async (db) => {
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,72))', [current.id]);
+      const old = (await db.query('SELECT * FROM app_users WHERE id=$1 FOR UPDATE', [current.id]))
+        .rows[0];
+      if (old.version !== expectedVersion)
+        fail(409, 'STALE_RECORD', 'Admin changed. Refresh Admin setup before saving.');
+      if (old.email === target) fail(400, 'EMAIL_UNCHANGED', 'Enter the corrected admin email.');
+      if (old.first_login_at)
+        fail(
+          409,
+          'ADMIN_ALREADY_ACTIVATED',
+          'This admin has signed in. Create a new authorised admin from Users instead.',
+        );
+      if (!old.identity_id.startsWith('pending:')) {
+        const response = await identity('/users/' + encodeURIComponent(old.identity_id));
+        if (response.status !== 404) {
+          const kc = (await response.json()) as any;
+          const credentials = (await (
+            await identity('/users/' + encodeURIComponent(old.identity_id) + '/credentials')
+          ).json()) as any[];
+          if (kc.emailVerified || credentials.length)
+            fail(
+              409,
+              'ADMIN_ALREADY_ACTIVATED',
+              'This login has already been activated. Create a new authorised admin from Users instead.',
+            );
+        }
+      }
+      const matches = (await (
+        await identity('/users?exact=true&email=' + encodeURIComponent(target))
+      ).json()) as any[];
+      const usernames = (await (
+        await identity('/users?exact=true&username=' + encodeURIComponent(target))
+      ).json()) as any[];
+      if (
+        matches.length ||
+        usernames.length ||
+        (await db.query('SELECT 1 FROM app_users WHERE lower(email)=$1', [target])).rowCount
+      )
+        fail(
+          409,
+          'EMAIL_EXISTS',
+          'This email already has an account. Use Users to assign the intended admin; existing logins are not replaced here.',
+        );
+      // Detach the mistaken identity from this company. Old invitation links cannot grant
+      // access to the corrected membership; shared identities in other companies are untouched.
+      await db.query(
+        "UPDATE app_users SET email=$1,identity_id='pending:'||id::text,sync_state='pending',sync_error=NULL,invitation_sent_at=NULL,email_attempt_at=NULL,version=version+1,auth_version=auth_version+1 WHERE id=$2",
+        [target, old.id],
+      );
+      await db.query(
+        "INSERT INTO audit_log(tenant_id,actor_subject,action,entity_type,entity_id,details) VALUES($1,$2,'company.admin_email_corrected','user',$3,$4)",
+        [
+          companyId,
+          req.session.subject,
+          old.id,
+          JSON.stringify({ before: old.email, after: target }),
+        ],
+      );
+    });
+    const result = await onboard(req, companyId, false);
+    return {
+      ...result,
+      message: result.ready
+        ? 'Admin email corrected. Review the recipient, then send the invitation.'
+        : 'Admin email saved. ' + result.message,
+    };
+  }
   @Get('platform/companies/:id/onboarding') async status(
     @Req() req: Request,
     @Param('id') companyId: string,
@@ -223,7 +358,20 @@ export class CompanyController {
     const login = await scoped(companyId, (db) =>
       db.query('SELECT first_login_at FROM app_users WHERE id=$1', [data.id]),
     );
-    return { ...safe, first_login_at: login.rows[0]?.first_login_at ?? null };
+    const delivery = await scoped(companyId, (db) =>
+      db.query(
+        "SELECT action,details,created_at FROM audit_log WHERE entity_id=$1 AND action IN ('company.admin_invited','company.admin_invitation_failed','company.admin_email_corrected') ORDER BY id DESC LIMIT 1",
+        [data.id],
+      ),
+    );
+    const sharedLogin = (await pool.query('SELECT identity_is_shared($1) AS shared', [identity_id]))
+      .rows[0].shared;
+    return {
+      ...safe,
+      sharedLogin,
+      first_login_at: login.rows[0]?.first_login_at ?? null,
+      delivery: delivery.rows[0] ?? null,
+    };
   }
   @Post('platform/companies/:id/invite') async invite(
     @Req() req: Request,

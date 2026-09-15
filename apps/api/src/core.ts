@@ -7,6 +7,7 @@ import { createClient } from 'redis';
 import { createRemoteJWKSet } from 'jose';
 declare module 'express-session' {
   interface SessionData {
+    forceLogin?: boolean;
     subject?: string;
     identitySid?: string;
     signedInAt?: number;

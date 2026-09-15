@@ -155,6 +155,12 @@ test('authenticator enrollment, OTP login and identity logout revoke app session
     await p.locator('#password').fill(password);
     await p.locator('#kc-login').click();
     await expect(p.locator('#otp')).toBeVisible();
+    await expect(p.locator('.rare-story')).toBeVisible();
+    await p.screenshot({
+      path: '.local/login-theme-mfa.png',
+      fullPage: true,
+      animations: 'disabled',
+    });
     await expect
       .poll(() => otp(secret), { timeout: 35000, intervals: [500] })
       .not.toBe(enrollmentCode);

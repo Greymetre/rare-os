@@ -23,7 +23,8 @@ export function CompanyHub({
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [form, setForm] = useState<any>(null),
-    [admin, setAdmin] = useState<any>(null);
+    [admin, setAdmin] = useState<any>(null),
+    [correctedEmail, setCorrectedEmail] = useState('');
   async function call(path: string, method = 'GET', data?: unknown) {
     const r = await fetch('/api/' + path, {
       method,
@@ -63,6 +64,7 @@ export function CompanyHub({
   async function action(fn: () => Promise<void>) {
     setBusy(true);
     setError('');
+    setNotice('');
     try {
       await fn();
     } catch (e) {
@@ -189,7 +191,8 @@ export function CompanyHub({
                           }
                         : form,
                     );
-                    setNotice(d.message);
+                    if (d.emailFailed) setError(d.message);
+                    else setNotice(d.message);
                     setForm(null);
                     setRevision((x) => x + 1);
                   });
@@ -220,6 +223,10 @@ export function CompanyHub({
                     />
                   </label>
                 ))}
+                <p>
+                  Contact email is for company communication. Invitations go to the separate Admin
+                  email shown in Admin setup.
+                </p>
                 {form.id && (
                   <label>
                     Status
@@ -234,8 +241,10 @@ export function CompanyHub({
                 )}
                 {!form.id && (
                   <p>
-                    An existing admin email adds a company membership to that login. Its password
-                    stays unchanged.
+                    An existing admin email adds this company to the same login. The existing
+                    password stays unchanged. After signing in again, the user selects a company;
+                    roles and plant access are separate. A duplicate email within the same company
+                    is not allowed.
                   </p>
                 )}
                 <button className="button primary" disabled={busy}>
@@ -301,6 +310,7 @@ export function CompanyHub({
                         onClick={() =>
                           void action(async () => {
                             setForm(null);
+                            setCorrectedEmail('');
                             setAdmin({
                               ...(await call('platform/companies/' + r.id + '/onboarding')),
                               companyId: r.id,
@@ -330,8 +340,75 @@ export function CompanyHub({
             <section className="panel company-form">
               <h2>Admin setup: {admin.company}</h2>
               <p>
-                {admin.name} — {admin.email}
+                {admin.name} — Invitation recipient: <strong>{admin.email}</strong>
               </p>
+              <p>
+                Editing the company Contact email does not change this login or invitation
+                recipient.
+              </p>
+              {admin.delivery?.action === 'company.admin_invitation_failed' && (
+                <div className="error" role="alert">
+                  Last invitation failed for {admin.delivery.details.recipient}.{' '}
+                  {admin.delivery.details.reason ||
+                    'Check SMTP configuration, then retry after one minute.'}
+                </div>
+              )}
+              {admin.delivery?.action === 'company.admin_invited' && (
+                <p>
+                  Last email:{' '}
+                  {admin.delivery.details.status === 'captured'
+                    ? 'Captured in local inbox'
+                    : 'Accepted by SMTP; inbox delivery is not confirmed'}{' '}
+                  — {admin.delivery.details.recipient}
+                </p>
+              )}
+              {admin.sharedLogin && (
+                <div className="notice" role="status">
+                  Existing account — use your existing password. This company has its own role and
+                  plant access. Sign out and sign in again to select the newly added company. A
+                  password reset changes this login for every company.
+                </div>
+              )}
+              {!admin.first_login_at && !admin.sharedLogin && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void action(async () => {
+                      const d = await call(
+                        'platform/companies/' + admin.companyId + '/admin-email',
+                        'PATCH',
+                        { email: correctedEmail, version: admin.version },
+                      );
+                      setNotice(d.message);
+                      setCorrectedEmail('');
+                      setAdmin({
+                        ...admin,
+                        ...(await call('platform/companies/' + admin.companyId + '/onboarding')),
+                      });
+                    });
+                  }}
+                >
+                  <label>
+                    Correct admin email
+                    <input
+                      type="email"
+                      required
+                      maxLength={254}
+                      value={correctedEmail}
+                      onChange={(e) => setCorrectedEmail(e.target.value)}
+                      placeholder="Correct recipient email"
+                    />
+                  </label>
+                  <p>
+                    For an unused login only. If email verification or password setup is already
+                    complete, create the intended admin from Users. Saving does not send email; send
+                    the invitation after checking the recipient.
+                  </p>
+                  <button className="button" disabled={busy || !correctedEmail}>
+                    Save corrected email
+                  </button>
+                </form>
+              )}
               <p>
                 Account:{' '}
                 {admin.first_login_at && admin.sync_state === 'ready'
@@ -364,7 +441,8 @@ export function CompanyHub({
                         'POST',
                         {},
                       );
-                      setNotice(d.message);
+                      if (d.emailFailed) setError(d.message);
+                      else setNotice(d.message);
                       setAdmin({
                         ...admin,
                         ...(await call('platform/companies/' + admin.companyId + '/onboarding')),

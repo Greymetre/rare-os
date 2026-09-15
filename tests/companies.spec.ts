@@ -83,9 +83,12 @@ test('SaaS onboarding, company isolation, switching and status', async ({
   const suffix = Date.now().toString(),
     a = randomUUID(),
     b = randomUUID(),
-    mail = 'company.' + suffix + '@example.test';
+    mail = 'company.' + suffix + '@example.test',
+    wrongMail = 'typo.' + suffix + '@example.test';
   const ids = [a, b];
   let identityId = '';
+  let mistakenIdentityId = '';
+  let smtpStopped = false;
   let customer: any, second: any;
   await login(page);
   const me = await (await page.request.get('/api/me')).json();
@@ -102,7 +105,7 @@ test('SaaS onboarding, company isolation, switching and status', async ({
     await page.getByLabel('Company code', { exact: true }).fill('QA' + suffix);
     await page.getByLabel('Contact email', { exact: true }).fill(mail);
     await page.getByLabel('Admin full name', { exact: true }).fill('Company Admin');
-    await page.getByLabel('Admin email', { exact: true }).fill(mail);
+    await page.getByLabel('Admin email', { exact: true }).fill(wrongMail);
     await page.getByRole('button', { name: 'Save company' }).click();
     await expect(
       page.getByText('Company ready. Invitation captured in the local inbox.', { exact: true }),
@@ -117,6 +120,154 @@ test('SaaS onboarding, company isolation, switching and status', async ({
       await call('platform/companies/' + company.id + '/onboarding')
     ).json();
     identityId = sql(`SELECT identity_id FROM app_users WHERE id='${onboarding.id}'`);
+    mistakenIdentityId = identityId;
+    // Contact edits must not silently change identity ownership or invitation destination.
+    expect(
+      (
+        await call('platform/companies/' + company.id, 'PATCH', {
+          name: company.name,
+          contactEmail: mail,
+          active: true,
+          version: company.version,
+        })
+      ).ok(),
+    ).toBe(true);
+    company.version++;
+    expect(
+      (await (await call('platform/companies/' + company.id + '/onboarding')).json()).email,
+    ).toBe(wrongMail);
+    await mailLink(wrongMail, request);
+    expect(
+      (
+        await call('platform/companies/' + company.id + '/admin-email', 'PATCH', {
+          email: env.SEED_ADMIN_EMAIL,
+          version: onboarding.version,
+        })
+      ).status(),
+    ).toBe(409);
+    const row = page.getByRole('row').filter({ hasText: company.name });
+    await row.getByRole('button', { name: 'Admin setup', exact: true }).click();
+    await page.getByLabel('Correct admin email', { exact: true }).fill(mail);
+    await page.getByRole('button', { name: 'Save corrected email', exact: true }).click();
+    await expect(
+      page.getByText('Admin email corrected. Review the recipient, then send the invitation.', {
+        exact: true,
+      }),
+    ).toBeVisible();
+    const corrected = await (await call('platform/companies/' + company.id + '/onboarding')).json();
+    expect(corrected.email).toBe(mail);
+    expect(corrected.invitation_sent_at).toBeNull();
+    identityId = sql(`SELECT identity_id FROM app_users WHERE id='${onboarding.id}'`);
+    expect(identityId).not.toBe(mistakenIdentityId);
+    expect(
+      sql(
+        `SELECT count(*) FROM session_memberships('${mistakenIdentityId}') WHERE tenant_id='${company.id}'`,
+      ),
+    ).toBe('0');
+    expect(
+      (
+        await call('platform/companies/' + company.id + '/admin-email', 'PATCH', {
+          email: 'stale.' + mail,
+          version: onboarding.version,
+        })
+      ).status(),
+    ).toBe(409);
+    const identityHeaders = {
+      Authorization: 'Bearer ' + (await identityToken()),
+      'Content-Type': 'application/json',
+    };
+    expect(
+      (
+        await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+          method: 'PUT',
+          headers: identityHeaders,
+          body: JSON.stringify({ emailVerified: true }),
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await call('platform/companies/' + company.id + '/admin-email', 'PATCH', {
+          email: 'verified.' + mail,
+          version: corrected.version,
+        })
+      ).status(),
+    ).toBe(409);
+    expect(
+      (
+        await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+          method: 'PUT',
+          headers: identityHeaders,
+          body: JSON.stringify({ emailVerified: false }),
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+          method: 'PUT',
+          headers: identityHeaders,
+          body: JSON.stringify({ email: 'mismatch.' + mail }),
+        })
+      ).ok,
+    ).toBe(true);
+    const mismatch = await (
+      await call('platform/companies/' + company.id + '/invite', 'POST', {})
+    ).json();
+    expect(mismatch.emailFailed).toBe(true);
+    expect(mismatch.message).toContain('do not match');
+    expect(
+      (
+        await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+          method: 'PUT',
+          headers: identityHeaders,
+          body: JSON.stringify({ email: mail }),
+        })
+      ).ok,
+    ).toBe(true);
+    sql(
+      `UPDATE app_users SET email_attempt_at=now()-interval '2 minutes' WHERE id='${onboarding.id}'`,
+    );
+    // Real local SMTP outage: no delivered status or timestamp may be reported.
+    execFileSync('docker', ['compose', 'stop', 'mailpit'], { stdio: 'pipe' });
+    smtpStopped = true;
+    try {
+      await page.getByRole('button', { name: 'Send invitation', exact: true }).click();
+      await expect(
+        page.getByRole('alert').filter({ hasText: /^Invitation failed for/ }),
+      ).toBeVisible({ timeout: 25000 });
+      const failed = await (await call('platform/companies/' + company.id + '/onboarding')).json();
+      expect(failed.delivery.details.status).toBe('failed');
+      expect(failed.invitation_sent_at).toBeNull();
+    } finally {
+      execFileSync('docker', ['compose', 'start', 'mailpit'], { stdio: 'pipe' });
+      smtpStopped = false;
+    }
+    await expect
+      .poll(
+        async () => {
+          try {
+            return (await request.get('http://localhost:4312/livez')).status();
+          } catch {
+            return 0;
+          }
+        },
+        { timeout: 15000 },
+      )
+      .toBe(200);
+    sql(
+      `UPDATE app_users SET email_attempt_at=now()-interval '2 minutes' WHERE id='${onboarding.id}'`,
+    );
+    await page.getByRole('button', { name: 'Send invitation', exact: true }).click();
+    await expect(
+      page.getByText('Company ready. Invitation captured in the local inbox.', { exact: true }),
+    ).toBeVisible();
+    expect((await call('platform/companies/' + company.id + '/invite', 'POST', {})).status()).toBe(
+      429,
+    );
+    const sent = await (await call('platform/companies/' + company.id + '/onboarding')).json();
+    expect(sent.delivery.details.recipient).toBe(mail);
+    expect(sent.delivery.details.status).toBe('captured');
     const payload = {
       requestId: b,
       name: 'QA Shared ' + suffix,
@@ -125,7 +276,14 @@ test('SaaS onboarding, company isolation, switching and status', async ({
       adminName: 'Main Admin',
       adminEmail: env.SEED_ADMIN_EMAIL,
     };
-    expect((await call('platform/companies', 'POST', payload)).ok()).toBe(true);
+    const sharedCreated = await call('platform/companies', 'POST', payload);
+    expect(sharedCreated.ok()).toBe(true);
+    const sharedResult = await sharedCreated.json();
+    expect(sharedResult.sharedLogin).toBe(true);
+    expect(sharedResult.message).toContain('Use the existing password');
+    expect((await (await call('platform/companies/' + b + '/onboarding')).json()).sharedLogin).toBe(
+      true,
+    );
     expect((await call('platform/companies', 'POST', payload)).ok()).toBe(true);
     expect(
       (await call('platform/companies', 'POST', { ...payload, requestId: randomUUID() })).status(),
@@ -160,6 +318,22 @@ test('SaaS onboarding, company isolation, switching and status', async ({
         headers: { Origin: env.APP_URL, 'X-CSRF-Token': cm.csrfToken },
         data,
       });
+    expect(
+      (
+        await cc('platform/companies/' + company.id + '/admin-email', 'PATCH', {
+          email: 'denied.' + mail,
+          version: corrected.version,
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await call('platform/companies/' + company.id + '/admin-email', 'PATCH', {
+          email: 'activated.' + mail,
+          version: corrected.version,
+        })
+      ).status(),
+    ).toBe(409);
     const self = await (await cc('users/' + cm.user.id)).json();
     const last = await cc('users/' + self.id, 'PATCH', {
       name: self.name,
@@ -226,8 +400,9 @@ test('SaaS onboarding, company isolation, switching and status', async ({
     await page.screenshot({ path: '.local/company-management.png', fullPage: true });
   } finally {
     test.setTimeout(150000);
-    if (identityId)
-      await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+    if (smtpStopped) execFileSync('docker', ['compose', 'start', 'mailpit'], { stdio: 'pipe' });
+    for (const cleanupId of [identityId, mistakenIdentityId].filter(Boolean))
+      await fetch('http://localhost:4311/admin/realms/rare-os/users/' + cleanupId, {
         method: 'DELETE',
         headers: { Authorization: 'Bearer ' + (await identityToken()) },
       });

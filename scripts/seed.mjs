@@ -53,6 +53,7 @@ if ((await admin('/realms/rare-os')).status === 404)
     accessTokenLifespan: 300,
     ssoSessionIdleTimeout: 1800,
   });
+await admin('/realms/rare-os', 'PUT', { loginTheme: 'rare-os' });
 const client = {
   clientId: 'rare-os-web',
   name: 'RARE OS Web',

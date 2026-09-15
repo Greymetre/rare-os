@@ -64,6 +64,12 @@ function Brand() {
   );
 }
 function App() {
+  const [openingLogin, setOpeningLogin] = useState(false);
+  useEffect(() => {
+    const reset = () => setOpeningLogin(false);
+    window.addEventListener('pageshow', reset);
+    return () => window.removeEventListener('pageshow', reset);
+  }, []);
   const [companyContext, setCompanyContext] = useState<{
     memberships: Membership[];
     platformAdmin: boolean;
@@ -216,7 +222,7 @@ function App() {
           <small>RARE OS · Operations workspace</small>
         </section>
         <main className="login-panel">
-          <div className="login-card">
+          <div className={'login-card' + (openingLogin ? ' login-opening' : '')}>
             <span className="eyebrow">LET’S GET TO WORK</span>
             <h2>Welcome to RARE OS</h2>
             <p>Sign in with your company account to access your workspace.</p>
@@ -228,7 +234,7 @@ function App() {
             {authError && (
               <div className="error" role="alert">
                 {authError === 'access'
-                  ? 'This account has no active workspace membership. Contact your administrator.'
+                  ? 'This account has no active workspace membership. If your admin email was corrected, use the latest invitation sent to the corrected email. You can sign in with another account below.'
                   : authError === 'expired'
                     ? 'Your sign-in link expired. Please start again.'
                     : 'Sign-in could not complete. Please retry or contact your administrator.'}
@@ -242,8 +248,33 @@ function App() {
                 </button>
               </div>
             )}
-            <a className="button primary full" href="/api/auth/login">
-              Sign in securely <span>→</span>
+            <a
+              className="button primary full"
+              href={
+                authError === 'access' ? '/api/auth/login?switchAccount=true' : '/api/auth/login'
+              }
+              aria-disabled={openingLogin}
+              onClick={(event) => {
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                if (openingLogin) return;
+                setOpeningLogin(true);
+                const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                  ? 0
+                  : 180;
+                window.setTimeout(
+                  () =>
+                    location.assign(
+                      authError === 'access'
+                        ? '/api/auth/login?switchAccount=true'
+                        : '/api/auth/login',
+                    ),
+                  delay,
+                );
+              }}
+            >
+              {authError === 'access' ? 'Sign in with another account' : 'Sign in securely'}{' '}
+              <span>→</span>
             </a>
             <div className="security-note">
               <span>◈</span> Protected with company access controls.
