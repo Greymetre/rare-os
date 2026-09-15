@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Install root-owned at /usr/local/sbin/rare-os-deploy; used as an SSH forced command.
+set -Eeuo pipefail
+umask 077
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+command_text=${SSH_ORIGINAL_COMMAND:-}
+if [[ ! "$command_text" =~ ^deploy\ ([0-9a-f]{40})$ ]]; then
+  echo 'Only deploy followed by a full commit SHA is allowed.' >&2
+  exit 64
+fi
+target=${BASH_REMATCH[1]}
+cd /var/www/rare-os
+exec 9>/var/lock/rare-os-deploy.lock
+flock -w 1800 9
+[[ -f .env && -f compose.override.yaml ]] || { echo 'Missing server environment/override.' >&2; exit 1; }
+[[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo 'Tracked server changes must be reviewed before deployment.' >&2; exit 1; }
+git fetch origin main
+if [[ "$(git rev-parse origin/main)" != "$target" ]]; then
+  echo 'Skipped: a newer main commit exists. Only the latest checked commit can deploy.'
+  exit 0
+fi
+previous=$(git rev-parse HEAD)
+mkdir -p .local/deploy
+phase=prepare
+stopped=false
+applying=false
+finished=false
+on_exit() {
+  status=$?
+  if [[ "$finished" != true ]]; then
+    printf 'commit=%s\nprevious=%s\nphase=%s\nexit=%s\n' "$target" "$previous" "$phase" "$status" > .local/deploy/last-failure.txt
+    if [[ "$applying" != true ]]; then
+      # No migration has run. Restore the checkout and existing container instances.
+      git checkout --detach "$previous" || true
+      if [[ "$stopped" == true ]]; then docker compose start keycloak api worker web || true; fi
+    fi
+    echo "Deployment failed during $phase. See .local/deploy/last-failure.txt and the backup path in this run. No database downgrade was attempted." >&2
+  fi
+}
+trap on_exit EXIT
+printf 'commit=%s\nprevious=%s\n' "$target" "$previous" > .local/deploy/current-attempt.txt
+# Exact commit tested by this workflow, never an unchecked pull of a newer revision.
+git checkout --detach "$target"
+docker compose config --quiet
+phase=build
+docker compose build
+# Save references for a reviewed, schema-compatible application rollback. No image pruning.
+for service in api worker web keycloak; do
+  container=$(docker compose ps -q "$service")
+  if [[ -n "$container" ]]; then
+    image_id=$(docker inspect --format '{{.Image}}' "$container")
+    docker image tag "$image_id" "rare-os-rollback-$service:$previous"
+  fi
+done
+phase=backup
+stopped=true
+docker compose stop web api worker keycloak
+# Both application and identity writes are paused while the existing dump validator runs.
+node scripts/backup-local.mjs | tee .local/deploy/last-backup.txt
+phase=apply
+applying=true
+docker compose up -d --no-build
+for service in migrate seed; do
+  container=$(docker compose ps -a -q "$service")
+  [[ -n "$container" ]] || { echo "Missing $service container" >&2; exit 1; }
+  [[ "$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$container")" == 'exited:0' ]] || { echo "$service did not complete successfully" >&2; exit 1; }
+done
+phase=health
+for service in web worker keycloak; do
+  container=$(docker compose ps -q "$service")
+  [[ -n "$container" ]] || { echo "$service is not running" >&2; exit 1; }
+  [[ "$(docker inspect --format '{{.State.Running}}' "$container")" == true ]] || exit 1
+done
+curl --fail --silent --show-error --output /dev/null --max-time 15 --retry 8 --retry-delay 5 --retry-all-errors https://rare.greymetre.io/
+curl --fail --silent --show-error --output /dev/null --max-time 15 --retry 8 --retry-delay 5 --retry-all-errors https://rare.greymetre.io/api/health
+curl --fail --silent --show-error --output /dev/null --max-time 15 --retry 8 --retry-delay 5 --retry-all-errors https://auth.rare.greymetre.io/realms/rare-os/.well-known/openid-configuration
+printf 'commit=%s\nprevious=%s\ncompleted_at=%s\n' "$target" "$previous" "$(date -u +%FT%TZ)" > .local/deploy/last-success.txt
+finished=true
+echo "Deployment and HTTPS checks passed: $target"
