@@ -27,8 +27,10 @@ services:
       LOCAL_EMAIL: 'false'
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
   caddy:
-    image: caddy:2-alpine
-    ports: ['80:80', '443:443']
+    image: rare-os-caddy
+    build: { context: ., dockerfile: infra/docker/Caddy.Dockerfile }
+    security_opt: [no-new-privileges:true]
+    ports: ['80:8080', '443:8443']
     environment:
       APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN without https}
       AUTH_DOMAIN: ${AUTH_DOMAIN:?Set AUTH_DOMAIN without https}

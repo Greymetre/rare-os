@@ -1,17 +1,10 @@
+import { loadTestEnvironment } from './helpers/test-environment.mjs';
+import { completeTestMfa } from './helpers/mfa';
 import { permissions as catalog } from '../packages/schema/permissions.mjs';
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-const env = Object.fromEntries(
-  readFileSync('.env', 'utf8')
-    .trim()
-    .split('\n')
-    .map((x) => {
-      const i = x.indexOf('=');
-      return [x.slice(0, i), x.slice(i + 1)];
-    }),
-);
+const env = loadTestEnvironment();
 const sql = (query: string) =>
   execFileSync(
     'docker',
@@ -41,10 +34,11 @@ async function login(page: any) {
   await page.locator('#username').fill(env.SEED_ADMIN_EMAIL);
   await page.locator('#password').fill(env.SEED_ADMIN_PASSWORD);
   await page.locator('#kc-login').click();
+  await completeTestMfa(page, env.SEED_ADMIN_EMAIL);
   await expect(page.getByRole('heading', { name: 'Your operations start here.' })).toBeVisible();
 }
 async function identityToken() {
-  const r = await fetch('http://localhost:4311/realms/rare-os/protocol/openid-connect/token', {
+  const r = await fetch(env.AUTH_URL + '/realms/rare-os/protocol/openid-connect/token', {
     method: 'POST',
     body: new URLSearchParams({
       grant_type: 'client_credentials',
@@ -59,7 +53,7 @@ async function mailLink(email: string, request: any) {
   await expect
     .poll(
       async () => {
-        const list = await (await request.get('http://localhost:4312/api/v1/messages')).json();
+        const list = await (await request.get(env.MAILPIT_URL + '/api/v1/messages')).json();
         message = list.messages?.find((m: any) => m.To?.some((to: any) => to.Address === email));
         return !!message;
       },
@@ -67,7 +61,7 @@ async function mailLink(email: string, request: any) {
     )
     .toBe(true);
   const content = await (
-    await request.get('http://localhost:4312/api/v1/message/' + message.ID)
+    await request.get(env.MAILPIT_URL + '/api/v1/message/' + message.ID)
   ).json();
   const match = content.HTML.match(/href="([^"]*login-actions\/action-token[^"]*)"/);
   expect(match).toBeTruthy();
@@ -193,12 +187,14 @@ test('role/user management, invitations, activation and safe access changes', as
     await userPage.locator('#password-new').fill('Qa-Strong-Password-2026!');
     await userPage.locator('#password-confirm').fill('Qa-Strong-Password-2026!');
     await userPage.getByRole('button', { name: /submit/i }).click();
+    await completeTestMfa(userPage, emailAddress);
     const back = userPage.getByRole('link', { name: /back to application/i });
     if (await back.isVisible()) await back.click();
     await expect(userPage.getByLabel('Username or email')).toBeVisible();
     await userPage.getByLabel('Username or email').fill(emailAddress);
     await userPage.getByLabel('Password', { exact: true }).fill('Qa-Strong-Password-2026!');
     await userPage.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await completeTestMfa(userPage, emailAddress);
     await expect(
       userPage.getByRole('heading', { name: 'Your operations start here.' }),
     ).toBeVisible({ timeout: 15000 });
@@ -300,7 +296,7 @@ test('role/user management, invitations, activation and safe access changes', as
     if (userId) {
       if (!identityId) identityId = sql(`SELECT identity_id FROM app_users WHERE id='${userId}'`);
       if (identityId && !identityId.startsWith('pending:'))
-        await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+        await fetch(env.AUTH_URL + '/admin/realms/rare-os/users/' + identityId, {
           method: 'DELETE',
           headers: { Authorization: 'Bearer ' + (await identityToken()) },
         });

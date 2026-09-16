@@ -1,0 +1,10 @@
+[Unit]
+Description=RARE OS restore-drill
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rare-os-ops restore-drill
+TimeoutStartSec=45min
+Nice=10

@@ -19,7 +19,8 @@ case "$(basename "$0"):$*" in
   'git:status --porcelain --untracked-files=no') [[ "$TEST_MODE" != dirty ]] || echo ' M tracked';;
   'git:rev-parse origin/main') if [[ "$TEST_MODE" == stale ]]; then echo '${previous}'; else echo '${revision}'; fi;;
   'git:rev-parse HEAD') echo '${previous}';;
-  'docker:compose build') [[ "$TEST_MODE" != build ]];;
+  'docker:compose pull --ignore-buildable') [[ "$TEST_MODE" != pull ]];;
+  'docker:compose build --pull') [[ "$TEST_MODE" != build ]];;
   'docker:compose ps -q '*|'docker:compose ps -a -q '*) echo container;;
   'docker:inspect --format {{.Image}} container') echo 'sha256:fixture';;
   'docker:image inspect sha256:fixture') [[ "$TEST_MODE" != missing-image ]];;
@@ -73,7 +74,9 @@ test('deploy builds before downtime and backs up before applying migrations and 
   assert.equal(r.successful, true);
   const steps = [
     'docker image tag',
-    'docker compose build',
+    'docker compose pull --ignore-buildable',
+    'docker compose build --pull',
+    'docker compose --profile ops build --pull ops',
     'docker compose run --rm --no-deps migrate node scripts/deploy/check-runtime.mjs',
     'docker compose stop',
     'node scripts/backup-local.mjs',
@@ -83,7 +86,10 @@ test('deploy builds before downtime and backs up before applying migrations and 
   const positions = steps.map((step) => r.events.indexOf(step));
   assert.ok(positions.every((p, i) => p >= 0 && (i === 0 || p > positions[i - 1])));
 });
-test('build failure leaves services running; backup failure restores previous instances', () => {
+test('pull or build failure leaves services running; backup failure restores previous instances', () => {
+  const pull = run('pull');
+  assert.notEqual(pull.status, 0);
+  assert.doesNotMatch(pull.events, /docker compose (build|stop|up)/);
   const build = run('build');
   assert.notEqual(build.status, 0);
   assert.doesNotMatch(build.events, /docker compose stop/);

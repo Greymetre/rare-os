@@ -8,6 +8,7 @@ import { createRemoteJWKSet } from 'jose';
 declare module 'express-session' {
   interface SessionData {
     forceLogin?: boolean;
+    mfaVerified?: boolean;
     subject?: string;
     identitySid?: string;
     signedInAt?: number;

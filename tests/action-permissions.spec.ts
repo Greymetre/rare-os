@@ -1,15 +1,10 @@
+import { loadTestEnvironment } from './helpers/test-environment.mjs';
+import { completeTestMfa } from './helpers/mfa';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-const env = Object.fromEntries(
-  readFileSync('.env', 'utf8')
-    .split('\n')
-    .map((l) => {
-      const i = l.indexOf('=');
-      return [l.slice(0, i), l.slice(i + 1)];
-    }),
-);
+const env = loadTestEnvironment();
 const sql = (query: string) =>
   execFileSync(
     'docker',
@@ -67,7 +62,7 @@ test('independent role actions, user-sensitive actions and plant scope enforced 
   let context: any;
   const token = (
     await (
-      await request.post('http://localhost:4311/realms/rare-os/protocol/openid-connect/token', {
+      await request.post(env.AUTH_URL + '/realms/rare-os/protocol/openid-connect/token', {
         form: {
           grant_type: 'client_credentials',
           client_id: 'rare-os-identity',
@@ -82,6 +77,7 @@ test('independent role actions, user-sensitive actions and plant scope enforced 
   await page.locator('#username').fill(env.SEED_ADMIN_EMAIL);
   await page.locator('#password').fill(env.SEED_ADMIN_PASSWORD);
   await page.locator('#kc-login').click();
+  await completeTestMfa(page, env.SEED_ADMIN_EMAIL);
   await expect(page.locator('.main > header')).toBeVisible();
   const me = await (await page.request.get('/api/me')).json();
   const call = (path: string, method = 'GET', data?: unknown) =>
@@ -123,7 +119,7 @@ test('independent role actions, user-sensitive actions and plant scope enforced 
     expect(
       (
         await request.put(
-          'http://localhost:4311/admin/realms/rare-os/users/' + identityId + '/reset-password',
+          env.AUTH_URL + '/admin/realms/rare-os/users/' + identityId + '/reset-password',
           {
             headers: kcHeaders,
             data: { type: 'password', value: 'Action-Test-2026!', temporary: false },
@@ -133,7 +129,7 @@ test('independent role actions, user-sensitive actions and plant scope enforced 
     ).toBe(true);
     expect(
       (
-        await request.put('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+        await request.put(env.AUTH_URL + '/admin/realms/rare-os/users/' + identityId, {
           headers: kcHeaders,
           data: { emailVerified: true, requiredActions: [] },
         })
@@ -141,10 +137,11 @@ test('independent role actions, user-sensitive actions and plant scope enforced 
     ).toBe(true);
     context = await browser.newContext();
     const up = await context.newPage();
-    await up.goto('http://localhost:4310/api/auth/login');
+    await up.goto(env.APP_URL + '/api/auth/login');
     await up.locator('#username').fill(email);
     await up.locator('#password').fill('Action-Test-2026!');
     await up.locator('#kc-login').click();
+    await completeTestMfa(up, email);
     await expect(up.locator('.main > header')).toBeVisible();
     const um = await (await up.request.get('/api/me')).json();
     const act = (path: string, method = 'GET', data?: unknown) =>
@@ -284,7 +281,7 @@ test('independent role actions, user-sensitive actions and plant scope enforced 
   } finally {
     await context?.close();
     if (identityId)
-      await request.delete('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+      await request.delete(env.AUTH_URL + '/admin/realms/rare-os/users/' + identityId, {
         headers: kcHeaders,
       });
     sql(

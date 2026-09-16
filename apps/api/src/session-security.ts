@@ -1,12 +1,36 @@
 import type { Request } from 'express';
 import { jwtVerify } from 'jose';
-import { redis, jwks, authUrl, realm, fail } from './core.js';
+import { identity } from './identity.js';
+import { redis, jwks, authUrl, realm, fail, pool } from './core.js';
 export const sessionLifetimeMs = 12 * 60 * 60 * 1000;
+export async function requiresMfa(subject: string) {
+  return (await pool.query('SELECT identity_requires_mfa($1) AS required', [subject])).rows[0]
+    .required as boolean;
+}
 export async function verifySession(req: Request) {
   if (!req.session.subject || !req.session.signedInAt || !req.session.identitySid)
     fail(401, 'LOGIN_REQUIRED', 'Please sign in again to continue.');
   if (Date.now() - req.session.signedInAt! > sessionLifetimeMs)
     fail(401, 'SESSION_EXPIRED', 'Your session expired. Please sign in again.');
+  if (await requiresMfa(req.session.subject!)) {
+    const credentials = req.session.mfaVerified
+      ? ((await (
+          await identity('/users/' + encodeURIComponent(req.session.subject!) + '/credentials')
+        ).json()) as any[])
+      : [];
+    if (
+      !req.session.mfaVerified ||
+      !Array.isArray(credentials) ||
+      !credentials.some((c) => c.type === 'otp')
+    ) {
+      req.session.forceLogin = true;
+      fail(
+        401,
+        'ADMIN_MFA_REQUIRED',
+        'MFA is required for administrator access. Sign in again to set it up or verify your code.',
+      );
+    }
+  }
   const [sid, subject] = await redis.mGet([
     'rare:revoked:sid:' + req.session.identitySid,
     'rare:revoked:subject:' + req.session.subject,

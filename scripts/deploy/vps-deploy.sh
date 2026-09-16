@@ -65,7 +65,10 @@ done
 node scripts/deploy/prepare-source.mjs
 docker compose config --quiet
 phase=build
-docker compose build
+docker compose pull --ignore-buildable
+docker compose build --pull
+# Scheduled backup/monitor jobs must run the same release, so rebuild the profiled ops image too.
+docker compose --profile ops build --pull ops
 # Read every migration and executable entry point as the actual runtime user before downtime.
 phase=preflight
 docker compose run --rm --no-deps migrate node scripts/deploy/check-runtime.mjs

@@ -1,16 +1,9 @@
+import { loadTestEnvironment } from './helpers/test-environment.mjs';
+import { completeTestMfa } from './helpers/mfa';
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-const env = Object.fromEntries(
-  readFileSync('.env', 'utf8')
-    .trim()
-    .split('\n')
-    .map((x) => {
-      const i = x.indexOf('=');
-      return [x.slice(0, i), x.slice(i + 1)];
-    }),
-);
+const env = loadTestEnvironment();
 const sql = (query: string) =>
   execFileSync(
     'docker',
@@ -40,12 +33,13 @@ async function login(page: any) {
   await page.locator('#username').fill(env.SEED_ADMIN_EMAIL);
   await page.locator('#password').fill(env.SEED_ADMIN_PASSWORD);
   await page.locator('#kc-login').click();
+  await completeTestMfa(page, env.SEED_ADMIN_EMAIL);
   await expect(
     page.getByRole('heading', { name: /Your operations start here.|Company management/ }),
   ).toBeVisible();
 }
 async function identityToken() {
-  const r = await fetch('http://localhost:4311/realms/rare-os/protocol/openid-connect/token', {
+  const r = await fetch(env.AUTH_URL + '/realms/rare-os/protocol/openid-connect/token', {
     method: 'POST',
     body: new URLSearchParams({
       grant_type: 'client_credentials',
@@ -60,7 +54,7 @@ async function mailLink(email: string, request: any) {
   await expect
     .poll(
       async () => {
-        const list = await (await request.get('http://localhost:4312/api/v1/messages')).json();
+        const list = await (await request.get(env.MAILPIT_URL + '/api/v1/messages')).json();
         message = list.messages?.find((m: any) => m.To?.some((to: any) => to.Address === email));
         return !!message;
       },
@@ -68,7 +62,7 @@ async function mailLink(email: string, request: any) {
     )
     .toBe(true);
   const content = await (
-    await request.get('http://localhost:4312/api/v1/message/' + message.ID)
+    await request.get(env.MAILPIT_URL + '/api/v1/message/' + message.ID)
   ).json();
   const match = content.HTML.match(/href="([^"]*login-actions\/action-token[^"]*)"/);
   expect(match).toBeTruthy();
@@ -184,7 +178,7 @@ test('SaaS onboarding, company isolation, switching and status', async ({
     };
     expect(
       (
-        await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+        await fetch(env.AUTH_URL + '/admin/realms/rare-os/users/' + identityId, {
           method: 'PUT',
           headers: identityHeaders,
           body: JSON.stringify({ emailVerified: true }),
@@ -201,7 +195,7 @@ test('SaaS onboarding, company isolation, switching and status', async ({
     ).toBe(409);
     expect(
       (
-        await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+        await fetch(env.AUTH_URL + '/admin/realms/rare-os/users/' + identityId, {
           method: 'PUT',
           headers: identityHeaders,
           body: JSON.stringify({ emailVerified: false }),
@@ -210,7 +204,7 @@ test('SaaS onboarding, company isolation, switching and status', async ({
     ).toBe(true);
     expect(
       (
-        await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+        await fetch(env.AUTH_URL + '/admin/realms/rare-os/users/' + identityId, {
           method: 'PUT',
           headers: identityHeaders,
           body: JSON.stringify({ email: 'mismatch.' + mail }),
@@ -224,7 +218,7 @@ test('SaaS onboarding, company isolation, switching and status', async ({
     expect(mismatch.message).toContain('do not match');
     expect(
       (
-        await fetch('http://localhost:4311/admin/realms/rare-os/users/' + identityId, {
+        await fetch(env.AUTH_URL + '/admin/realms/rare-os/users/' + identityId, {
           method: 'PUT',
           headers: identityHeaders,
           body: JSON.stringify({ email: mail }),
@@ -253,7 +247,7 @@ test('SaaS onboarding, company isolation, switching and status', async ({
       .poll(
         async () => {
           try {
-            return (await request.get('http://localhost:4312/livez')).status();
+            return (await request.get(env.MAILPIT_URL + '/livez')).status();
           } catch {
             return 0;
           }
@@ -302,6 +296,7 @@ test('SaaS onboarding, company isolation, switching and status', async ({
     await cp.locator('#password-new').fill('Company-Password-2026!');
     await cp.locator('#password-confirm').fill('Company-Password-2026!');
     await cp.getByRole('button', { name: /submit/i }).click();
+    await completeTestMfa(cp, mail);
     await expect(
       cp.locator('#username').or(cp.getByRole('link', { name: /back to application/i })),
     ).toBeVisible();
@@ -310,6 +305,7 @@ test('SaaS onboarding, company isolation, switching and status', async ({
     await cp.locator('#username').fill(mail);
     await cp.locator('#password').fill('Company-Password-2026!');
     await cp.locator('#kc-login').click();
+    await completeTestMfa(cp, mail);
     await expect(cp.getByRole('heading', { name: 'Your operations start here.' })).toBeVisible();
     const cm = await (await cp.request.get('/api/me')).json();
     expect(cm.user.tenant_id).toBe(company.id);
@@ -408,7 +404,7 @@ test('SaaS onboarding, company isolation, switching and status', async ({
     test.setTimeout(150000);
     if (smtpStopped) execFileSync('docker', ['compose', 'start', 'mailpit'], { stdio: 'pipe' });
     for (const cleanupId of [identityId, mistakenIdentityId].filter(Boolean))
-      await fetch('http://localhost:4311/admin/realms/rare-os/users/' + cleanupId, {
+      await fetch(env.AUTH_URL + '/admin/realms/rare-os/users/' + cleanupId, {
         method: 'DELETE',
         headers: { Authorization: 'Bearer ' + (await identityToken()) },
       });

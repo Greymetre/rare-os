@@ -78,18 +78,9 @@ After this, future main pushes deploy automatically when checks pass. To pause a
 
 Build fails: services remain running. Backup fails: old checkout and existing containers are restarted; no migration is applied. Apply/migration/health failure: job fails, no blind schema downgrade or automatic old-code restart. Inspect failure and logs from VPS (avoid sharing sensitive full logs); fix forward or perform a reviewed compatible rollback. A cancelled/killed runner or VPS power loss may interrupt cleanup, so check status before another release.
 
-### Manual application rollback — only after schema compatibility review
+### Application rollback
 
-1. Pause auto deploy, wait for any running deployment, identify the actual last good SHA from receipts/Actions (the previous checkout is not necessarily healthy after repeated failures).
-2. Verify new DB schema is compatible with that application version. Backup current DB before rollback. Incompatible/destructive migration requires a separately reviewed database restore/reconciliation plan, not this command.
-3. Check out the chosen good commit on VPS; this also restores its bind-mounted identity theme. Create `.local/deploy/rollback.yaml` with image names `rare-os-rollback-api:<good-sha>`, `rare-os-rollback-worker:<good-sha>`, `rare-os-rollback-web:<good-sha>`, `rare-os-rollback-keycloak:<good-sha>` under their corresponding services. Check these tags exist first.
-4. Restart only application services, without running migrations/seeder or deleting volumes:
-
-```bash
-docker compose -f compose.yaml -f compose.override.yaml -f .local/deploy/rollback.yaml up -d --no-build --no-deps --force-recreate keycloak api worker web
-```
-
-5. Verify HTTPS, login and known records; record rollback. Fix main, rerun checks and enable deployment. Never run `down -v`, schema downgrade, or restore over current DB blindly.
+Use the tested `rare-os-rollback` command; full steps are in `docs/OPERATIONS_HINGLISH.md`. It verifies rollback images, refuses an image-only rollback when newer migrations or a changed custom Keycloak provider make the data incompatible (exit 2), takes a safety backup, renames (never drops) live databases before restoring the pre-deploy backup, starts the previous commit's images without migrate/seed and runs health checks. Rehearsed locally end-to-end (live `ddc668a` → current release → rollback → roll-forward); see `docs/VALIDATION.md`.
 
 ## Validation scope
 

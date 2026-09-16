@@ -233,11 +233,13 @@ function App() {
             )}
             {authError && (
               <div className="error" role="alert">
-                {authError === 'access'
-                  ? 'This account has no active workspace membership. If your admin email was corrected, use the latest invitation sent to the corrected email. You can sign in with another account below.'
-                  : authError === 'expired'
-                    ? 'Your sign-in link expired. Please start again.'
-                    : 'Sign-in could not complete. Please retry or contact your administrator.'}
+                {authError === 'mfa'
+                  ? 'Administrator access requires MFA. Sign in again to set up an authenticator or verify your code.'
+                  : authError === 'access'
+                    ? 'This account has no active workspace membership. If your admin email was corrected, use the latest invitation sent to the corrected email. You can sign in with another account below.'
+                    : authError === 'expired'
+                      ? 'Your sign-in link expired. Please start again.'
+                      : 'Sign-in could not complete. Please retry or contact your administrator.'}
               </div>
             )}
             {bootError && (
@@ -373,7 +375,9 @@ function App() {
                         ? 'Every action starts with the right access.'
                         : page === 'Audit log'
                           ? 'A traceable record of activity in your company.'
-                          : 'Build a dependable plan from your plant’s actual data.'}
+                          : page === 'Security'
+                            ? 'Manage your sign-in protection and authenticator devices.'
+                            : 'Build a dependable plan from your plant’s actual data.'}
               </p>
             </div>
             <button

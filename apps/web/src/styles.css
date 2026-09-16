@@ -1194,3 +1194,29 @@ footer span {
   white-space: nowrap;
   border: 0;
 }
+
+.mfa-device-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+}
+.mfa-device-list li {
+  padding: 16px;
+  border: 1px solid var(--line, #dcdfe8);
+  border-radius: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+.mfa-device-list span {
+  color: #737b8e;
+}
+.mfa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}

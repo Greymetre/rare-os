@@ -1,16 +1,9 @@
+import { loadTestEnvironment } from './helpers/test-environment.mjs';
+import { completeTestMfa } from './helpers/mfa';
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
-const env = Object.fromEntries(
-  readFileSync('.env', 'utf8')
-    .trim()
-    .split('\n')
-    .map((x) => {
-      const i = x.indexOf('=');
-      return [x.slice(0, i), x.slice(i + 1)];
-    }),
-);
+const env = loadTestEnvironment();
 const sql = (query: string) =>
   execFileSync(
     'docker',
@@ -38,10 +31,11 @@ async function login(page: any) {
   await page.locator('#username').fill(env.SEED_ADMIN_EMAIL);
   await page.locator('#password').fill(env.SEED_ADMIN_PASSWORD);
   await page.locator('#kc-login').click();
+  await completeTestMfa(page, env.SEED_ADMIN_EMAIL);
   await expect(page.getByRole('heading', { name: 'Your operations start here.' })).toBeVisible();
 }
 async function identityToken() {
-  const r = await fetch('http://localhost:4311/realms/rare-os/protocol/openid-connect/token', {
+  const r = await fetch(env.AUTH_URL + '/realms/rare-os/protocol/openid-connect/token', {
     method: 'POST',
     body: new URLSearchParams({
       grant_type: 'client_credentials',
@@ -84,7 +78,7 @@ test('authenticator enrollment, OTP login and identity logout revoke app session
   const email = 'security.' + Date.now() + '@example.test',
     password = 'Security-Test-Password-2026!';
   const kc = async (path: string, method = 'GET', data?: unknown) => {
-    const r = await fetch('http://localhost:4311/admin/realms/rare-os' + path, {
+    const r = await fetch(env.AUTH_URL + '/admin/realms/rare-os' + path, {
       method,
       headers: {
         Authorization: 'Bearer ' + (await identityToken()),

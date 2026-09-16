@@ -124,7 +124,7 @@ export async function sendActionEmail(id: string, invite: boolean, existing = fa
       ? existing
         ? ['VERIFY_EMAIL']
         : ['VERIFY_EMAIL', 'UPDATE_PASSWORD']
-      : ['UPDATE_PASSWORD'],
+      : ['RARE_RESET_PASSWORD'],
   );
   if (response.status === 404)
     fail(409, 'IDENTITY_MISSING', 'Identity account is missing. Contact your administrator.');

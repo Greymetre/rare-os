@@ -1,0 +1,10 @@
+[Unit]
+Description=RARE OS weekly restore drill of the latest offsite backup
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

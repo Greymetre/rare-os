@@ -1,0 +1,5 @@
+io.rareos.auth.ReplaceOtp
+io.rareos.auth.ManageMfa
+io.rareos.auth.DisableMfa
+io.rareos.auth.ResetPassword
+io.rareos.auth.AdminEnrollment

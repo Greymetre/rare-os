@@ -1,0 +1,3 @@
+io.rareos.auth.ResetMfaFactory
+io.rareos.auth.VerifiedOtpFactory
+io.rareos.auth.VerifiedRecoveryFactory

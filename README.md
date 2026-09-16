@@ -69,16 +69,14 @@ Foundation uses pg + reviewed SQL migrations instead of the planning document's 
 
 ```sh
 npm ci
-npm run typecheck
-npm run build
-npm test
-npm run test:e2e
-docker compose run --rm seed node scripts/test-db.mjs
+npx playwright install --with-deps chrome
+npm run verify:quick
+npm run test:regression
 ```
 
-Browser tests use installed Google Chrome (`channel: chrome`). If absent, install Chrome or change to Playwright Chromium after `npx playwright install chromium`. Browser tests need Docker CLI access to temporarily revoke/restore admin permissions for denial tests. Run only against this isolated LOCAL seeded workspace, not a production deployment. DB tests perform 100k-row transactional fixtures and roll back.
+`verify:quick` runs formatting, application type checks, unit tests and production builds. `test:regression` includes those checks plus real browser/API, database, repeat-seed and backup/restore tests on a fresh, automatically cleaned Docker stack. `test:e2e` is an alias for the safe full runner. Your normal local stack, existing accounts and `.env` are not used for browser tests. Direct Playwright execution outside the runner is rejected.
 
-Screenshots after browser tests: `.local/dashboard-desktop.png` and `.local/dashboard-mobile.png` (git ignored).
+Reports, screenshots, JUnit/JSON results and restore receipts: `.local/regression/<run-id>/`. GitHub verify uses the same command. See [Regression testing guide and coverage matrix](docs/REGRESSION_TESTING_HINGLISH.md).
 
 ## Everyday operations
 
@@ -124,9 +122,7 @@ Tenant isolation remains PostgreSQL RLS. Plant isolation is enforced in plant en
 
 Login/callback have separate IP quotas; signed-in API quotas are per server-side session. Health probes consume neither budget. The rate limiter uses process memory on this single-API deployment; multiple replicas will need a shared limiter store.
 
-Retained review demo: run `RARE_REVIEW_DEMO=1 npx playwright test tests/review-delivery.spec.ts`. It preserves its companies, identities, roles and plants and saves `.local/PLANT_REVIEW.json` (private, git-ignored). Do not run the older disposable fixture suites during this review period: their cleanup predates the user's retention instruction. Cleanup retained fixtures only when the user requests it or provides the next task; preserve actual customer companies/users.
-
-Review status: the user completed verification and requested cleanup. The retained plant/platform demo has now been removed; actual companies/users are preserved. Previous private review-guide links no longer apply. Running the opt-in review test again intentionally creates a new demo; do so only when needed for a new authorized test.
+Plant/platform review coverage now runs automatically in `tests/plants.spec.ts` using fresh disposable companies, identities and plant assignments. It no longer needs an opt-in retained demo. Regression cleanup is restricted to that run's isolated Docker project; existing local companies/users are preserved.
 
 ## Local security and backup verification
 

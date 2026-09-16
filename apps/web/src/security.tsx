@@ -35,11 +35,18 @@ export function Security() {
             Authenticator app: <strong>{status.mfaEnabled ? 'Enabled' : 'Not configured'}</strong>
           </p>
           <p>
-            Use an authenticator app to protect your login with a one-time code. Keycloak handles
-            setup and verifies your password and code.
+            Manage the authenticators that protect your login. These settings apply across all your
+            companies.
           </p>
+          {status.mfaRequired && (
+            <p className="info">
+              MFA is required for your administrator access, including admin access in another
+              company. Keep at least one authenticator. You can add or replace devices, but cannot
+              turn MFA off.
+            </p>
+          )}
           <a className="button primary" href={status.setupUrl}>
-            {status.mfaEnabled ? 'Manage authenticator' : 'Set up authenticator'}
+            {status.mfaEnabled ? 'Add authenticator' : 'Set up authenticator'}
           </a>
           <p>
             After setup, save recovery codes somewhere private so you can sign in if your phone is
@@ -54,10 +61,37 @@ export function Security() {
             Sessions expire after 30 minutes of inactivity or {status.sessionHours} hours from
             sign-in. Signing out through the identity service also revokes the linked app session.
           </p>
-          <p className="notice">
-            Local enrollment is voluntary. Before production, all administrators must enroll and the
-            deployment must enforce MFA. Never share your authenticator secret or recovery codes.
-          </p>
+          {status.mfaEnabled && (
+            <>
+              <h3>Your authenticators</h3>
+              <ul className="mfa-device-list">
+                {status.devices.map((d: any) => (
+                  <li key={d.id}>
+                    <strong>{d.name}</strong>
+                    <span>Authenticator app</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="mfa-actions">
+                <a className="button" href={status.manageUrl}>
+                  Remove a device
+                </a>
+                {!status.mfaRequired && (
+                  <a className="button danger" href={status.disableUrl}>
+                    Turn off MFA
+                  </a>
+                )}
+              </div>
+              <p>
+                Adding a device keeps existing devices active. Removing a device disables only that
+                entry.{' '}
+                {status.mfaRequired
+                  ? 'Administrator MFA must remain enabled.'
+                  : 'Turning off MFA removes all authenticators and recovery codes after confirmation.'}
+              </p>
+              <p>You will verify your sign-in again before changing security settings.</p>
+            </>
+          )}
         </>
       )}
     </section>

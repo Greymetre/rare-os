@@ -13,14 +13,14 @@ import {
 } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
-import type { Request, Response } from 'express';
+import { json, urlencoded, type Request, type Response } from 'express';
 import session from 'express-session';
 import { RedisStore } from 'connect-redis';
 import { createClient } from 'redis';
 import pg, { type PoolClient } from 'pg';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import helmet from 'helmet';
-import { receiveLogout } from './session-security.js';
+import { receiveLogout, requiresMfa } from './session-security.js';
 import { identity } from './identity.js';
 import { requestLimits } from './rate-limits.js';
 
@@ -51,15 +51,30 @@ class Errors implements ExceptionFilter {
     const ctx = host.switchToHttp(),
       req = ctx.getRequest<Request>(),
       res = ctx.getResponse<Response>();
-    const status = error instanceof HttpException ? error.getStatus() : 503;
+    const middlewareStatus =
+      typeof error === 'object' &&
+      error !== null &&
+      'status' in error &&
+      Number.isInteger(error.status) &&
+      Number(error.status) >= 400 &&
+      Number(error.status) < 500
+        ? Number(error.status)
+        : undefined;
+    const status = error instanceof HttpException ? error.getStatus() : (middlewareStatus ?? 503);
     const detail =
       error instanceof HttpException
         ? error.getResponse()
-        : {
-            code: 'SERVICE_UNAVAILABLE',
-            message:
-              'The service is temporarily unavailable. Please retry. If it continues, share the request ID with your administrator.',
-          };
+        : middlewareStatus
+          ? {
+              code: status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_REQUEST_BODY',
+              message:
+                status === 413 ? 'The request body is too large.' : 'The request body is invalid.',
+            }
+          : {
+              code: 'SERVICE_UNAVAILABLE',
+              message:
+                'The service is temporarily unavailable. Please retry. If it continues, share the request ID with your administrator.',
+            };
     const data = typeof detail === 'string' ? { message: detail } : detail;
     if (status >= 500)
       console.error(
@@ -96,8 +111,18 @@ class AppController {
       await identity('/users/' + encodeURIComponent(req.session.subject!) + '/credentials')
     ).json()) as any[];
     return {
+      mfaRequired: await requiresMfa(req.session.subject!),
       mfaEnabled: credentials.some((c) => c.type === 'otp'),
+      devices: credentials
+        .filter((c) => c.type === 'otp')
+        .map((c) => ({
+          id: c.id,
+          name: c.userLabel || 'Unnamed authenticator',
+          createdAt: c.createdDate,
+        })),
       setupUrl: '/api/auth/login?action=CONFIGURE_TOTP',
+      manageUrl: '/api/auth/login?action=RARE_MANAGE_MFA',
+      disableUrl: '/api/auth/login?action=RARE_DISABLE_MFA',
       recoveryUrl: '/api/auth/login?action=CONFIGURE_RECOVERY_AUTHN_CODES',
       sessionHours: 12,
     };
@@ -125,8 +150,11 @@ class AppController {
     if (forceLogin) query.set('prompt', 'login');
     if (
       req.query.action === 'CONFIGURE_TOTP' ||
-      req.query.action === 'CONFIGURE_RECOVERY_AUTHN_CODES'
+      req.query.action === 'CONFIGURE_RECOVERY_AUTHN_CODES' ||
+      req.query.action === 'RARE_MANAGE_MFA' ||
+      req.query.action === 'RARE_DISABLE_MFA'
     ) {
+      query.set('prompt', 'login');
       query.set('kc_action', String(req.query.action));
       query.set('max_age', '0');
     }
@@ -187,11 +215,18 @@ class AppController {
         }
         return res.redirect('/?authError=access');
       }
+      if ((await requiresMfa(payload.sub)) && payload.rare_mfa_verified !== true) {
+        await regen(req);
+        req.session.forceLogin = true;
+        await save(req);
+        return res.redirect('/?authError=mfa');
+      }
       const memberships = (await pool.query('SELECT * FROM session_memberships($1)', [payload.sub]))
         .rows;
       await regen(req);
       if (typeof payload.sid !== 'string') throw Error('Missing identity session');
       req.session.subject = payload.sub;
+      req.session.mfaVerified = payload.rare_mfa_verified === true;
       req.session.identitySid = payload.sid;
       req.session.signedInAt = Date.now();
       req.session.membershipVersions = Object.fromEntries(
@@ -336,9 +371,16 @@ class AppController {
 @Module({ controllers: [AppController, AccessController, CompanyController, PlantsController] })
 class AppModule {}
 await redis.connect();
-const app = await NestFactory.create(AppModule, { logger: ['error', 'warn', 'log'] });
+const app = await NestFactory.create(AppModule, {
+  logger: ['error', 'warn', 'log'],
+  bodyParser: false,
+});
 app.getHttpAdapter().getInstance().set('trust proxy', 1);
 app.use(helmet());
+// Keep request parsing bounded before session/auth work. The current API only accepts small JSON
+// and form payloads (including the identity provider's back-channel logout token).
+app.use(json({ limit: '64kb' }));
+app.use(urlencoded({ extended: false, limit: '64kb' }));
 app.use((req: Request, res: Response, next: () => void) => {
   res.setHeader('X-Request-ID', randomUUID());
   res.setHeader('Cache-Control', 'no-store');

@@ -1,41 +1,29 @@
+import { loadTestEnvironment } from './helpers/test-environment.mjs';
+import { completeTestMfa } from './helpers/mfa';
 import { test, expect } from '@playwright/test';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { randomUUID, randomBytes } from 'node:crypto';
-const env = Object.fromEntries(
-  readFileSync('.env', 'utf8')
-    .trim()
-    .split('\n')
-    .map((x) => [x.slice(0, x.indexOf('=')), x.slice(x.indexOf('=') + 1)]),
-);
-test('retained review: platform delegation, plants, isolation and shared login', async ({
+const env = loadTestEnvironment();
+test('plants: creation, assignment, revocation, isolation and shared login', async ({
   page,
   browser,
   request,
 }) => {
-  test.skip(process.env.RARE_REVIEW_DEMO !== '1', 'Explicit retained-demo run only');
-  test.setTimeout(180000);
-  mkdirSync('.local', { recursive: true });
-  const manifest = '.local/PLANT_REVIEW.json';
-  const d: any = existsSync(manifest)
-    ? JSON.parse(readFileSync(manifest, 'utf8'))
-    : (() => {
-        const suffix = Date.now().toString();
-        return {
-          suffix,
-          companyA: randomUUID(),
-          companyB: randomUUID(),
-          ownerEmail: 'review.owner.' + suffix + '@example.test',
-          staffEmail: 'review.staff.' + suffix + '@example.test',
-          password: 'Review-' + randomBytes(10).toString('hex') + '!',
-        };
-      })();
-  const persist = () => writeFileSync(manifest, JSON.stringify(d, null, 2), { mode: 0o600 });
-  persist();
+  test.setTimeout(240000);
+  const suffix = Date.now().toString();
+  const d: any = {
+    suffix,
+    companyA: randomUUID(),
+    companyB: randomUUID(),
+    ownerEmail: 'plants.owner.' + suffix + '@example.test',
+    staffEmail: 'plants.staff.' + suffix + '@example.test',
+    password: 'Plants-' + randomBytes(10).toString('hex') + '!',
+  };
   async function login(p: any, email: string, password: string) {
     await p.goto('/api/auth/login');
     await p.locator('#username').fill(email);
     await p.locator('#password').fill(password);
     await p.locator('#kc-login').click();
+    await completeTestMfa(p, email);
     await expect(
       p.getByRole('heading', {
         name: /Your operations start here.|Company management|Select your company/,
@@ -96,7 +84,6 @@ test('retained review: platform delegation, plants, isolation and shared login',
       plant = (await ok('plants')).items.find((x: any) => x.code === code);
     }
     d[key] = plant.id;
-    persist();
   }
   expect(
     (
@@ -118,6 +105,22 @@ test('retained review: platform delegation, plants, isolation and shared login',
       })
     ).status(),
   ).toBe(400);
+  await page.getByRole('button', { name: 'Edit plant Jaipur Plant', exact: true }).click();
+  await page.getByLabel('Location', { exact: true }).fill('Jaipur, updated location');
+  await page.getByRole('button', { name: 'Save plant', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Edit plant', exact: true })).not.toBeVisible();
+  expect((await ok('plants/' + d.jaipur)).location).toBe('Jaipur, updated location');
+  await page.getByLabel('Plant search').fill('Delhi');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(page.getByRole('cell', { name: 'Delhi Plant', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Jaipur Plant', exact: true })).toHaveCount(0);
+  const first = await ok('plants?limit=1');
+  expect(first.items).toHaveLength(1);
+  expect(first.nextCursor).toBeTruthy();
+  const second = await ok('plants?limit=1&after=' + first.nextCursor);
+  expect(second.items).toHaveLength(1);
+  expect(second.items[0].id).not.toBe(first.items[0].id);
+  expect(second.nextCursor).toBeNull();
   async function role(name: string, permissions: string[]) {
     let r = (await ok('roles?q=' + encodeURIComponent(name))).items.find(
       (x: any) => x.name === name,
@@ -126,7 +129,6 @@ test('retained review: platform delegation, plants, isolation and shared login',
     return r.id;
   }
   d.roleA = await role('Jaipur Viewer', ['dashboard.read', 'sites.read']);
-  persist();
   async function user(roleId: string) {
     let u = (await ok('users?q=' + encodeURIComponent(d.staffEmail))).items.find(
       (x: any) => x.email === d.staffEmail,
@@ -143,7 +145,6 @@ test('retained review: platform delegation, plants, isolation and shared login',
     return u.id;
   }
   d.staffA = await user(d.roleA);
-  persist();
   await page.getByRole('button', { name: 'Users', exact: true }).click();
   await page
     .getByRole('button', { name: 'Plant access for Review Limited User', exact: true })
@@ -165,7 +166,6 @@ test('retained review: platform delegation, plants, isolation and shared login',
   d.mumbai = beta.id;
   d.roleB = await role('Overview Only', ['dashboard.read']);
   d.staffB = await user(d.roleB);
-  persist();
   await open(d.companyA);
   const assigned = await ok('users/' + d.staffA + '/plants');
   expect(
@@ -188,15 +188,13 @@ test('retained review: platform delegation, plants, isolation and shared login',
   ).toBe(409);
   async function finishInvite(email: string, p: any) {
     const messages = await (
-      await request.get('http://localhost:4312/api/v1/messages?limit=200')
+      await request.get(env.MAILPIT_URL + '/api/v1/messages?limit=200')
     ).json();
     let link = '';
     for (const m of messages.messages
       .filter((m: any) => m.To?.some((t: any) => t.Address === email))
       .reverse()) {
-      const content = await (
-        await request.get('http://localhost:4312/api/v1/message/' + m.ID)
-      ).json();
+      const content = await (await request.get(env.MAILPIT_URL + '/api/v1/message/' + m.ID)).json();
       const match = content.HTML.match(/href="([^"]*login-actions\/action-token[^"]*)"/);
       if (match) {
         link = match[1].replaceAll('&amp;', '&');
@@ -210,6 +208,7 @@ test('retained review: platform delegation, plants, isolation and shared login',
     await p.locator('#password-new').fill(d.password);
     await p.locator('#password-confirm').fill(d.password);
     await p.getByRole('button', { name: /submit/i }).click();
+    await completeTestMfa(p, email);
     await expect(
       p.getByRole('link', { name: /back to application/i }).or(p.locator('#username')),
     ).toBeVisible();
@@ -219,7 +218,6 @@ test('retained review: platform delegation, plants, isolation and shared login',
   if (!d.staffPasswordSet) {
     await finishInvite(d.staffEmail, sp);
     d.staffPasswordSet = true;
-    persist();
   }
   await login(sp, d.staffEmail, d.password);
   await sp
@@ -269,7 +267,7 @@ test('retained review: platform delegation, plants, isolation and shared login',
   expect((await sc('plants/' + d.jaipur)).status()).toBe(404);
   expect((await call('plants/' + d.jaipur, 'PATCH', edit)).status()).toBe(409);
   await ok('plants/' + d.jaipur, 'PATCH', { ...edit, active: true, version: plant.version + 1 });
-  await sp.screenshot({ path: '.local/review-limited-plants.png', fullPage: true });
+  await sp.screenshot({ path: '.local/plants-limited.png', fullPage: true });
   await sp.getByRole('button', { name: 'Switch company', exact: true }).click();
   await sp
     .getByRole('button', { name: 'Review Beta Products (REVB' + d.suffix + ')', exact: true })
@@ -290,7 +288,6 @@ test('retained review: platform delegation, plants, isolation and shared login',
   if (!d.ownerPasswordSet) {
     await finishInvite(d.ownerEmail, op);
     d.ownerPasswordSet = true;
-    persist();
   }
   await login(op, d.ownerEmail, d.password);
   await op
@@ -305,14 +302,11 @@ test('retained review: platform delegation, plants, isolation and shared login',
   await page.getByRole('button', { name: 'Plants', exact: true }).click();
   await expect(page.getByRole('cell', { name: 'Delhi Plant', exact: true })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'Jaipur Plant', exact: true })).toBeVisible();
-  await page.screenshot({ path: '.local/review-admin-plants.png', fullPage: true });
+  await page.screenshot({ path: '.local/plants-admin.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: '.local/review-plants-mobile.png', fullPage: true });
-  d.verified = true;
-  d.verifiedAt = new Date().toISOString();
-  persist();
+  await page.screenshot({ path: '.local/plants-mobile.png', fullPage: true });
   await staff.close();
   await owner.close();
-  // Intentionally no data or identity cleanup: user requested retained review fixtures.
+  // The regression runner destroys this entire disposable database and identity store.
 });

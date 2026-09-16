@@ -1,0 +1,21 @@
+# Regression-only S3-compatible offsite target. Never used on the VPS.
+services:
+  s3test:
+    image: versity/versitygw:v1.0.20
+    command:
+      [
+        --access,
+        '${BACKUP_ACCESS_KEY_ID}',
+        --secret,
+        '${BACKUP_SECRET_ACCESS_KEY}',
+        --port,
+        ':7070',
+        posix,
+        /tmp,
+      ]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, nc, -z, 127.0.0.1, '7070']
+      interval: 2s
+      timeout: 2s
+      retries: 30

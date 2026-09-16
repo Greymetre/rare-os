@@ -37,7 +37,7 @@ const admin = async (path, method = 'GET', body) => {
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(10000),
   });
-  if (!r.ok && r.status !== 404)
+  if (!r.ok && !(method === 'GET' && r.status === 404))
     throw Error('Keycloak admin ' + method + ' ' + path + ': ' + r.status);
   return r;
 };
@@ -147,6 +147,137 @@ for (const step of browserSteps.filter(
     ...step,
     requirement: 'ALTERNATIVE',
   });
+// Preserve native OTP/recovery validation and expose verified MFA in signed ID tokens.
+const browserAlias = 'rare-browser-mfa-v1';
+if (
+  !(await (await admin('/realms/rare-os/authentication/flows')).json()).some(
+    (f) => f.alias === browserAlias,
+  )
+)
+  await admin('/realms/rare-os/authentication/flows/browser/copy', 'POST', {
+    newName: browserAlias,
+  });
+const browserPath = '/realms/rare-os/authentication/flows/' + browserAlias + '/executions';
+const steps = await (await admin(browserPath)).json();
+for (const [native, custom] of [
+  ['auth-otp-form', 'rare-verified-otp'],
+  ['auth-recovery-authn-code-form', 'rare-verified-recovery'],
+]) {
+  const index = steps.findIndex((s) => s.providerId === native);
+  if (index < 0) continue;
+  const step = steps[index];
+  const parent = steps
+    .slice(0, index)
+    .reverse()
+    .find((s) => s.authenticationFlow && s.level < step.level);
+  const parentAlias = parent?.flowId
+    ? (await (await admin('/realms/rare-os/authentication/flows/' + parent.flowId)).json()).alias
+    : undefined;
+  if (!parentAlias) throw Error('Missing second-factor parent flow');
+  const path =
+    '/realms/rare-os/authentication/flows/' + encodeURIComponent(parentAlias) + '/executions';
+  const existing = await (await admin(path)).json();
+  if (!existing.some((s) => s.providerId === custom))
+    await admin(path + '/execution', 'POST', { provider: custom });
+  const added = (await (await admin(path)).json()).find((s) => s.providerId === custom);
+  await admin(path, 'PUT', { ...added, requirement: 'ALTERNATIVE' });
+  await admin('/realms/rare-os/authentication/executions/' + step.id, 'DELETE');
+}
+const finalBrowserSteps = await (await admin(browserPath)).json();
+for (const provider of ['rare-verified-otp', 'rare-verified-recovery'])
+  if (!finalBrowserSteps.some((s) => s.providerId === provider && s.requirement === 'ALTERNATIVE'))
+    throw Error('Missing verified second-factor execution');
+await admin('/realms/rare-os', 'PUT', { browserFlow: browserAlias });
+const webClient = (await (await admin('/realms/rare-os/clients?clientId=rare-os-web')).json())[0];
+const mapperPath = '/realms/rare-os/clients/' + webClient.id + '/protocol-mappers/models';
+const mapper = {
+  name: 'RARE verified MFA',
+  protocol: 'openid-connect',
+  protocolMapper: 'oidc-usersessionmodel-note-mapper',
+  config: {
+    'user.session.note': 'rare_mfa_verified',
+    'claim.name': 'rare_mfa_verified',
+    'jsonType.label': 'boolean',
+    'id.token.claim': 'true',
+    'access.token.claim': 'false',
+    'userinfo.token.claim': 'false',
+  },
+};
+const currentMapper = (await (await admin(mapperPath)).json()).find((m) => m.name === mapper.name);
+await admin(
+  currentMapper ? mapperPath + '/' + currentMapper.id : mapperPath,
+  currentMapper ? 'PUT' : 'POST',
+  currentMapper ? { ...mapper, id: currentMapper.id } : mapper,
+);
+
+// Native identity flows: email ownership precedes reset MFA choice; passwords/OTP stay in Keycloak.
+for (const [alias, priority] of [
+  ['RARE_ADMIN_MFA', 90],
+  ['RARE_RESET_PASSWORD', 50],
+  ['RARE_REPLACE_OTP', 60],
+  ['RARE_MANAGE_MFA', 70],
+  ['RARE_DISABLE_MFA', 70],
+]) {
+  if ((await admin('/realms/rare-os/authentication/required-actions/' + alias)).status === 404)
+    await admin('/realms/rare-os/authentication/register-required-action', 'POST', {
+      providerId: alias,
+      name: alias,
+    });
+  await admin('/realms/rare-os/authentication/required-actions/' + alias, 'PUT', {
+    alias,
+    name: alias,
+    providerId: alias,
+    enabled: true,
+    defaultAction: false,
+    priority,
+  });
+}
+const resetAlias = 'rare-reset-credentials-v1';
+const resetPath = '/realms/rare-os/authentication/flows/' + resetAlias + '/executions';
+if (
+  !(await (await admin('/realms/rare-os/authentication/flows')).json()).some(
+    (f) => f.alias === resetAlias,
+  )
+)
+  await admin('/realms/rare-os/authentication/flows/reset%20credentials/copy', 'POST', {
+    newName: resetAlias,
+  });
+let resetSteps = await (await admin(resetPath)).json();
+for (let i = 0; i < resetSteps.length; i++) {
+  if (resetSteps[i].providerId !== 'reset-otp') continue;
+  let old = resetSteps[i];
+  for (let j = i - 1; j >= 0; j--) {
+    if (resetSteps[j].level < old.level) {
+      if (resetSteps[j].authenticationFlow) old = resetSteps[j];
+      break;
+    }
+  }
+  await admin('/realms/rare-os/authentication/executions/' + old.id, 'DELETE');
+}
+resetSteps = await (await admin(resetPath)).json();
+if (!resetSteps.some((x) => x.providerId === 'rare-reset-mfa'))
+  await admin(resetPath + '/execution', 'POST', { provider: 'rare-reset-mfa' });
+resetSteps = await (await admin(resetPath)).json();
+for (const step of resetSteps.filter((x) => x.providerId === 'rare-reset-mfa'))
+  await admin(resetPath, 'PUT', { ...step, requirement: 'REQUIRED' });
+// Fail closed if the reset flow was manually changed: recovery must prove mailbox ownership
+// before an authenticator can be replaced, and the old automatic enrollment must stay absent.
+resetSteps = await (await admin(resetPath)).json();
+const emailStep = resetSteps.findIndex((x) => x.providerId === 'reset-credential-email');
+const choiceStep = resetSteps.findIndex((x) => x.providerId === 'rare-reset-mfa');
+if (
+  emailStep < 0 ||
+  choiceStep <= emailStep ||
+  resetSteps[emailStep].requirement !== 'REQUIRED' ||
+  resetSteps[emailStep].level !== 0 ||
+  resetSteps[choiceStep].requirement !== 'REQUIRED' ||
+  resetSteps[choiceStep].level !== 0 ||
+  resetSteps.some((x) => x.providerId === 'reset-otp')
+)
+  throw Error(
+    'Reset MFA choice must follow required email verification without automatic OTP enrollment',
+  );
+await admin('/realms/rare-os', 'PUT', { resetCredentialsFlow: resetAlias });
 let users = await (
   await admin(
     '/realms/rare-os/users?exact=true&username=' + encodeURIComponent(env.SEED_ADMIN_EMAIL),

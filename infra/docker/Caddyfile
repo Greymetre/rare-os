@@ -1,14 +1,30 @@
+{
+ http_port 8080
+ https_port 8443
+}
+(security_headers) {
+ header {
+  -Server
+  Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  X-Content-Type-Options nosniff
+  X-Frame-Options DENY
+  Referrer-Policy same-origin
+  Permissions-Policy "camera=(), microphone=(), geolocation=()"
+ }
+}
 {$APP_DOMAIN} {
+ import security_headers
  handle /api/* {
   reverse_proxy api:4000
  }
  handle {
-  reverse_proxy web:80
+  reverse_proxy web:8080
  }
 }
 {$AUTH_DOMAIN} {
+ import security_headers
  # Keycloak management API remains private; use a controlled SSH tunnel for administration.
- @management path /admin/* /metrics /health*
+ @management path /admin /admin/* /metrics /metrics/* /health /health*
  respond @management 403
  reverse_proxy keycloak:8080
 }

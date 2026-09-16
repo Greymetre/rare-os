@@ -15,14 +15,19 @@ x-app-env: &app-env
 x-logging: &logging
   driver: json-file
   options: { max-size: '10m', max-file: '3' }
+x-security: &security
+  security_opt: [no-new-privileges:true]
 services:
   mailpit:
-    image: axllent/mailpit:v1.27.8
-    ports: ['127.0.0.1:4312:8025']
+    <<: *security
+    image: axllent/mailpit:v1.31.1
+    ports: ['127.0.0.1:${MAILPIT_PORT:-4312}:8025']
     restart: unless-stopped
     logging: *logging
   db:
-    image: postgres:16-alpine
+    <<: *security
+    image: rare-os-postgres
+    build: { context: ., dockerfile: infra/docker/Postgres.Dockerfile }
     environment:
       POSTGRES_USER: rare_owner
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -36,6 +41,7 @@ services:
     restart: unless-stopped
     logging: *logging
   redis:
+    <<: *security
     image: redis:7-alpine
     command: [redis-server, --appendonly, 'yes', --maxmemory, 256mb, --maxmemory-policy, noeviction]
     volumes: [redisdata:/data]
@@ -47,6 +53,7 @@ services:
     restart: unless-stopped
     logging: *logging
   migrate:
+    <<: *security
     build: { context: ., dockerfile: infra/docker/Dockerfile, target: runtime }
     command: [node, scripts/migrate.mjs]
     environment:
@@ -57,11 +64,14 @@ services:
       db: { condition: service_healthy }
     logging: *logging
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.3
-    command: [start, --http-enabled=true, --hostname-strict=true]
+    <<: *security
+    image: ${KEYCLOAK_IMAGE:-rare-os-keycloak}
+    build: { context: ., dockerfile: infra/keycloak/Dockerfile }
+    command: [start, --optimized, --http-enabled=true, --hostname-strict=true]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      RARE_POLICY_DB_URL: jdbc:postgresql://db:5432/rare_os
       KC_DB_USERNAME: rare_keycloak
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
       KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-admin
@@ -72,12 +82,23 @@ services:
       JAVA_OPTS_KC_HEAP: '-Xms128m -Xmx512m'
     volumes:
       - ./infra/keycloak/themes/rare-os:/opt/keycloak/themes/rare-os:ro
-    ports: ['127.0.0.1:4311:8080']
+    ports: ['127.0.0.1:${KEYCLOAK_PORT:-4311}:8080']
     depends_on:
       migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test:
+        [
+          CMD-SHELL,
+          "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3; grep -q '200 OK' <&3",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 20
     restart: unless-stopped
     logging: *logging
   seed:
+    <<: *security
     build: { context: ., dockerfile: infra/docker/Dockerfile, target: runtime }
     command: [node, scripts/seed.mjs]
     environment:
@@ -90,10 +111,11 @@ services:
       SMTP_PORT: '1025'
       SMTP_FROM: no-reply@rareos.local
     depends_on:
-      keycloak: { condition: service_started }
+      keycloak: { condition: service_healthy }
       mailpit: { condition: service_started }
     logging: *logging
   api:
+    <<: *security
     build: { context: ., dockerfile: infra/docker/Dockerfile, target: runtime }
     environment: *app-env
     depends_on:
@@ -113,21 +135,74 @@ services:
     restart: unless-stopped
     logging: *logging
   worker:
+    <<: *security
     build: { context: ., dockerfile: infra/docker/Dockerfile, target: runtime }
     command: [node, apps/workers/dist/main.js]
     environment: *app-env
+    # The image healthcheck probes the API port; the worker has no HTTP server, so it proves
+    # liveness through the Redis heartbeat it writes only after a successful DB + Redis cycle.
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "const r=require('redis').createClient({url:process.env.REDIS_URL});r.connect().then(()=>r.get('rare:worker:heartbeat')).then(v=>process.exit(v?0:1),()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     depends_on:
       seed: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     restart: unless-stopped
     logging: *logging
   web:
+    <<: *security
     build: { context: ., dockerfile: infra/docker/Dockerfile, target: web }
-    ports: ['127.0.0.1:4310:80']
+    ports: ['127.0.0.1:${WEB_PORT:-4310}:8080']
     depends_on:
       api: { condition: service_healthy }
     restart: unless-stopped
     logging: *logging
+  ops:
+    <<: *security
+    # Scheduled jobs only (systemd timers run `docker compose --profile ops run --rm -T ops ...`).
+    profiles: [ops]
+    image: ${OPS_IMAGE:-rare-os-ops}
+    build: { context: ., dockerfile: infra/ops/Ops.Dockerfile }
+    environment:
+      APP_URL: ${APP_URL}
+      OPS_SITE: ${OPS_SITE:-}
+      PGHOST: db
+      PGUSER: rare_owner
+      PGPASSWORD: ${DB_PASSWORD}
+      RESTIC_REPOSITORY: ${BACKUP_REPOSITORY:-}
+      RESTIC_PASSWORD: ${BACKUP_PASSWORD:-}
+      AWS_ACCESS_KEY_ID: ${BACKUP_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${BACKUP_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${BACKUP_REGION:-auto}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-7}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-6}
+      BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-8}
+      RESTORE_DRILL_MAX_AGE_DAYS: ${RESTORE_DRILL_MAX_AGE_DAYS:-8}
+      MONITOR_URLS: ${MONITOR_URLS:-}
+      MONITOR_TLS_HOSTS: ${MONITOR_TLS_HOSTS:-}
+      MONITOR_DISK_PERCENT: ${MONITOR_DISK_PERCENT:-85}
+      MONITOR_BACKUPS: ${MONITOR_BACKUPS:-true}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+      HEARTBEAT_URL: ${HEARTBEAT_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@rareos.local}
+    volumes: [opsstate:/state]
+    logging: *logging
 volumes:
   pgdata:
   redisdata:
+  opsstate:

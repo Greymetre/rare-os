@@ -1,0 +1,10 @@
+[Unit]
+Description=RARE OS backup
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rare-os-ops backup
+TimeoutStartSec=45min
+Nice=10

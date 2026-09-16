@@ -11,13 +11,19 @@
     "build": "npm run build -w @rare-os/api && npm run build -w @rare-os/workers && npm run build -w @rare-os/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "node --test tests/*.test.mjs",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/regression.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "db:seed": "node scripts/seed.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "backup:local": "node scripts/backup-local.mjs",
-    "backup:verify": "node scripts/backup-local.mjs --verify"
+    "backup:verify": "node scripts/backup-local.mjs --verify",
+    "test:regression": "node scripts/regression.mjs",
+    "security:dependencies": "npm audit --audit-level=low",
+    "security:check": "npm run security:dependencies && node --test tests/security-baseline.test.mjs",
+    "security:containers": "scripts/security-scan-containers.sh",
+    "verify:quick": "npm run format:check && npm run typecheck && npm test && npm run security:dependencies && npm run build",
+    "security:platform": "scripts/security-scan-containers.sh --platform"
   },
   "dependencies": {
     "pg": "8.16.3"
