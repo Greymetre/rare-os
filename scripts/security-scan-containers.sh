@@ -4,6 +4,11 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 mkdir -p .local/trivy-cache
+# CI has no .env. Image builds never read runtime secrets, but Compose validates the
+# required-variable syntax, so supply a non-secret placeholder only when .env is absent.
+if [ ! -f .env ]; then
+  export IDENTITY_CLIENT_SECRET=image-scan-placeholder
+fi
 TRIVY_IMAGE=ghcr.io/aquasecurity/trivy:0.74.0
 
 images='rare-os-api:latest rare-os-web:latest rare-os-ops:latest'
