@@ -3,7 +3,10 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-mkdir -p .local/trivy-cache
+# Trivy runs as root inside Docker; on Linux CI its cache becomes unreadable to later steps
+# (prettier scans the workspace), so CI points TRIVY_CACHE_DIR outside the checkout.
+TRIVY_CACHE_DIR=${TRIVY_CACHE_DIR:-$ROOT/.local/trivy-cache}
+mkdir -p "$TRIVY_CACHE_DIR"
 # CI has no .env. Image builds never read runtime secrets, but Compose validates the
 # required-variable syntax, so supply a non-secret placeholder only when .env is absent.
 if [ ! -f .env ]; then
@@ -30,7 +33,7 @@ for image in $images; do
   echo "[security] Scanning $image for HIGH/CRITICAL vulnerabilities"
   if ! docker run --rm \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v "$ROOT/.local/trivy-cache:/root/.cache/trivy" \
+    -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
     "$TRIVY_IMAGE" image \
     --quiet \
     --scanners vuln \

@@ -18,10 +18,10 @@ jobs:
       - run: npm ci
       - name: Source dependency, secret and configuration vulnerability scan
         run: >-
-          mkdir -p "$GITHUB_WORKSPACE/.local/trivy-cache" &&
+          mkdir -p "$RUNNER_TEMP/trivy-cache" &&
           docker run --rm
           -v "$GITHUB_WORKSPACE:/workspace:ro"
-          -v "$GITHUB_WORKSPACE/.local/trivy-cache:/root/.cache/trivy"
+          -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy"
           ghcr.io/aquasecurity/trivy:0.74.0 fs
           --scanners vuln,secret,misconfig
           --include-dev-deps
@@ -32,6 +32,8 @@ jobs:
           --skip-dirs /workspace/.local
           /workspace
       - name: Built application image vulnerability scan
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
         run: npm run security:containers
       - run: npx playwright install --with-deps chrome
       - run: npm run test:regression
