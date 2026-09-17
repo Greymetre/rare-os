@@ -88,6 +88,8 @@ test('real Keycloak login, seed UI, worker, permission denial, expiry and logout
 }) => {
   await login(page);
   await expect(page.getByText('Connected', { exact: true })).toBeVisible();
+  // Regression stacks run on localhost, so the development label must still appear here.
+  await expect(page.locator('.main > header .environment')).toHaveText('LOCAL');
   const me = await (await page.request.get('/api/me')).json();
   expect(me.user.permissions).toHaveLength(catalog.length);
   const cookie = (await page.context().cookies()).find((x) => x.name === 'rare.sid');

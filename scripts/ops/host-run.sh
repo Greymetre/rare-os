@@ -15,7 +15,8 @@ if [[ "$job" == monitor ]]; then
   flock -n 9 || { echo 'Deployment in progress; monitor skipped.'; exit 0; }
   {
     docker compose ps -a --format 'container|{{.Service}}|{{.State}}|{{.Health}}'
-    df -P / /var/lib/docker 2>/dev/null | awk 'NR>1 {gsub("%","",$5); print "disk|" $6 "|" $5}'
+    # /var/lib/docker is often on the root filesystem; report each mount point only once.
+    df -P / /var/lib/docker 2>/dev/null | awk 'NR>1 && !seen[$6]++ {gsub("%","",$5); print "disk|" $6 "|" $5}'
   } | "${compose[@]}" run --rm --no-deps -T ops monitor
 else
   "${compose[@]}" run --rm --no-deps -T ops "$job"

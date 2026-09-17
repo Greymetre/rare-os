@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import {
   REQUIRED_SERVICES,
   alertEmail,
@@ -173,4 +174,21 @@ test('operations deployment keeps least privilege and schedules every job', () =
   }
   const ops_ = readFileSync('scripts/ops/ops.mjs', 'utf8');
   assert.doesNotMatch(ops_, /['"]--user['"]|SMTP_PASSWORD[^\n]*spawn/, 'no credentials on argv');
+});
+
+test('host disk facts report a shared filesystem only once', () => {
+  const host = readFileSync('scripts/ops/host-run.sh', 'utf8');
+  const program = host.match(/awk '([^']+)'/)[1];
+  const df = [
+    'Filesystem 1024-blocks Used Available Capacity Mounted on',
+    '/dev/sda1 100 15 85 15% /',
+    '/dev/sda1 100 15 85 15% /',
+    '/dev/sdb1 100 91 9 91% /var/lib/docker',
+  ].join('\n');
+  const out = spawnSync('awk', [program], { input: df, encoding: 'utf8' }).stdout.trim();
+  assert.deepEqual(out.split('\n'), ['disk|/|15', 'disk|/var/lib/docker|91']);
+  assert.deepEqual(parseHostFacts(out).disks, [
+    { mount: '/', usedPercent: 15 },
+    { mount: '/var/lib/docker', usedPercent: 91 },
+  ]);
 });

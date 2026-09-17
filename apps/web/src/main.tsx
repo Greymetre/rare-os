@@ -5,6 +5,7 @@ import { CompanyHub, type Membership } from './companies';
 import { Security } from './security';
 import { Plants } from './plants';
 import { AccessManagement } from './access';
+import { isLocalHost } from './environment';
 type User = { name: string; email: string; company: string; role: string; permissions: string[] };
 type Permission = { code: string; module: string; description: string };
 type Overview = {
@@ -329,7 +330,7 @@ function App() {
             <br />
             Availability next.
           </p>
-          <small>Local development workspace</small>
+          {isLocalHost(window.location.hostname) && <small>Local development workspace</small>}
         </div>
         <div className="sidebar-footer">One dataset. Connected decisions.</div>
       </aside>
@@ -337,7 +338,7 @@ function App() {
         <header>
           <div>
             <span className="workspace-name">{user.company}</span>
-            <span className="environment">LOCAL</span>
+            {isLocalHost(window.location.hostname) && <span className="environment">LOCAL</span>}
             <button className="text-button" onClick={() => setShowCompanies(true)}>
               {companyContext?.platformAdmin ? 'Companies' : 'Switch company'}
             </button>
