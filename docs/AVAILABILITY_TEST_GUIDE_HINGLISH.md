@@ -103,3 +103,56 @@ Seed admin se sign out/sign in → company chooser mein **ABC Corp (Demo)** → 
 
 1. Role: Dashboard + View planning master data + **Maintain suppliers and item sourcing** + Validate and import files.
 2. Is user se: Suppliers/Item sourcing create ho sakta hai; Items aur Customers mein **Create** button nahi; Imports mein sirf Suppliers aur Item sourcing.
+
+## AV-2 — Plant model
+
+**Kahan:** Availability → **Calendars, Resources, BOMs, Routings** tabs aur **Readiness** (plant setup panel). Calendars, Resources, Routings aur plant readiness upar ke **Plant** dropdown wale plant ke liye hain; BOMs poori company ke hain. Demo data ke liye `scripts/demo-abc-corp.mjs` dobara chalao — pehle se bani ABC Corp mein Plant 1 ka 3-shift calendar, 5 resources (S1–S5), 12 BOMs aur 12 routings jud jayenge; baaki data waisa hi rahega.
+
+Pehle apni company mein ek MAKE item (jaise `FG-TEST`, unit NOS) aur do BUY items (`RM-A` unit KG, `RM-B` unit NOS) bana lo, agar nahi hain.
+
+### 1. Calendar
+
+1. **Calendars** → Plant chuno → **Create calendar**: code `GEN`, Mon–Sat tick, shift General 09:00–17:30, break 30.
+2. **Add shift** → 17:00–20:00 → Save → **overlaps** message. Us shift ko **Remove** karke Save → "created as the plant default" (plant ka pehla calendar apne aap default banta hai).
+3. List mein **Minutes/day = 480**.
+4. Doosra calendar `NIGHT` 22:00–06:00 (raat bhar), break 30 → Minutes/day **450**; default nahi banega.
+5. `GEN` ko Edit → **Default** untick → Save → **A plant needs a default calendar** message. `NIGHT` ko default mark karo → ab `GEN` default nahi rahega.
+
+### 2. Resources
+
+1. **Resources** → **Create resource**: code `CNC`, Machines 2, Efficiency 90, Calendar = Plant default → Save.
+2. **Capacity min/day** = default calendar minutes × 2 × 0.9 (jaise 480 → **864**).
+3. Machines `0` ya Efficiency `120` → field message. Same code chhote letters mein → **already exists**.
+4. Doosre plant mein resource sirf wahi plant chun kar dikhega.
+
+### 3. BOMs
+
+1. **BOMs** → **Create BOM**: parent `FG-TEST`, revision V1, line 1 `RM-A` qty 2.5, line 2 `RM-B` qty 1.5 → Save → **quantity** message (NOS mein decimals nahi). Qty 2 karke Save.
+2. Parent ek BUY item rakho → **is BUY. Only MAKE items have a BOM**.
+3. Line mein unit `BOX` (jiska KG se conversion nahi) → **no conversion between** message.
+4. Same parent ka V2 same date range mein → **Effective dates overlap**. V1 ko Edit karke "Effective to" daalo, phir V2 us date ke baad se → ban jayega.
+5. Loop: agar `FG-TEST` mein `SFG-X` hai, to `SFG-X` ke BOM mein `FG-TEST` daalo → **This creates a BOM loop: … → …**.
+6. Search box mein item code ka shuru likh kar search; Next page kaam kare.
+
+### 4. Routings
+
+1. **Routings** → Plant chuno → **Create routing**: item `FG-TEST`, operations: 20 PACK `CNC` run 0.5; 10 CUT `CNC` run 2.25 → Save.
+2. Dobara kholo → operations sequence order mein (10 CUT, 20 PACK); list mein **Run min/unit 2.75**.
+3. Kisi doosre plant ka resource code daalo → **was not found in plant** message.
+4. **Resources** → `CNC` Edit → Inactive → Save → **used by N operation(s) in active routings**.
+
+### 5. Readiness
+
+**Readiness** tab → Plant chuno → "Plant setup" panel: Plant calendar, Resources, BOMs, Routings. Calendar/resource bante hi Ready; jin MAKE items ka aaj effective BOM ya is plant mein routing nahi, unke codes dikhenge. Sab bana do → **4 / 4 ready**.
+
+### 6. Imports
+
+1. **Imports** → type **Resources** → template → ek row plant code galat → errors.
+2. Type **BOM lines** (ek row = ek component; same parent + revision ki rows ek BOM). Ek BOM mein ek row ka component galat → us BOM ki **saari rows** error mein ("Nothing from it will be saved"), doosra BOM sahi dikhega; preview counts BOMs ke hisaab se.
+3. Sahi file commit → BOMs tab mein dikhega.
+4. Type **Routing operations** validate karo, commit se pehle us resource ko Inactive karo, phir commit → **Data changed after validation**, kuch save nahi.
+
+### 7. Plant access
+
+1. Role: Dashboard + View assigned plants + View planning master data + Maintain planning masters + Validate and import files. User ko **sirf Plant A** ka access do.
+2. Is user se: Plant dropdown mein sirf Plant A. Resources import file mein Plant B ki row → **plants you cannot access: …**.

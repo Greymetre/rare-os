@@ -1,7 +1,18 @@
 export type MasterField = {
   name: string;
   label: string;
-  type: 'code' | 'text' | 'enum' | 'int' | 'decimal' | 'email' | 'phone' | 'bool' | 'ref';
+  type:
+    | 'code'
+    | 'text'
+    | 'enum'
+    | 'int'
+    | 'decimal'
+    | 'email'
+    | 'phone'
+    | 'bool'
+    | 'ref'
+    | 'date'
+    | 'revision';
   required?: boolean;
   immutable?: boolean;
   max?: number;
@@ -9,7 +20,9 @@ export type MasterField = {
   options?: string[];
   decimals?: number;
   positive?: boolean;
-  ref?: 'units' | 'items' | 'suppliers';
+  ref?: string;
+  maxValue?: number;
+  belowValue?: number;
   default?: unknown;
 };
 export type MasterKind = {
@@ -25,5 +38,9 @@ export const MASTER_KINDS: Record<string, MasterKind>;
 export function masterKind(kind: string): MasterKind | null;
 export function validateMaster(
   kind: string,
+  raw: Record<string, unknown> | null | undefined,
+): { value: any; errors: { column: string; message: string }[] };
+export function validateFields(
+  fields: MasterField[],
   raw: Record<string, unknown> | null | undefined,
 ): { value: any; errors: { column: string; message: string }[] };

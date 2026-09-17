@@ -46,6 +46,7 @@ import { CompanyController, sessionContext } from './company.controller.js';
 import { PlantsController, allPlants } from './plants.controller.js';
 import { AvailabilityController } from './availability.controller.js';
 import { MastersController } from './masters.controller.js';
+import { PlantModelController } from './plant-model.controller.js';
 import { AccessController } from './access.controller.js';
 @Catch()
 class Errors implements ExceptionFilter {
@@ -378,6 +379,7 @@ class AppController {
     PlantsController,
     AvailabilityController,
     MastersController,
+    PlantModelController,
   ],
 })
 class AppModule {}

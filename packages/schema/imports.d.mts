@@ -11,6 +11,8 @@ export type ImportKind = {
   example: string[][];
   validate(raw: Record<string, string>): { value: any; errors: ImportError[] };
   key(value: any): string;
+  plantScoped?: boolean;
+  grouped?: boolean;
 };
 export const IMPORT_KINDS: Record<string, ImportKind>;
 export function parseCsv(

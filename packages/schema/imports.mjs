@@ -1,5 +1,6 @@
 // Shared by the API (upload checks) and the worker (row validation) so both apply identical rules.
-import { MASTER_KINDS, validateMaster } from './masters.mjs';
+import { MASTER_KINDS, validateFields, validateMaster } from './masters.mjs';
+import { GROUPED_IMPORTS, RESOURCE_FIELDS, validateResource } from './plant-model.mjs';
 
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 export const MAX_IMPORT_ROWS = 50000;
@@ -147,6 +148,39 @@ for (const [kind, def] of Object.entries(MASTER_KINDS))
     validate: (raw) => validateMaster(kind, raw),
     key: def.key,
   };
+
+IMPORT_KINDS.resources = {
+  label: 'Resources',
+  permission: 'masters.manage',
+  plantScoped: true,
+  columns: RESOURCE_FIELDS.map((f) => f.name),
+  example: [
+    ['PLANT-1', 'S1', 'Prep', 'MACHINE', '2', '100', '10', ''],
+    ['PLANT-1', 'S3', 'Assembly', 'LINE', '1', '95', '20', ''],
+  ],
+  validate: validateResource,
+  key: (v) => `${v.plant.toLowerCase()}|${v.code.toLowerCase()}`,
+};
+
+// One CSV row per BOM line / routing operation; rows of the same document are grouped by the worker.
+for (const [kind, def] of Object.entries(GROUPED_IMPORTS)) {
+  const fields = [...def.headerFields, ...def.lineFields];
+  IMPORT_KINDS[kind] = {
+    label: def.label,
+    permission: 'masters.manage',
+    plantScoped: kind === 'routings',
+    grouped: true,
+    columns: fields.map((f) => f.name),
+    example: def.example,
+    validate: (raw) => validateFields(fields, raw),
+    key:
+      kind === 'boms'
+        ? (v) =>
+            `${v.parent_item.toLowerCase()}|${v.revision.toLowerCase()}|${v.component_item.toLowerCase()}`
+        : (v) =>
+            `${v.plant.toLowerCase()}|${v.item.toLowerCase()}|${v.revision.toLowerCase()}|${v.sequence}`,
+  };
+}
 
 export function importKind(kind) {
   return Object.hasOwn(IMPORT_KINDS, kind) ? IMPORT_KINDS[kind] : null;

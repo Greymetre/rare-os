@@ -1290,3 +1290,35 @@ footer span {
   color: #7d8594;
   margin-bottom: 6px;
 }
+.plant-picker {
+  margin-bottom: 14px;
+}
+.day-picker {
+  border: 1px solid #e3e6ec;
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.day-picker legend {
+  font-size: 12px;
+  padding: 0 4px;
+}
+.day-picker label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.line-editor {
+  width: 100%;
+  margin: 8px 0;
+}
+.line-editor input {
+  width: 100%;
+  min-width: 70px;
+}
+.company-form h3 {
+  margin: 18px 0 6px;
+  font-size: 14px;
+}

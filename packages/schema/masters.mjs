@@ -45,6 +45,10 @@ const parsers = {
     const r = parseQuantity(raw, f.decimals, { label: f.label });
     if (r.error) return r;
     if (f.positive && Number(r.value) <= 0) return { error: `${f.label} must be greater than 0.` };
+    if (f.maxValue !== undefined && Number(r.value) > f.maxValue)
+      return { error: `${f.label} must be at most ${f.maxValue}.` };
+    if (f.belowValue !== undefined && Number(r.value) >= f.belowValue)
+      return { error: `${f.label} must be less than ${f.belowValue}.` };
     return r;
   },
   email(raw, f) {
@@ -68,6 +72,22 @@ const parsers = {
     if (['true', 'yes', 'y', '1'].includes(v)) return { value: true };
     if (['false', 'no', 'n', '0'].includes(v)) return { value: false };
     return { error: `${f.label} must be yes or no.` };
+  },
+  date(raw, f) {
+    const v = blank(raw) ? '' : String(raw).trim();
+    if (!v) return f.required ? { error: `${f.label} is required.` } : { value: null };
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    const d = m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
+    if (!d || d.toISOString().slice(0, 10) !== v || Number(m[1]) < 2000 || Number(m[1]) > 2100)
+      return { error: `${f.label} must be a date like 2026-09-17.` };
+    return { value: v };
+  },
+  revision(raw, f) {
+    const v = blank(raw) ? '' : String(raw).trim();
+    if (!v) return { error: `${f.label} is required.` };
+    return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,19}$/.test(v)
+      ? { value: v }
+      : { error: `${f.label} must be 1-20 letters or numbers (dot, hyphen, underscore allowed).` };
   },
   // References are codes here; the database layer resolves them to ids and checks they are active.
   ref(raw, f) {
@@ -242,6 +262,18 @@ export const MASTER_KINDS = {
   },
 };
 
+// Validates any field list with the same parsers (used by the plant model rulebook too).
+export function validateFields(fields, raw) {
+  const value = {};
+  const errors = [];
+  for (const f of fields) {
+    const r = parsers[f.type](raw?.[f.name], f);
+    if (r.error) errors.push({ column: f.name, message: r.error });
+    else value[f.name] = r.value;
+  }
+  return { value, errors };
+}
+
 export function masterKind(kind) {
   return Object.hasOwn(MASTER_KINDS, kind) ? MASTER_KINDS[kind] : null;
 }
@@ -249,13 +281,7 @@ export function masterKind(kind) {
 // Validates every field; returns normalised values and field errors (never throws on user data).
 export function validateMaster(kind, raw) {
   const def = masterKind(kind);
-  const value = {};
-  const errors = [];
-  for (const f of def.fields) {
-    const r = parsers[f.type](raw?.[f.name], f);
-    if (r.error) errors.push({ column: f.name, message: r.error });
-    else value[f.name] = r.value;
-  }
+  const { value, errors } = validateFields(def.fields, raw);
   if (!errors.length) {
     if (
       kind === 'unit_conversions' &&

@@ -5,6 +5,19 @@ import {
   resolveReferences,
   upsertMasters,
 } from '../../../packages/schema/masters-db.mjs';
+import { GROUPED_IMPORTS, groupRows } from '../../../packages/schema/plant-model.mjs';
+import {
+  bomAction,
+  checkBoms,
+  checkResources,
+  checkRoutings,
+  plantScope,
+  resourceAction,
+  routingAction,
+  writeBom,
+  writeResource,
+  writeRouting,
+} from '../../../packages/schema/plant-model-db.mjs';
 import type { PoolClient } from 'pg';
 
 const PAGE = 5000;
@@ -58,6 +71,68 @@ async function unitActions(db: PoolClient, results: Result[]) {
   });
 }
 
+async function resourceActions(db: PoolClient, results: Result[], actorId: string | null) {
+  const rows = results.map((r) => ({ ...r, existing: null as any }));
+  await checkResources(
+    db,
+    rows.filter((r) => !r.errors.length),
+    await plantScope(db, actorId),
+  );
+  return rows.map((r, i) => {
+    results[i].errors = r.errors;
+    return r.errors.length ? null : resourceAction(r.value, r.existing);
+  });
+}
+
+type Doc = { value: any; errors: { column: string; message: string }[]; existing?: any };
+
+// Groups row results into BOM/routing documents. A document with any error blocks all its rows.
+async function groupedDocuments(
+  db: PoolClient,
+  kind: string,
+  staged: { line: number; data: Record<string, string> }[],
+  results: Result[],
+  actorId: string | null,
+) {
+  const def = GROUPED_IMPORTS[kind];
+  const byLine = new Map(results.map((r) => [r.line, r]));
+  const docs: { doc: Doc; rows: Result[] }[] = [];
+  for (const group of groupRows(kind, staged)) {
+    const rows = group.rows.map((r) => byLine.get(r.line)!);
+    for (const [line, message] of group.mismatch)
+      byLine.get(line)!.errors.push({ column: '*', message });
+    const doc: Doc = { value: null, errors: [] };
+    if (!rows.some((r) => r.errors.length)) {
+      const checked = def.validate({
+        ...rows[0].value,
+        [def.linesKey]: rows.map((r) => r.value),
+      });
+      doc.value = checked.value;
+      doc.errors.push(...checked.errors);
+    }
+    docs.push({ doc, rows });
+  }
+  const valid = docs.filter((d) => d.doc.value && !d.doc.errors.length).map((d) => d.doc);
+  if (kind === 'boms') await checkBoms(db, valid);
+  else await checkRoutings(db, valid, await plantScope(db, actorId));
+  return docs;
+}
+
+function markDocumentErrors(docs: { doc: Doc; rows: Result[] }[]) {
+  for (const { doc, rows } of docs) {
+    const first = rows[0];
+    first.errors.push(...doc.errors);
+    const failing = rows.find((r) => r.errors.length);
+    if (failing)
+      for (const r of rows)
+        if (!r.errors.length)
+          r.errors.push({
+            column: '*',
+            message: `This document has errors; see line ${failing.line}. Nothing from it will be saved.`,
+          });
+  }
+}
+
 async function masterActions(db: PoolClient, kind: string, results: Result[]) {
   const def = importKind(kind)!;
   await resolveReferences(db, kind, results);
@@ -78,12 +153,26 @@ export async function validateImport(db: PoolClient, payload: Payload) {
     return { line, data: rest, columnCountError: _columnCountError };
   });
   const results: Result[] = validateRows(batch.kind, staged);
-  const actions =
-    batch.kind === 'units'
-      ? await unitActions(db, results)
-      : await masterActions(db, batch.kind, results);
   const summary: Record<string, number> = { create: 0, update: 0, unchanged: 0 };
-  for (const a of actions) if (a) summary[a]++;
+  let actions: (string | null)[];
+  if (batch.kind === 'units') actions = await unitActions(db, results);
+  else if (batch.kind === 'resources')
+    actions = await resourceActions(db, results, payload.actorId);
+  else if (GROUPED_IMPORTS[batch.kind]) {
+    const docs = await groupedDocuments(db, batch.kind, staged, results, payload.actorId);
+    markDocumentErrors(docs);
+    const byLine = new Map<number, string>();
+    for (const { doc, rows } of docs) {
+      if (rows.some((r) => r.errors.length)) continue;
+      const action =
+        batch.kind === 'boms' ? await bomAction(db, doc) : await routingAction(db, doc);
+      summary[action]++;
+      for (const r of rows) byLine.set(r.line, action);
+    }
+    actions = results.map((r) => (r.errors.length ? null : (byLine.get(r.line) ?? null)));
+  } else actions = await masterActions(db, batch.kind, results);
+  // Grouped imports count documents; other imports count rows.
+  if (!GROUPED_IMPORTS[batch.kind]) for (const a of actions) if (a) summary[a]++;
   for (let i = 0; i < results.length; i += CHUNK) {
     const part = results.slice(i, i + CHUNK);
     await db.query(
@@ -148,6 +237,10 @@ export async function commitImport(db: PoolClient, payload: Payload) {
       updated: written.length - created,
       unchanged: batch.valid_rows - written.length,
     };
+  } else if (batch.kind === 'resources' || GROUPED_IMPORTS[batch.kind]) {
+    const counts = await commitPlantModel(db, batch, payload);
+    if (!counts) return;
+    summary = counts;
   } else {
     // References are re-checked against current data: a unit or supplier deactivated after
     // validation must not be written silently.
@@ -185,6 +278,68 @@ export async function commitImport(db: PoolClient, payload: Payload) {
       payload.actorSubject,
     ],
   );
+}
+
+// Re-checks plant access and references at commit time, then writes resources or whole documents.
+async function commitPlantModel(db: PoolClient, batch: any, payload: Payload) {
+  const staged = await stagedRows(db, batch.id, 'value');
+  const scope = await plantScope(db, payload.actorId);
+  const counts = { created: 0, updated: 0, unchanged: 0 };
+  const failWith = async (line: number, message: string) => {
+    await markFailed(
+      db,
+      batch.id,
+      `Data changed after validation (line ${line}: ${message}). Retry validation, then commit again. Nothing was changed.`,
+    );
+    return null;
+  };
+  if (batch.kind === 'resources') {
+    const rows = staged.map((r) => ({
+      line: r.line,
+      value: r.payload,
+      errors: [] as any[],
+      existing: null as any,
+    }));
+    await checkResources(db, rows, scope);
+    const bad = rows.find((r) => r.errors.length);
+    if (bad) return failWith(bad.line, bad.errors[0].message);
+    for (const r of rows) {
+      const action = resourceAction(r.value, r.existing);
+      if (action === 'unchanged') counts.unchanged++;
+      else {
+        await writeResource(db, batch.tenant_id, r.value, r.existing, true);
+        counts[action === 'create' ? 'created' : 'updated']++;
+      }
+    }
+    return counts;
+  }
+  const def = GROUPED_IMPORTS[batch.kind];
+  const groups = new Map<string, { line: number; value: any }[]>();
+  for (const r of staged) {
+    const key = def.groupKey(r.payload);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push({ line: r.line, value: r.payload });
+  }
+  const docs = [...groups.values()].map((rows) => ({
+    line: rows[0].line,
+    ...(def.validate({ ...rows[0].value, [def.linesKey]: rows.map((r) => r.value) }) as Doc),
+  }));
+  const bad = docs.find((d) => d.errors.length);
+  if (bad) return failWith(bad.line, bad.errors[0].message);
+  if (batch.kind === 'boms') await checkBoms(db, docs);
+  else await checkRoutings(db, docs, scope);
+  const changed = docs.find((d) => d.errors.length);
+  if (changed) return failWith(changed.line, changed.errors[0].message);
+  for (const doc of docs) {
+    const action = batch.kind === 'boms' ? await bomAction(db, doc) : await routingAction(db, doc);
+    if (action === 'unchanged') counts.unchanged++;
+    else {
+      if (batch.kind === 'boms') await writeBom(db, batch.tenant_id, doc);
+      else await writeRouting(db, batch.tenant_id, doc);
+      counts[action === 'create' ? 'created' : 'updated']++;
+    }
+  }
+  return counts;
 }
 
 // Called once retries are exhausted: surface a clear status instead of a batch stuck in progress.

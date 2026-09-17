@@ -12,6 +12,7 @@ import type { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'node:crypto';
 import { access, scoped, fail } from './core.js';
 import { id, text, body, version, pagination, mutate, audit } from './access.controller.js';
+import { plantScope } from '../../../packages/schema/plant-model-db.mjs';
 
 const ROW_CHUNK = 1000;
 
@@ -152,12 +153,12 @@ export class AvailabilityController {
               ? `${counts.customers} active customer(s).`
               : 'Add customers before entering orders.',
           },
-          upcoming(
-            'resources',
-            'Resources, calendars, BOM and routing',
-            'AV-2',
-            'Machines, shifts and manufacturing steps.',
-          ),
+          {
+            key: 'plant_model',
+            title: 'Calendars, resources, BOMs and routings',
+            status: 'info',
+            detail: 'Checked per plant below. Choose a plant to see what is missing.',
+          },
           upcoming('demand', 'Orders and stock', 'AV-3', 'Customer orders and stock ledger.'),
         ],
       };
@@ -264,6 +265,30 @@ export class AvailabilityController {
       } catch (e) {
         if (e instanceof CsvError) fail(400, e.code, e.message);
         throw e;
+      }
+      if (importKind(kind)!.plantScoped) {
+        // Plant-scoped files may only reference plants the uploader can access.
+        const scope = await plantScope(db, actor.id);
+        if (scope) {
+          const codes = [
+            ...new Set(
+              rows.map((r) =>
+                String(r.data.plant ?? '')
+                  .trim()
+                  .toLowerCase(),
+              ),
+            ),
+          ];
+          const denied = (
+            await db.query('SELECT id,code FROM sites WHERE lower(code)=ANY($1::text[])', [codes])
+          ).rows.filter((p) => !scope.has(p.id));
+          if (denied.length)
+            fail(
+              403,
+              'PLANT_ACCESS_DENIED',
+              `This file includes plants you cannot access: ${denied.map((p) => p.code).join(', ')}. Remove those rows or ask for plant access.`,
+            );
+        }
       }
       const sha = createHash('sha256').update(raw).digest('hex');
       const duplicate = (

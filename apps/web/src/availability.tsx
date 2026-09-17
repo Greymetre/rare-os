@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { download, useApi } from './api-client';
+import { Boms, Calendars, PlantPicker, PlantReadiness, Resources, Routings } from './plant-model';
 
 type Batch = {
   id: string;
@@ -25,47 +27,8 @@ const statusLabel: Record<string, string> = {
   ready: 'Ready',
   missing: 'Missing',
   upcoming: 'Coming soon',
+  info: 'Per plant',
 };
-
-function useApi(csrf: string) {
-  return async function call(path: string, method = 'GET', data?: unknown, raw?: string) {
-    const r = await fetch('/api/' + path, {
-      method,
-      headers:
-        raw !== undefined
-          ? { 'Content-Type': 'text/csv', 'X-CSRF-Token': csrf }
-          : { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-      body: raw !== undefined ? raw : data === undefined ? undefined : JSON.stringify(data),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      const error: Error & { fields?: { column: string; message: string }[] } = Error(
-        d.error?.message ||
-          ([502, 503, 504].includes(r.status)
-            ? 'The server is temporarily unavailable. Wait a few seconds and retry.'
-            : 'Could not complete this request. Please retry.'),
-      );
-      error.fields = d.error?.fields;
-      throw error;
-    }
-    return d;
-  };
-}
-
-async function download(path: string, fallbackName: string) {
-  const r = await fetch('/api/' + path);
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({}));
-    throw Error(d.error?.message || 'Download failed. Please retry.');
-  }
-  const url = URL.createObjectURL(await r.blob());
-  const a = document.createElement('a');
-  a.href = url;
-  a.download =
-    /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '')?.[1] || fallbackName;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 function Readiness({ csrf, refreshKey }: { csrf: string; refreshKey: number }) {
   const call = useApi(csrf);
@@ -94,7 +57,7 @@ function Readiness({ csrf, refreshKey }: { csrf: string; refreshKey: number }) {
       <div className="panel-heading">
         <h2>Planning data readiness</h2>
         <span className="badge">
-          {ready} / {items.length} ready
+          {ready} / {items.filter((i) => i.status !== 'info').length} ready
         </span>
       </div>
       {items.map((i) => (
@@ -851,6 +814,11 @@ function Imports({
       canManage: permissions.includes('masters.manage'),
     },
     ...kinds.map((k) => ({ kind: k.kind, label: k.label, canManage: k.canManage })),
+    ...[
+      ['resources', 'Resources'],
+      ['boms', 'BOM lines'],
+      ['routings', 'Routing operations'],
+    ].map(([kind, label]) => ({ kind, label, canManage: permissions.includes('masters.manage') })),
   ];
   const labelOf = (kind: string) => options.find((o) => o.kind === kind)?.label ?? kind;
   const canImport = (kind: string) =>
@@ -1050,6 +1018,8 @@ export function Availability({
   refreshKey: number;
 }) {
   const [tab, setTab] = useState('Readiness');
+  const [plantId, setPlantId] = useState<string | null>(null);
+  const canManage = permissions.includes('masters.manage');
   const [kinds, setKinds] = useState<KindInfo[] | null>(null),
     [error, setError] = useState('');
   const call = useApi(csrf);
@@ -1083,10 +1053,14 @@ export function Availability({
     );
   if (!kinds) return <p role="status">Loading planning data…</p>;
   const order = ['items', 'suppliers', 'item_suppliers', 'customers', 'unit_conversions'];
+  const plantTabs = ['Calendars', 'Resources', 'Routings'];
   const tabs = [
     'Readiness',
     'Units',
     ...order.map((k) => kinds.find((x) => x.kind === k)?.label).filter(Boolean),
+    ...plantTabs.slice(0, 2),
+    'BOMs',
+    'Routings',
     'Imports',
   ] as string[];
   const current = kinds.find((k) => k.label === tab);
@@ -1105,7 +1079,29 @@ export function Availability({
           </button>
         ))}
       </div>
+      {(tab === 'Readiness' || plantTabs.includes(tab)) && (
+        <PlantPicker csrf={csrf} value={plantId} onChange={setPlantId} />
+      )}
       {tab === 'Readiness' && <Readiness csrf={csrf} refreshKey={refreshKey} />}
+      {tab === 'Readiness' && plantId && (
+        <PlantReadiness csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {tab === 'Calendars' && plantId && (
+        <Calendars csrf={csrf} plantId={plantId} canManage={canManage} refreshKey={refreshKey} />
+      )}
+      {tab === 'Resources' && plantId && (
+        <Resources csrf={csrf} plantId={plantId} canManage={canManage} refreshKey={refreshKey} />
+      )}
+      {tab === 'BOMs' && <Boms csrf={csrf} canManage={canManage} refreshKey={refreshKey} />}
+      {tab === 'Routings' && plantId && (
+        <Routings
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          canManage={canManage}
+          refreshKey={refreshKey}
+        />
+      )}
       {tab === 'Units' && <Units csrf={csrf} permissions={permissions} refreshKey={refreshKey} />}
       {current && (
         <MasterTable key={current.kind} csrf={csrf} info={current} refreshKey={refreshKey} />

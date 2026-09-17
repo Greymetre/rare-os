@@ -189,6 +189,144 @@ try {
   console.log(
     'PASS item masters: company-scoped references, one preferred source, unique conversions, no hard deletes',
   );
+  // AV-2: plant model keeps plant/company references, one default calendar and unique line keys.
+  const site = '20000000-0000-4000-8000-0000000000c1';
+  const hiddenSite = '20000000-0000-4000-8000-0000000000c9';
+  await db.query('RESET ROLE');
+  await db.query("SELECT set_config('app.tenant_id','',true)");
+  await db.query("INSERT INTO sites(id,tenant_id,code,name) VALUES($1,$2,'DBP1','Plant')", [
+    site,
+    tenant,
+  ]);
+  await db.query("INSERT INTO sites(id,tenant_id,code,name) VALUES($1,$2,'DBPX','Hidden')", [
+    hiddenSite,
+    other,
+  ]);
+  await db.query('SET LOCAL ROLE rare_app');
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
+  await denied(
+    'calendar in another company plant',
+    '23503',
+    "INSERT INTO calendars(id,tenant_id,site_id,code,name,working_days) VALUES(gen_random_uuid(),$1,$2,'X','x','1111100')",
+    [tenant, hiddenSite],
+  );
+  await denied(
+    'calendar without working days',
+    '23514',
+    "INSERT INTO calendars(id,tenant_id,site_id,code,name,working_days) VALUES(gen_random_uuid(),$1,$2,'X','x','0000000')",
+    [tenant, site],
+  );
+  const calendar = '20000000-0000-4000-8000-0000000000c2';
+  await db.query(
+    "INSERT INTO calendars(id,tenant_id,site_id,code,name,working_days,is_default) VALUES($1,$2,$3,'GEN','General','1111110',true)",
+    [calendar, tenant, site],
+  );
+  await denied(
+    'second default calendar in one plant',
+    '23505',
+    "INSERT INTO calendars(id,tenant_id,site_id,code,name,working_days,is_default) VALUES(gen_random_uuid(),$1,$2,'NIGHT','Night','1111110',true)",
+    [tenant, site],
+  );
+  await db.query(
+    "INSERT INTO calendar_shifts(id,tenant_id,calendar_id,sequence,name,start_time,end_time) VALUES(gen_random_uuid(),$1,$2,1,'Day','08:00','16:00')",
+    [tenant, calendar],
+  );
+  await denied(
+    'duplicate holiday date',
+    '23505',
+    "INSERT INTO calendar_holidays(id,tenant_id,calendar_id,holiday_date,name) VALUES(gen_random_uuid(),$1,$2,'2026-10-02','A'),(gen_random_uuid(),$1,$2,'2026-10-02','B')",
+    [tenant, calendar],
+  );
+  const resource = '20000000-0000-4000-8000-0000000000c3';
+  await db.query(
+    "INSERT INTO resources(id,tenant_id,site_id,code,name,resource_type,machine_count,calendar_id) VALUES($1,$2,$3,'CNC','CNC','MACHINE',2,$4)",
+    [resource, tenant, site, calendar],
+  );
+  for (const [label, machines, efficiency] of [
+    ['zero machines', 0, 100],
+    ['efficiency above 100', 1, 101],
+  ])
+    await denied(
+      label,
+      '23514',
+      "INSERT INTO resources(id,tenant_id,site_id,code,name,resource_type,machine_count,efficiency_pct) VALUES(gen_random_uuid(),$1,$2,'R2','x','MACHINE',$3,$4)",
+      [tenant, site, machines, efficiency],
+    );
+  const fg = '20000000-0000-4000-8000-0000000000c4';
+  await db.query(
+    "INSERT INTO items(id,tenant_id,code,name,item_type,make_buy,base_unit_id) VALUES($1,$2,'DBFG','Finished','FG','MAKE',$3)",
+    [fg, tenant, isoUnit],
+  );
+  const bom = '20000000-0000-4000-8000-0000000000c5';
+  await denied(
+    'BOM ending before it starts',
+    '23514',
+    "INSERT INTO boms(id,tenant_id,item_id,revision,effective_from,effective_to) VALUES(gen_random_uuid(),$1,$2,'V0','2026-10-01','2026-09-01')",
+    [tenant, fg],
+  );
+  await db.query(
+    "INSERT INTO boms(id,tenant_id,item_id,revision,effective_from) VALUES($1,$2,$3,'V1','2026-10-01')",
+    [bom, tenant, fg],
+  );
+  await denied(
+    'duplicate BOM revision (case-insensitive)',
+    '23505',
+    "INSERT INTO boms(id,tenant_id,item_id,revision,effective_from) VALUES(gen_random_uuid(),$1,$2,'v1','2027-01-01')",
+    [tenant, fg],
+  );
+  await db.query(
+    'INSERT INTO bom_lines(id,tenant_id,bom_id,line_no,component_item_id,quantity,unit_id) VALUES(gen_random_uuid(),$1,$2,1,$3,2,$4)',
+    [tenant, bom, itemId, isoUnit],
+  );
+  await denied(
+    'same component twice in one BOM',
+    '23505',
+    'INSERT INTO bom_lines(id,tenant_id,bom_id,line_no,component_item_id,quantity,unit_id) VALUES(gen_random_uuid(),$1,$2,2,$3,1,$4)',
+    [tenant, bom, itemId, isoUnit],
+  );
+  await denied(
+    '100% scrap',
+    '23514',
+    'INSERT INTO bom_lines(id,tenant_id,bom_id,line_no,component_item_id,quantity,unit_id,scrap_pct) VALUES(gen_random_uuid(),$1,$2,3,$3,1,$4,100)',
+    [tenant, bom, fg, isoUnit],
+  );
+  const routing = '20000000-0000-4000-8000-0000000000c6';
+  await db.query(
+    "INSERT INTO routings(id,tenant_id,site_id,item_id,revision,effective_from) VALUES($1,$2,$3,$4,'V1','2026-10-01')",
+    [routing, tenant, site, fg],
+  );
+  await db.query(
+    "INSERT INTO routing_operations(id,tenant_id,routing_id,sequence,operation_code,resource_id,run_minutes_per_unit) VALUES(gen_random_uuid(),$1,$2,10,'CUT',$3,1.5)",
+    [tenant, routing, resource],
+  );
+  await denied(
+    'duplicate operation sequence',
+    '23505',
+    "INSERT INTO routing_operations(id,tenant_id,routing_id,sequence,operation_code,resource_id,run_minutes_per_unit) VALUES(gen_random_uuid(),$1,$2,10,'DRILL',$3,1)",
+    [tenant, routing, resource],
+  );
+  await denied(
+    'duplicate operation code (case-insensitive)',
+    '23505',
+    "INSERT INTO routing_operations(id,tenant_id,routing_id,sequence,operation_code,resource_id,run_minutes_per_unit) VALUES(gen_random_uuid(),$1,$2,20,'cut',$3,1)",
+    [tenant, routing, resource],
+  );
+  await denied(
+    'zero run time',
+    '23514',
+    "INSERT INTO routing_operations(id,tenant_id,routing_id,sequence,operation_code,resource_id,run_minutes_per_unit) VALUES(gen_random_uuid(),$1,$2,30,'PACK',$3,0)",
+    [tenant, routing, resource],
+  );
+  for (const table of ['calendars', 'resources', 'boms', 'routings'])
+    await denied('delete ' + table, '42501', `DELETE FROM ${table}`);
+  // Line tables may be replaced as a set by their header save.
+  await db.query('SAVEPOINT av2lines');
+  await db.query('DELETE FROM routing_operations WHERE routing_id=$1', [routing]);
+  await db.query('ROLLBACK TO SAVEPOINT av2lines');
+  assert.equal((await db.query('SELECT * FROM sites WHERE id=$1', [hiddenSite])).rowCount, 0);
+  console.log(
+    'PASS plant model: plant/company references, one default calendar, unique BOM components and operations, CHECK limits, no header deletes',
+  );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);
   const pending = await db.query('SELECT * FROM outbox_pending(500)');
