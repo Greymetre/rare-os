@@ -9,6 +9,10 @@ for (const file of [
   'apps/api/dist/main.js',
   'apps/workers/dist/main.js',
   'packages/schema/permissions.mjs',
+  'packages/schema/imports.mjs',
+  'packages/schema/masters.mjs',
+  'packages/schema/masters-db.mjs',
+  'packages/schema/quantity.mjs',
 ])
   await readFile(file);
 console.log('Runtime source and migrations are readable.');

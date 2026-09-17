@@ -102,7 +102,8 @@ test('real Keycloak login, seed UI, worker, permission denial, expiry and logout
   await page.getByLabel('Filter permissions').fill('purchase.approve');
   await expect(page.getByText('Approve purchase proposals', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Availability', exact: true }).click();
-  await expect(page.getByText('NOT CONFIGURED', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Planning data readiness' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Imports' })).toBeVisible();
   expect((await page.request.get('/api/audit?limit=101')).status()).toBe(400);
   expect((await page.request.get('/api/audit?cursor=invalid')).status()).toBe(400);
   sql(

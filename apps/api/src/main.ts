@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
-import { json, urlencoded, type Request, type Response } from 'express';
+import { json, text, urlencoded, type Request, type Response } from 'express';
 import session from 'express-session';
 import { RedisStore } from 'connect-redis';
 import { createClient } from 'redis';
@@ -44,6 +44,8 @@ import {
 } from './core.js';
 import { CompanyController, sessionContext } from './company.controller.js';
 import { PlantsController, allPlants } from './plants.controller.js';
+import { AvailabilityController } from './availability.controller.js';
+import { MastersController } from './masters.controller.js';
 import { AccessController } from './access.controller.js';
 @Catch()
 class Errors implements ExceptionFilter {
@@ -368,7 +370,16 @@ class AppController {
     });
   }
 }
-@Module({ controllers: [AppController, AccessController, CompanyController, PlantsController] })
+@Module({
+  controllers: [
+    AppController,
+    AccessController,
+    CompanyController,
+    PlantsController,
+    AvailabilityController,
+    MastersController,
+  ],
+})
 class AppModule {}
 await redis.connect();
 const app = await NestFactory.create(AppModule, {
@@ -379,6 +390,8 @@ app.getHttpAdapter().getInstance().set('trust proxy', 1);
 app.use(helmet());
 // Keep request parsing bounded before session/auth work. The current API only accepts small JSON
 // and form payloads (including the identity provider's back-channel logout token).
+// CSV imports are the only larger body: text/csv on /api/imports, capped at the import file limit.
+app.use('/api/imports', text({ type: 'text/csv', limit: '5mb' }));
 app.use(json({ limit: '64kb' }));
 app.use(urlencoded({ extended: false, limit: '64kb' }));
 app.use((req: Request, res: Response, next: () => void) => {

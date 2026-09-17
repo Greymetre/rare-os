@@ -6,6 +6,7 @@ import { Security } from './security';
 import { Plants } from './plants';
 import { AccessManagement } from './access';
 import { isLocalHost } from './environment';
+import { Availability } from './availability';
 type User = { name: string; email: string; company: string; role: string; permissions: string[] };
 type Permission = { code: string; module: string; description: string };
 type Overview = {
@@ -301,7 +302,7 @@ function App() {
     ['Plants', '▦', 'sites.read'],
     ['Users', '♙', 'users.read'],
     ['Roles & permissions', '◇', 'roles.read'],
-    ['Availability', '▤', 'planning.read'],
+    ['Availability', '▤', 'masters.read|planning.read'],
     ['Audit log', '≡', 'audit.read'],
   ];
   return (
@@ -311,7 +312,7 @@ function App() {
         <div className="workspace-label">WORKSPACE</div>
         <nav>
           {nav
-            .filter((x) => user.permissions.includes(x[2]))
+            .filter((x) => x[2].split('|').some((p) => user.permissions.includes(p)))
             .map(([label, icon]) => (
               <button
                 key={label}
@@ -326,9 +327,9 @@ function App() {
         <div className="phase-card">
           <span className="dot" /> FOUNDATION PHASE
           <p>
-            Access first.
+            Access ready.
             <br />
-            Availability next.
+            Availability in setup.
           </p>
           {isLocalHost(window.location.hostname) && <small>Local development workspace</small>}
         </div>
@@ -553,49 +554,11 @@ function App() {
                 </section>
               )}
               {page === 'Availability' && (
-                <section className="panel availability">
-                  <span className="badge">NOT CONFIGURED</span>
-                  <h2>Let’s prepare your first planning run.</h2>
-                  <p>
-                    Planning is not enabled yet. The following master-data workflows are the next
-                    implementation milestone.
-                  </p>
-                  <div className="requirements">
-                    {[
-                      [
-                        '01',
-                        'Sites & calendars',
-                        'Plant, shifts, working days and resource capacity.',
-                      ],
-                      [
-                        '02',
-                        'Products & BOM',
-                        'Item codes, units and components per finished product.',
-                      ],
-                      [
-                        '03',
-                        'Routing & machines',
-                        'Operation sequence, run time and changeover time.',
-                      ],
-                      [
-                        '04',
-                        'Stock & demand',
-                        'Opening inventory, incoming supply and customer orders.',
-                      ],
-                    ].map(([n, t, d]) => (
-                      <div key={n}>
-                        <span>{n}</span>
-                        <h3>{t}</h3>
-                        <p>{d}</p>
-                        <small>Required before planning</small>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="notice">
-                    Next delivery: master-data entry and validated imports. No production schedule
-                    has been generated.
-                  </div>
-                </section>
+                <Availability
+                  csrf={csrf}
+                  permissions={user.permissions}
+                  refreshKey={requestVersion}
+                />
               )}
             </>
           )}

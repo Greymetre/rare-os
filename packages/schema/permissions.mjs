@@ -21,6 +21,8 @@ export const permissions = [
   ['audit.read', 'Audit log', 'Read company audit history'],
   ['masters.read', 'Masters', 'View planning master data'],
   ['masters.manage', 'Masters', 'Maintain planning masters'],
+  ['suppliers.manage', 'Masters', 'Maintain suppliers and item sourcing'],
+  ['customers.manage', 'Masters', 'Maintain customers'],
   ['imports.create', 'Masters', 'Validate and import files'],
   ['orders.read', 'Demand', 'View customer orders'],
   ['orders.create', 'Demand', 'Create customer orders'],
@@ -52,6 +54,11 @@ export const requiredPermissions = {
   'sites.update': ['sites.read'],
   'sites.change_status': ['sites.read', 'sites.update'],
   'sites.read_all': ['sites.read'],
+  'masters.manage': ['masters.read'],
+  'suppliers.manage': ['masters.read'],
+  'customers.manage': ['masters.read'],
+  // Each import type also requires its own maintain permission, checked by the API.
+  'imports.create': ['masters.read'],
 };
 export const livePermissionCodes = [
   'dashboard.read',
@@ -74,4 +81,9 @@ export const livePermissionCodes = [
   'sites.update',
   'sites.change_status',
   'sites.read_all',
+  'masters.read',
+  'masters.manage',
+  'suppliers.manage',
+  'customers.manage',
+  'imports.create',
 ];

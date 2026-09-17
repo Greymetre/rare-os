@@ -1220,3 +1220,73 @@ footer span {
   gap: 12px;
   margin: 16px 0;
 }
+.subtabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.subtabs button {
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.subtabs button.selected {
+  background: #1f2748;
+  border-color: #1f2748;
+  color: white;
+}
+.status-pill {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 650;
+  border-radius: 999px;
+  padding: 4px 9px;
+  white-space: nowrap;
+  background: #f1f4f8;
+  color: #5b6577;
+}
+.status-pill.ready,
+.status-pill.committed,
+.status-pill.validated {
+  background: #e7f4ed;
+  color: #2c7a58;
+}
+.status-pill.missing,
+.status-pill.failed {
+  background: #fbeceb;
+  color: #b3413a;
+}
+.status-pill.validating,
+.status-pill.committing {
+  background: #fdf3e2;
+  color: #a06a12;
+}
+.readiness-row + .readiness-row {
+  border-top: 1px solid #eff0f2;
+}
+.readiness-row p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #7d8594;
+}
+.import-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.import-stats > div {
+  border: 1px solid #e3e6ec;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.import-stats span {
+  display: block;
+  font-size: 10px;
+  color: #7d8594;
+  margin-bottom: 6px;
+}

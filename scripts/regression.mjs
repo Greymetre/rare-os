@@ -205,6 +205,17 @@ try {
     'node',
     'scripts/test-db.mjs',
   ]);
+  // After the browser suite: the demo company adds a second membership to the seed admin.
+  await step('ABC Corp demo company seeder is repeat-safe', 'docker', [
+    'compose',
+    'run',
+    '--rm',
+    '--no-deps',
+    'seed',
+    'sh',
+    '-c',
+    'node scripts/demo-abc-corp.mjs && node scripts/demo-abc-corp.mjs | grep -q "already present"',
+  ]);
   await step('Application and identity backup/restore verification', process.execPath, [
     'scripts/backup-local.mjs',
     '--verify',
