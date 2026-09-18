@@ -75,6 +75,7 @@ function App() {
   const [companyContext, setCompanyContext] = useState<{
     memberships: Membership[];
     platformAdmin: boolean;
+    mfaExemptUntil?: string | null;
   } | null>(null);
   const [showCompanies, setShowCompanies] = useState(false);
   const [user, setUser] = useState<User | null>(null),
@@ -100,8 +101,13 @@ function App() {
         csrfToken: string;
         memberships: Membership[];
         platformAdmin: boolean;
+        mfaExemptUntil: string | null;
       }>('me');
-      setCompanyContext({ memberships: d.memberships, platformAdmin: d.platformAdmin });
+      setCompanyContext({
+        memberships: d.memberships,
+        platformAdmin: d.platformAdmin,
+        mfaExemptUntil: d.mfaExemptUntil,
+      });
       setUser(d.user);
       setCsrf(d.csrfToken);
     } catch (e) {
@@ -340,6 +346,14 @@ function App() {
           <div>
             <span className="workspace-name">{user.company}</span>
             {isLocalHost(window.location.hostname) && <span className="environment">LOCAL</span>}
+            {companyContext?.mfaExemptUntil && (
+              <span
+                className="environment warning"
+                title="A temporary exemption for testing. MFA is required again automatically after this date."
+              >
+                MFA OFF UNTIL {new Date(companyContext.mfaExemptUntil).toLocaleDateString()}
+              </span>
+            )}
             <button className="text-button" onClick={() => setShowCompanies(true)}>
               {companyContext?.platformAdmin ? 'Companies' : 'Switch company'}
             </button>

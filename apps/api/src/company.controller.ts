@@ -14,11 +14,16 @@ export async function sessionContext(req: Request) {
   const platformAdmin = (
     await pool.query('SELECT is_platform_admin($1) AS allowed', [req.session.subject])
   ).rows[0].allowed;
+  // A temporary MFA exemption is shown on every page so it is not forgotten.
+  const mfaExemptUntil = (
+    await pool.query('SELECT mfa_exemption_until($1) AS until', [req.session.subject])
+  ).rows[0].until;
   return {
     memberships: memberships.filter(
       (m) => req.session.membershipVersions?.[m.tenant_id] === m.auth_version,
     ),
     platformAdmin,
+    mfaExemptUntil,
   };
 }
 async function platform(req: Request) {

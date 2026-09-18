@@ -21,6 +21,7 @@ for (const file of [
   'packages/schema/buffers.mjs',
   'packages/schema/planning-db.mjs',
   'packages/engines/ddmrp.mjs',
+  'scripts/mfa-exemption.mjs',
 ])
   await readFile(file);
 console.log('Runtime source and migrations are readable.');

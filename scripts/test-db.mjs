@@ -15,6 +15,49 @@ try {
   assert.equal(counts.rows[0].permissions, permissions.length);
   console.log('PASS seed: admin/roles preserved, current permission catalog');
   await db.query('BEGIN');
+  // Temporary MFA exemption: time-limited, ends automatically, invisible to the runtime role.
+  const adminSubject = (await db.query('SELECT identity_id FROM platform_admins LIMIT 1')).rows[0]
+    ?.identity_id;
+  if (adminSubject) {
+    const requires = async () =>
+      (await db.query('SELECT identity_requires_mfa($1) AS r', [adminSubject])).rows[0].r;
+    assert.equal(await requires(), true);
+    await db.query(
+      "INSERT INTO mfa_exemptions(identity_id,email,reason,expires_at) VALUES($1,'admin@test','regression',now()+interval '30 days')",
+      [adminSubject],
+    );
+    assert.equal(await requires(), false);
+    assert.ok((await db.query('SELECT mfa_exemption_until($1) AS u', [adminSubject])).rows[0].u);
+    await db.query(
+      "UPDATE mfa_exemptions SET created_at=now()-interval '40 days',expires_at=now()-interval '1 minute' WHERE identity_id=$1",
+      [adminSubject],
+    );
+    assert.equal(await requires(), true, 'an expired exemption requires MFA again');
+    await db.query('SAVEPOINT exemption');
+    await assert.rejects(
+      () =>
+        db.query(
+          "UPDATE mfa_exemptions SET created_at=now(),expires_at=now()+interval '61 days' WHERE identity_id=$1",
+          [adminSubject],
+        ),
+      (e) => e.code === '23514',
+      'exemptions longer than 60 days',
+    );
+    await db.query('ROLLBACK TO SAVEPOINT exemption');
+    await db.query('SET LOCAL ROLE rare_app');
+    await db.query('SAVEPOINT exemption');
+    await assert.rejects(
+      () => db.query('SELECT * FROM mfa_exemptions'),
+      (e) => e.code === '42501',
+      'runtime cannot read exemptions',
+    );
+    await db.query('ROLLBACK TO SAVEPOINT exemption');
+    await db.query('RESET ROLE');
+    await db.query('DELETE FROM mfa_exemptions WHERE identity_id=$1', [adminSubject]);
+    console.log(
+      'PASS MFA exemption: time-limited (max 60 days), ends automatically, not readable by the runtime',
+    );
+  }
   await db.query('INSERT INTO tenants(id,name) VALUES($1,$2)', [other, 'Isolation fixture']);
   await db.query(
     "INSERT INTO audit_log(tenant_id,action,entity_type) VALUES($1,'hidden.event','test')",

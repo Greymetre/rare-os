@@ -128,3 +128,20 @@ Restore hamesha pehle **temporary database** mein karke verify karein (restore d
 5. Fix push karke checks pass hone par `VPS_DEPLOY_ENABLED=true` — normal deploy wapas naya release laayega.
 
 **Is release ke liye important (live `ddc668a` → MFA/custom Keycloak release):** sirf images wala rollback login tod deta hai (`Unable to find factory for AuthenticatorFactory: rare-verified-otp`), isliye backup-restore wala rollback hi valid hai. Ye local rehearsal mein prove hua — details `docs/VALIDATION.md`.
+
+## Temporary MFA exemption (testing ke liye)
+
+Availability ke development ke dauraan baar-baar login karna padta hai. Isliye ek account ke liye MFA **kuch dino ke liye** band kiya ja sakta hai. Exemption hamesha expire hoti hai (max 60 din). Expiry ke baad MFA apne aap wapas lag jaata hai: next login par authenticator setup maanga jayega.
+
+VPS par (`/var/www/rare-os` folder mein):
+
+```bash
+# 30 din ke liye: authenticator device aur recovery codes hata deta hai, sab sessions sign out
+docker compose run --rm --no-deps seed node scripts/mfa-exemption.mjs add admin@rareos.local 30 "Availability testing"
+# dekhna
+docker compose run --rm --no-deps seed node scripts/mfa-exemption.mjs list
+# MFA wapas lagana (Availability complete hone par)
+docker compose run --rm --no-deps seed node scripts/mfa-exemption.mjs remove admin@rareos.local
+```
+
+Jab tak exemption chalu hai, app ke header mein **MFA OFF UNTIL <date>** dikhta hai. Is dauraan us account ka password mazboot rakho aur kisi se share mat karo.

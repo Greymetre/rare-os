@@ -367,6 +367,10 @@ header {
   color: #7c8491;
   margin-left: 12px;
 }
+.environment.warning {
+  background: #fdf3e2;
+  color: #a06a12;
+}
 .user-menu {
   display: flex;
   align-items: center;
