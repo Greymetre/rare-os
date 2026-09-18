@@ -209,7 +209,10 @@ test('role/user management, invitations, activation and safe access changes', as
     ).toHaveCount(0);
     const privileged = await userPage.request.post('/api/roles', {
       headers: { Origin: env.APP_URL, 'X-CSRF-Token': userMe.csrfToken },
-      data: { name: 'Escalated role', permissions: ['dashboard.read', 'purchase.approve'] },
+      data: {
+        name: 'Escalated role',
+        permissions: ['dashboard.read', 'masters.read', 'purchase.read', 'purchase.approve'],
+      },
     });
     expect(privileged.status()).toBe(403);
     await userPage.getByRole('button', { name: 'Roles & permissions', exact: true }).click();

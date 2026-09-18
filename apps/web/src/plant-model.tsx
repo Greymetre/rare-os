@@ -708,6 +708,7 @@ export type Column = {
   width?: string;
   inputMode?: 'decimal' | 'numeric';
   type?: 'date';
+  readOnly?: boolean;
 };
 
 export function LineTable({
@@ -745,6 +746,8 @@ export function LineTable({
                       value={row[c.key] ?? ''}
                       inputMode={c.inputMode}
                       type={c.type}
+                      readOnly={c.readOnly}
+                      className={c.readOnly ? 'readonly' : undefined}
                       onChange={(e) =>
                         onChange(
                           rows.map((r, n) => (n === i ? { ...r, [c.key]: e.target.value } : r)),

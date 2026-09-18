@@ -100,7 +100,9 @@ test('real Keycloak login, seed UI, worker, permission denial, expiry and logout
   await page.getByRole('button', { name: 'Roles & permissions', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Permission catalog' })).toBeVisible();
   await page.getByLabel('Filter permissions').fill('purchase.approve');
-  await expect(page.getByText('Approve purchase proposals', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Approve or reject purchase proposals', { exact: true }),
+  ).toBeVisible();
   await page.getByRole('button', { name: 'Availability', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Planning data readiness' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Imports' })).toBeVisible();

@@ -696,6 +696,8 @@ type OrderConfig = {
   headerFields: (form: any, setForm: (f: any) => void) => React.ReactNode;
   blank: () => any;
   payload: (form: any) => any;
+  // Extra section shown under an opened record, with a way to reload it.
+  extra?: (form: any, reload: () => void) => React.ReactNode;
 };
 
 function Orders({
@@ -854,6 +856,7 @@ function Orders({
               </button>
             </div>
           </form>
+          {form.id && config.extra?.(form, () => open(form.id))}
           {cancelReason !== null && (
             <form
               onSubmit={(e) => {
@@ -1107,7 +1110,7 @@ export function PurchaseOrders({
       { key: 'quantity', label: 'Quantity', inputMode: 'decimal' },
       { key: 'unit', label: 'Unit (blank = base unit)' },
       { key: 'due_date', label: 'Due date', type: 'date' },
-      { key: 'received_quantity', label: 'Received so far', inputMode: 'decimal' },
+      { key: 'received_quantity', label: 'Received so far', readOnly: true },
     ],
     blankLine: (n) => ({
       line_no: String(n),
@@ -1150,7 +1153,210 @@ export function PurchaseOrders({
       })),
     }),
   };
+  config.extra = (form, reload) => (
+    <GoodsReceipts
+      key={form.id + ':' + form.version}
+      csrf={csrf}
+      plantId={plantId}
+      po={form}
+      canReceive={permissions.includes('inventory.move')}
+      onPosted={reload}
+    />
+  );
   return <Orders key={plantId} csrf={csrf} config={config} refreshKey={refreshKey} />;
+}
+
+// Receipts against an opened purchase order: what arrived, into which store, posted to stock.
+function GoodsReceipts({
+  csrf,
+  plantId,
+  po,
+  canReceive,
+  onPosted,
+}: {
+  csrf: string;
+  plantId: string;
+  po: any;
+  canReceive: boolean;
+  onPosted: () => void;
+}) {
+  const call = useApi(csrf);
+  const received = po.lines.reduce((t: number, l: any) => t + Number(l.received_quantity), 0);
+  const history = useList(csrf, `purchase-orders/${po.id}/receipts`, [po.version, received]);
+  const locations = useList(csrf, `plants/${plantId}/stock-locations`, []);
+  const active = locations.items.filter((l) => l.active);
+  const open = po.lines.filter(
+    (l: any) => l.status === 'OPEN' && Number(l.quantity) > Number(l.received_quantity),
+  );
+  const [form, setForm] = useState<any>(null),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(''),
+    [notice, setNotice] = useState('');
+  function start() {
+    setError('');
+    setForm({
+      request_id: crypto.randomUUID(),
+      location: active.find((l) => l.location_type === 'STORES')?.code ?? active[0]?.code ?? '',
+      receipt_date: today(),
+      reference: '',
+      quantities: Object.fromEntries(
+        open.map((l: any) => [l.line_no, String(Number(l.quantity) - Number(l.received_quantity))]),
+      ),
+    });
+  }
+  function post() {
+    setBusy(true);
+    setError('');
+    call(`purchase-orders/${po.id}/receipts`, 'POST', {
+      request_id: form.request_id,
+      location: form.location,
+      receipt_date: form.receipt_date,
+      reference: form.reference,
+      lines: Object.entries(form.quantities)
+        .filter(([, q]) => String(q).trim() !== '' && Number(q) !== 0)
+        .map(([line_no, quantity]) => ({ line_no: Number(line_no), quantity })),
+    })
+      .then((d) => {
+        setNotice(d.message);
+        setForm(null);
+        onPosted();
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  }
+  return (
+    <div className="receipts">
+      <h3>Goods received</h3>
+      <Messages error={error} notice={notice} />
+      {history.items.length ? (
+        <table>
+          <thead>
+            <tr>
+              <th>Receipt</th>
+              <th>Date</th>
+              <th>Location</th>
+              <th>Reference</th>
+              <th>Lines</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.items.map((r) => (
+              <tr key={r.id}>
+                <td>GRN-{r.receipt_no}</td>
+                <td>{r.receipt_date}</td>
+                <td>{r.location}</td>
+                <td>{r.reference || '—'}</td>
+                <td>
+                  {(r.lines ?? [])
+                    .map((l: any) => `Line ${l.line_no}: ${num(l.quantity)} ${l.unit}`)
+                    .join(', ')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="panel-sub">
+          Nothing received yet. The order counts as incoming supply, not stock.
+        </p>
+      )}
+      {canReceive && po.status === 'OPEN' && open.length > 0 && !form && (
+        <div className="form-actions">
+          <button
+            type="button"
+            className="button primary"
+            onClick={start}
+            disabled={!active.length}
+          >
+            Receive goods
+          </button>
+        </div>
+      )}
+      {form && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            post();
+          }}
+        >
+          <div className="form-grid">
+            <label>
+              Receive into
+              <select
+                value={form.location}
+                onChange={(e) => setForm({ ...form, location: e.target.value })}
+              >
+                {active.map((l) => (
+                  <option key={l.id} value={l.code}>
+                    {l.code} — {l.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Receipt date
+              <input
+                type="date"
+                max={today()}
+                value={form.receipt_date}
+                onChange={(e) => setForm({ ...form, receipt_date: e.target.value })}
+              />
+            </label>
+            <label>
+              Delivery note / GRN reference
+              <input
+                maxLength={60}
+                value={form.reference}
+                onChange={(e) => setForm({ ...form, reference: e.target.value })}
+              />
+            </label>
+          </div>
+          <table className="line-editor">
+            <thead>
+              <tr>
+                <th>Line</th>
+                <th>Item</th>
+                <th className="num">Still due</th>
+                <th>Received now</th>
+              </tr>
+            </thead>
+            <tbody>
+              {open.map((l: any) => (
+                <tr key={l.line_no}>
+                  <td>{l.line_no}</td>
+                  <td>{l.item}</td>
+                  <td className="num">
+                    {num(Number(l.quantity) - Number(l.received_quantity))} {l.unit}
+                  </td>
+                  <td>
+                    <input
+                      aria-label={`Line ${l.line_no} received now`}
+                      inputMode="decimal"
+                      value={form.quantities[l.line_no] ?? ''}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          quantities: { ...form.quantities, [l.line_no]: e.target.value },
+                        })
+                      }
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="form-actions">
+            <button className="button primary" disabled={busy}>
+              Post receipt
+            </button>
+            <button type="button" className="button" disabled={busy} onClick={() => setForm(null)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
 }
 
 // ---------- Demand history ----------

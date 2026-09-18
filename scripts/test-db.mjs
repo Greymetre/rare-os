@@ -578,6 +578,65 @@ try {
   console.log(
     'PASS material buffers: input change markers, profile required for buffers, one setting per plant and item, queue-order promotion, derived results not editable, company isolation',
   );
+  // AV-5: one pending proposal per plant and item, decisions recorded, receipts immutable.
+  const proposal = (no, status = 'PROPOSED', extra = '') =>
+    db.query(
+      `INSERT INTO purchase_proposals(id,tenant_id,proposal_no,site_id,item_id,supplier_id,purchase_unit_id,unit_factor,quantity,due_date,source,status${extra ? ',' + extra.split('=')[0] : ''})
+       VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,1,10,current_date,'SYSTEM',$7${extra ? ",'" + extra.split('=')[1] + "'" : ''})`,
+      [tenant, no, site, itemId, suppliers[0], isoUnit, status],
+    );
+  await proposal(95001);
+  await db.query('SAVEPOINT av5');
+  await assert.rejects(
+    () => proposal(95002),
+    (e) => e.code === '23505',
+    'second pending proposal',
+  );
+  await db.query('ROLLBACK TO SAVEPOINT av5');
+  await db.query('SAVEPOINT av5');
+  await assert.rejects(
+    () => proposal(95003, 'REJECTED'),
+    (e) => e.code === '23514',
+    'rejection without a reason',
+  );
+  await db.query('ROLLBACK TO SAVEPOINT av5');
+  await db.query('SAVEPOINT av5');
+  await assert.rejects(
+    () => proposal(95004, 'APPROVED'),
+    (e) => e.code === '23514',
+    'approval without a purchase order',
+  );
+  await db.query('ROLLBACK TO SAVEPOINT av5');
+  await proposal(95005, 'REJECTED', 'decision_note=Too early');
+  const po = '20000000-0000-4000-8000-0000000000f1';
+  await db.query(
+    "INSERT INTO purchase_orders(id,tenant_id,site_id,po_no,supplier_id,order_date) VALUES($1,$2,$3,'DB-PO-5',$4,current_date)",
+    [po, tenant, site, suppliers[0]],
+  );
+  const request = randomUUID();
+  const receipt = (no) =>
+    db.query(
+      'INSERT INTO goods_receipts(id,tenant_id,receipt_no,site_id,po_id,location_id,receipt_date,request_id) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,current_date,$6)',
+      [tenant, no, site, po, store, request],
+    );
+  await receipt(96001);
+  await db.query('SAVEPOINT av5');
+  await assert.rejects(
+    () => receipt(96002),
+    (e) => e.code === '23505',
+    'the same request posted twice',
+  );
+  await db.query('ROLLBACK TO SAVEPOINT av5');
+  for (const [label, sql] of [
+    ['edit a goods receipt', "UPDATE goods_receipts SET reference='x'"],
+    ['delete a goods receipt', 'DELETE FROM goods_receipts'],
+    ['delete receipt lines', 'DELETE FROM goods_receipt_lines'],
+    ['delete proposals', 'DELETE FROM purchase_proposals'],
+  ])
+    await denied(label, '42501', sql);
+  console.log(
+    'PASS purchase loop: one pending proposal per plant and item, decisions need a reason or an order, receipts once per request and never edited',
+  );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);
   const pending = await db.query('SELECT * FROM outbox_pending(500)');

@@ -75,6 +75,27 @@ function notEnoughStock(e: any): never {
   throw e;
 }
 
+// Received quantities on purchase orders come from goods receipts, never from the order form.
+function receivedFromRecords(kind: OrderKind, raw: any, old: any) {
+  if (kind !== 'purchase_orders' || !Array.isArray(raw.lines)) return;
+  const existing = new Map<number, any>((old?.lines ?? []).map((l: any) => [Number(l.line_no), l]));
+  for (const line of raw.lines) {
+    if (!line || typeof line !== 'object') continue;
+    const prior = existing.get(Number(line.line_no));
+    line.received_quantity = prior ? String(Number(prior.received_quantity)) : '0';
+    if (
+      prior &&
+      Number(prior.received_quantity) > 0 &&
+      String(line.item ?? '').toLowerCase() !== prior.item.toLowerCase()
+    )
+      fail(
+        409,
+        'LINE_RECEIVED',
+        `Line ${prior.line_no} already has goods received; its item cannot change. Add a new line instead.`,
+      );
+  }
+}
+
 function reasonOf(value: unknown) {
   return text(value, 'Reason', 3, 200);
 }
@@ -334,6 +355,7 @@ export class DemandStockController {
     id(plantId);
     const o = ORDERS[kind];
     const raw = body(req, [o.no, ...o.header]);
+    receivedFromRecords(kind, raw, null);
     return mutate(req, o.create, async (db, actor) => {
       const plant = await requirePlant(db, actor, plantId);
       const checked = o.validate({ ...raw, plant: plant.code });
@@ -375,6 +397,7 @@ export class DemandStockController {
       await requirePlant(db, actor, old.site_id);
       sameVersion(old.version, v, o.noun.toLowerCase());
       const { version: _v, ...fields } = raw;
+      receivedFromRecords(kind, fields, old);
       const checked = o.validate({ ...fields, plant: old.plant, [o.no]: old.no });
       if (checked.errors.length) invalid(checked.errors);
       const doc = await this.checked(db, kind, { id: orderId, value: checked.value, errors: [] });

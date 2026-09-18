@@ -465,14 +465,10 @@ test('AV-3 demand and stock: ledger, reversals, orders, imports, readiness, perm
       received_quantity: received,
     });
     await rejected(poPath, 'POST', po([poLine('FG1', '5')]), 400, /is MAKE/);
-    await rejected(
-      poPath,
-      'POST',
-      po([poLine('RM1', '5', 'BOX', '6')]),
-      400,
-      /cannot be more than the ordered/,
-    );
-    const created = await ok(poPath, 'POST', po([poLine('RM1', '8', 'BOX', '3')]));
+    // Received quantities come from goods receipts (AV-5); the order form cannot set them.
+    const ignored = await ok(poPath, 'POST', po([poLine('RM1', '5', 'BOX', '6')]));
+    expect(Number((await ok('purchase-orders/' + ignored.id)).lines[0].received_quantity)).toBe(0);
+    const created = await ok(poPath, 'POST', po([poLine('RM1', '8', 'BOX', '0')]));
     expect(created.no).toMatch(/^PO-\d{6}$/);
     const poDetail = await ok('purchase-orders/' + created.id);
     expect([
@@ -786,6 +782,10 @@ test('AV-3 demand and stock: ledger, reversals, orders, imports, readiness, perm
         `DELETE FROM role_permissions WHERE role_id='${roleId}'; DELETE FROM roles WHERE id='${roleId}';`,
       );
     const sites = `SELECT id FROM sites WHERE code LIKE '${p}%'`;
+    sql(`DELETE FROM goods_receipt_lines WHERE receipt_id IN (SELECT id FROM goods_receipts WHERE site_id IN (${sites}));
+      DELETE FROM goods_receipts WHERE site_id IN (${sites});
+      UPDATE purchase_orders SET proposal_id=NULL WHERE site_id IN (${sites});
+      DELETE FROM purchase_proposals WHERE site_id IN (${sites});`);
     sql(`DELETE FROM stock_balances WHERE site_id IN (${sites});
       DELETE FROM stock_movements WHERE reverses_id IS NOT NULL AND site_id IN (${sites});
       DELETE FROM stock_movements WHERE site_id IN (${sites});

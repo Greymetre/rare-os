@@ -3,6 +3,7 @@
 import { effectiveAdu, planPlant } from '../engines/ddmrp.mjs';
 import { conversionFactors } from './demand-stock-db.mjs';
 import { itemsByCode, plantsByCode, resolvePlant } from './plant-model-db.mjs';
+import { syncProposals } from './purchase-db.mjs';
 
 const CHUNK = 1000;
 const KEEP_RUNS = 5;
@@ -450,6 +451,8 @@ export async function runPlanning(db, runId) {
   const promoted = (
     await db.query('SELECT promote_planning_run($1,$2) AS ok', [run.id, run.run_no])
   ).rows[0].ok;
+  // Rule AV-01: the current buffers decide which purchase proposals are pending.
+  if (promoted) summary.proposals = await syncProposals(db, run.tenant_id, run);
   await db.query(
     'UPDATE planning_runs SET status=$2,as_of=$3,summary=$4,finished_at=now() WHERE id=$1',
     [run.id, promoted ? 'completed' : 'superseded', today, JSON.stringify(summary)],
@@ -521,9 +524,10 @@ export async function listBoard(db, siteId, { q = '', zone = null, cursor = null
   const rows = (
     await db.query(
       `SELECT r.*,${rank} AS rank,i.code AS item,i.name AS item_name,i.make_buy,u.code AS unit,s.code AS supplier,
-         to_char(r.due_date,'YYYY-MM-DD') AS due_date
+         to_char(r.due_date,'YYYY-MM-DD') AS due_date,pp.proposal_no AS pending_proposal_no
        FROM planning_results r JOIN items i ON i.id=r.item_id JOIN units u ON u.id=i.base_unit_id
        LEFT JOIN suppliers s ON s.id=r.supplier_id
+       LEFT JOIN purchase_proposals pp ON pp.site_id=r.site_id AND pp.item_id=r.item_id AND pp.status='PROPOSED'
        WHERE ${where} ORDER BY ${rank},coalesce(r.priority_pct,0),lower(i.code) LIMIT $${params.length}`,
       params,
     )

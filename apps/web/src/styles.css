@@ -1760,3 +1760,51 @@ tr.clickable:hover td {
 table.board td:first-child {
   min-width: 200px;
 }
+
+/* ---------- Purchase proposals and receipts ---------- */
+.proposal-tabs {
+  padding: 0 24px;
+  border-bottom: 1px solid #eff0f2;
+  margin: 0;
+}
+.proposal-tabs button {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 14px 10px 12px;
+  box-shadow: inset 0 -2px 0 transparent;
+}
+.proposal-tabs button.selected {
+  background: none;
+  color: var(--indigo);
+  font-weight: 650;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.proposal-tabs .count {
+  display: inline-block;
+  min-width: 20px;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #f1f2f5;
+  font-size: 11px;
+}
+.inline-form {
+  padding: 16px 24px;
+  margin: 0;
+}
+.proposal-flag {
+  color: #a06a12;
+}
+.receipts {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #eff0f2;
+}
+.receipts table {
+  margin-top: 8px;
+}
+input.readonly {
+  background: #f6f7f9;
+  color: #7a8190;
+}

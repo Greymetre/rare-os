@@ -527,6 +527,10 @@ test('AV-4 material buffers: zones from usage, net flow, recompute on order chan
       );
     const items = `SELECT id FROM items WHERE code LIKE '${p}%'`,
       sites = `SELECT id FROM sites WHERE code LIKE '${p}%'`;
+    sql(`DELETE FROM goods_receipt_lines WHERE receipt_id IN (SELECT id FROM goods_receipts WHERE site_id IN (${sites}));
+      DELETE FROM goods_receipts WHERE site_id IN (${sites});
+      UPDATE purchase_orders SET proposal_id=NULL WHERE site_id IN (${sites});
+      DELETE FROM purchase_proposals WHERE site_id IN (${sites});`);
     sql(`DELETE FROM planning_results WHERE item_id IN (${items});
       DELETE FROM item_buffers WHERE item_id IN (${items});
       DELETE FROM buffer_profiles WHERE code LIKE '${p}%';

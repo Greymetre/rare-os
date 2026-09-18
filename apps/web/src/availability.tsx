@@ -8,7 +8,7 @@ import {
   Stock,
   StockLocations,
 } from './demand-stock';
-import { BufferBoard, BufferProfiles, BufferSettings } from './planning';
+import { BufferBoard, BufferProfiles, BufferSettings, PurchaseProposals } from './planning';
 
 type Batch = {
   id: string;
@@ -1101,6 +1101,7 @@ export function Availability({
     'Demand history',
     'Buffer settings',
     'Buffer board',
+    'Purchase proposals',
   ];
   const setupTabs = [
     'Readiness',
@@ -1127,7 +1128,17 @@ export function Availability({
         {[
           ['Setup', setupTabs],
           ['Stock and demand', transactionTabs],
-          ...(has('planning.read') ? [['Planning', ['Buffer board']]] : []),
+          ...(has('planning.read') || has('purchase.read')
+            ? [
+                [
+                  'Planning',
+                  [
+                    ...(has('planning.read') ? ['Buffer board'] : []),
+                    ...(has('purchase.read') ? ['Purchase proposals'] : []),
+                  ],
+                ],
+              ]
+            : []),
         ].map(([group, list]) => (
           <div
             key={group as string}
@@ -1223,6 +1234,15 @@ export function Availability({
       )}
       {tab === 'Buffer board' && plantId && (
         <BufferBoard
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Purchase proposals' && plantId && (
+        <PurchaseProposals
           key={plantId}
           csrf={csrf}
           plantId={plantId}

@@ -95,7 +95,8 @@ export class AvailabilityController {
             (SELECT count(*) FROM items i WHERE i.active AND i.make_buy='BUY' AND NOT EXISTS (SELECT 1 FROM item_suppliers x JOIN suppliers s ON s.id=x.supplier_id WHERE x.item_id=i.id AND x.active AND s.active))::int AS unsourced,
             (SELECT count(*) FROM suppliers WHERE active)::int AS suppliers,
             (SELECT count(*) FROM customers WHERE active)::int AS customers,
-            (SELECT to_char(r.finished_at,'YYYY-MM-DD HH24:MI') FROM planning_state s JOIN planning_runs r ON r.id=s.current_run_id) AS planned_at`,
+            (SELECT to_char(r.finished_at,'YYYY-MM-DD HH24:MI') FROM planning_state s JOIN planning_runs r ON r.id=s.current_run_id) AS planned_at,
+            (SELECT count(*) FROM purchase_proposals WHERE status='PROPOSED')::int AS pending_proposals`,
         )
       ).rows[0];
       const upcoming = (key: string, title: string, milestone: string, detail: string) => ({
@@ -169,11 +170,19 @@ export class AvailabilityController {
               ? `Buffers last calculated on ${counts.planned_at}. See the buffer board per plant.`
               : 'Set buffer profiles and buffer settings; buffers are calculated automatically.',
           },
+          {
+            key: 'purchase',
+            title: 'Purchase proposals',
+            status: 'info',
+            detail: counts.pending_proposals
+              ? `${counts.pending_proposals} proposal(s) waiting for approval. See Planning → Purchase proposals.`
+              : 'No purchase proposals waiting for approval.',
+          },
           upcoming(
-            'purchase',
-            'Purchase proposals and approvals',
-            'AV-5',
-            'Approve suggested orders and receive them into stock.',
+            'schedule',
+            'Production schedule',
+            'AV-6',
+            'Capacity load and a forward schedule per plant.',
           ),
         ],
       };

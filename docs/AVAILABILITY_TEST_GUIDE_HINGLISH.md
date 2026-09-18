@@ -314,3 +314,51 @@ Kuch seconds mein board bhar jayega: 2 Red, 5 Yellow, 6 Above top of green, 7 Ma
    - Profiles mein **Create** nahi dikhega.
    - Plant B ka board nahi khulega.
 3. Naye permissions: **Recalculate buffers on demand**, **Maintain buffer profiles and buffer settings**.
+
+## AV-5 — Purchase loop (kharidari)
+
+**Yeh kya karta hai:** jab kisi kharide jaane wale (BUY) item ka buffer yellow ya usse neeche jaata hai, system apne aap **purchase proposal** banata hai (rule AV-01). Koi dusra insaan use approve karta hai, tab **purchase order** banta hai. Maal aane par **goods receipt** hoti hai aur stock badhta hai.
+
+```
+Order → kami (buffer red/yellow) → proposal → approval → PO (aane wala maal) → receipt → stock
+```
+
+**Kahan:**
+
+- **Planning** row → **Purchase proposals**.
+- **Stock and demand** row → **Purchase orders** → PO kholo → neeche **Goods received**.
+- **Buffer board** par suggested order ke neeche "Proposal #N waiting for approval" dikhta hai.
+
+Demo: ABC Corp mein buffers calculate hote hi RMb, RMc, RMe, RMf, RMg ke proposals apne aap aa jaate hain (5 waiting).
+
+### 1. Proposals
+
+1. **Purchase proposals** → **Waiting for approval**. Har proposal mein item, supplier, quantity (purchase unit, MOQ aur multiple ke saath), needed-by date, aur "Why" (zone aur net flow) dikhta hai.
+2. **Change**: quantity ya date badlo → save. Ab tum khud usse approve nahi kar sakte: "You created or last changed this proposal, so someone else must approve it." Dusra user approve karega.
+3. **Approve** (ya kai select karke **Approve selected**) → "Purchase order PO-… created". Proposal **Approved** tab mein PO number ke saath dikhega.
+4. **Reject** → reason zaroori hai. Wahi zaroorat dobara nahi aayegi, jab tak quantity badal na jaaye.
+5. Order cancel karo ya stock aa jaaye, to system ka pending proposal apne aap **Withdrawn** ho jaata hai.
+6. **Raise proposal**: haath se proposal (item ka preferred supplier lagta hai). Isse bhi koi dusra hi approve karega.
+
+### 2. Approval ke rules (ye check karo)
+
+1. Kisi proposal ko kholo. Dusri tab/user se uski quantity badlo. Pehli tab se Approve → **changed after you opened it**.
+2. Stock ya order mein kuch badlo aur turant (3 second ke andar) approve karo → **Buffers are being recalculated…**. 5 second baad dobara approve → ho jayega.
+3. Approve ke baad **Buffer board** par: **On hand wahi rehta hai**, sirf **Open supply** badhta hai. Approved PO stock nahi hai.
+
+### 3. Goods receipt
+
+1. **Purchase orders** → PO kholo → **Receive goods**.
+   - Location, date aur delivery note bharo.
+   - "Received now" mein bacha hua quantity pehle se bhara hota hai; partial ke liye kam karo.
+   - **Post receipt**.
+2. **Stock** tab: item ka stock badha. Ledger mein "Receipt against PO-…" dikhta hai.
+3. Bache hue se zyada receive karo → **only N is still due** error.
+4. PO ka "Received so far" form mein badla nahi ja sakta; woh sirf receipts se badhta hai.
+
+### 4. Permissions
+
+- **Approve or reject purchase proposals**: approver ke liye.
+- **Create, edit and import purchase orders**: proposal change/raise ke liye.
+- **Post stock receipts and issues**: goods receipt ke liye.
+- Approver sirf apne plants ke proposals dekhta hai. Bina receipt permission ke **Receive goods** nahi dikhta.

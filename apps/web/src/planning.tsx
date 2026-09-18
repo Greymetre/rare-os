@@ -755,6 +755,11 @@ export function BufferBoard({
                           <div className="cell-sub">
                             {r.supplier ? r.supplier + ' · ' : ''}by {r.due_date}
                           </div>
+                          {r.pending_proposal_no && (
+                            <div className="cell-sub proposal-flag">
+                              Proposal #{r.pending_proposal_no} waiting for approval
+                            </div>
+                          )}
                         </>
                       ) : (
                         <span className="cell-sub">—</span>
@@ -827,6 +832,401 @@ export function BufferBoard({
           </div>
         )}
         <Pager cursors={cursors} next={board.next} setCursors={setCursors} />
+      </section>
+    </>
+  );
+}
+
+// ---------- Purchase proposals (rule AV-01) ----------
+
+const PROPOSAL_TABS: [string, string][] = [
+  ['PROPOSED', 'Waiting for approval'],
+  ['APPROVED', 'Approved'],
+  ['REJECTED', 'Rejected'],
+  ['WITHDRAWN', 'Withdrawn'],
+];
+
+export function PurchaseProposals({
+  csrf,
+  plantId,
+  permissions,
+  refreshKey,
+}: {
+  csrf: string;
+  plantId: string;
+  permissions: string[];
+  refreshKey: number;
+}) {
+  const call = useApi(csrf);
+  const canApprove = permissions.includes('purchase.approve');
+  const canChange = permissions.includes('purchase.create');
+  const [status, setStatus] = useState('PROPOSED'),
+    [revision, setRevision] = useState(0),
+    [cursors, setCursors] = useState<string[]>([]),
+    [selected, setSelected] = useState<Record<string, number>>({}),
+    [editing, setEditing] = useState<any>(null),
+    [rejecting, setRejecting] = useState<any>(null),
+    [raising, setRaising] = useState<any>(null),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(''),
+    [notice, setNotice] = useState('');
+  const list = useList(
+    csrf,
+    pagePath(`plants/${plantId}/purchase-proposals`, {
+      status,
+      cursor: cursors[cursors.length - 1],
+    }),
+    [revision, refreshKey],
+  );
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let live = true;
+    call(`plants/${plantId}/purchase-proposals`)
+      .then((d) => live && setCounts(d.counts))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [plantId, revision, refreshKey]);
+  const done = (message: string) => {
+    setNotice(message);
+    setSelected({});
+    setEditing(null);
+    setRejecting(null);
+    setRaising(null);
+    setRevision((x) => x + 1);
+  };
+  function act(path: string, payload: any) {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    call(path, 'POST', payload)
+      .then((d) => done(d.message))
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  }
+  function saveEdit() {
+    setBusy(true);
+    setError('');
+    call('purchase-proposals/' + editing.id, 'PATCH', {
+      quantity: String(editing.quantity),
+      due_date: editing.due_date,
+      note: editing.note ?? '',
+      version: editing.version,
+    })
+      .then((d) => done(d.message))
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  }
+  const chosen = Object.entries(selected).map(([id, version]) => ({ id, version }));
+  const pending = status === 'PROPOSED';
+  return (
+    <>
+      <Messages error={error || list.error} notice={notice} />
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Purchase proposals</h2>
+            <p className="panel-sub">
+              Suggested from the buffers: bought items at or below top of yellow, sized back to top
+              of green with the supplier&apos;s MOQ and order multiple. Approving creates a purchase
+              order; it counts as incoming supply, not stock, until goods are received.
+            </p>
+          </div>
+          {canChange && !raising && (
+            <button
+              className="button"
+              onClick={() => setRaising({ item: '', quantity: '', due_date: '', note: '' })}
+            >
+              Raise proposal
+            </button>
+          )}
+        </div>
+        <div className="subtabs proposal-tabs" role="tablist" aria-label="Proposal status">
+          {PROPOSAL_TABS.map(([k, label]) => (
+            <button
+              key={k}
+              role="tab"
+              aria-selected={status === k}
+              className={status === k ? 'selected' : ''}
+              onClick={() => {
+                setCursors([]);
+                setSelected({});
+                setStatus(k);
+              }}
+            >
+              {label} <span className="count">{counts[k] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+        {raising && (
+          <form
+            className="company-form inline-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              act(`plants/${plantId}/purchase-proposals`, raising);
+            }}
+          >
+            <h3>Raise a proposal</h3>
+            <div className="form-grid">
+              {[
+                ['item', 'Item code *', {}],
+                ['quantity', 'Quantity (purchase unit) *', { inputMode: 'decimal' }],
+                ['due_date', 'Needed by *', { type: 'date' }],
+                ['note', 'Why', { maxLength: 300 }],
+              ].map(([key, label, props]: any) => (
+                <label key={key}>
+                  {label}
+                  <input
+                    value={raising[key]}
+                    onChange={(e) => setRaising({ ...raising, [key]: e.target.value })}
+                    {...props}
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="panel-sub">
+              Uses the item&apos;s preferred supplier. Someone else must approve it.
+            </p>
+            <div className="form-actions">
+              <button className="button primary" disabled={busy}>
+                Raise proposal
+              </button>
+              <button type="button" className="button" onClick={() => setRaising(null)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+        {pending && canApprove && (
+          <div className="toolbar panel-toolbar">
+            <span className="panel-sub">{chosen.length} selected</span>
+            <button
+              className="button primary"
+              disabled={busy || !chosen.length}
+              onClick={() => act(`plants/${plantId}/purchase-proposals/approve`, { items: chosen })}
+            >
+              Approve selected
+            </button>
+          </div>
+        )}
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {pending && canApprove && <th aria-label="Select" />}
+                <th>Proposal</th>
+                <th>Item</th>
+                <th>Supplier</th>
+                <th className="num">Quantity</th>
+                <th>Needed by</th>
+                <th>Why</th>
+                <th>{pending ? 'Raised by' : 'Decision'}</th>
+                {pending && (canApprove || canChange) && <th className="actions">Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {list.items.map((p) => [
+                <tr key={p.id}>
+                  {pending && canApprove && (
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select proposal ${p.proposal_no}`}
+                        checked={p.id in selected}
+                        onChange={(e) => {
+                          const next = { ...selected };
+                          if (e.target.checked) next[p.id] = p.version;
+                          else delete next[p.id];
+                          setSelected(next);
+                        }}
+                      />
+                    </td>
+                  )}
+                  <td>
+                    <strong>#{p.proposal_no}</strong>
+                  </td>
+                  <td>
+                    <strong>{p.item}</strong>
+                    <div className="cell-sub">{p.item_name}</div>
+                  </td>
+                  <td>
+                    {p.supplier}
+                    <div className="cell-sub">{p.supplier_name}</div>
+                  </td>
+                  <td className="num">
+                    <strong>
+                      {num(p.quantity)} {p.unit}
+                    </strong>
+                    {p.unit !== p.base_unit && (
+                      <div className="cell-sub">
+                        = {num(Number(p.quantity) * Number(p.unit_factor))} {p.base_unit}
+                      </div>
+                    )}
+                  </td>
+                  <td className="nowrap">{p.due_date}</td>
+                  <td>
+                    {p.zone && <span className={'zone-pill ' + p.zone}>{ZONE_LABELS[p.zone]}</span>}
+                    <div className="cell-sub">{p.note || '—'}</div>
+                  </td>
+                  <td>
+                    {pending ? (
+                      p.source === 'SYSTEM' && !p.changed_by_name ? (
+                        <span className="cell-sub">Planning run #{p.run_no}</span>
+                      ) : (
+                        <span className="cell-sub">{p.changed_by_name ?? 'Platform admin'}</span>
+                      )
+                    ) : (
+                      <>
+                        <span className={'status-pill ' + (p.status === 'APPROVED' ? 'ok' : 'off')}>
+                          {p.status === 'APPROVED' ? `PO ${p.po_no}` : p.status.toLowerCase()}
+                        </span>
+                        <div className="cell-sub">
+                          {p.decided_by_name ?? (p.status === 'WITHDRAWN' ? 'Planning' : '')}
+                          {p.decision_note ? ' · ' + p.decision_note : ''}
+                        </div>
+                      </>
+                    )}
+                  </td>
+                  {pending && (canApprove || canChange) && (
+                    <td className="actions nowrap">
+                      {canApprove && (
+                        <button
+                          className="text-button"
+                          aria-label={`Approve proposal ${p.proposal_no}`}
+                          disabled={busy}
+                          onClick={() =>
+                            act(`purchase-proposals/${p.id}/approve`, { version: p.version })
+                          }
+                        >
+                          Approve
+                        </button>
+                      )}
+                      {canApprove && (
+                        <button
+                          className="text-button"
+                          aria-label={`Reject proposal ${p.proposal_no}`}
+                          onClick={() => setRejecting({ ...p, reason: '' })}
+                        >
+                          Reject
+                        </button>
+                      )}
+                      {canChange && (
+                        <button
+                          className="text-button"
+                          aria-label={`Change proposal ${p.proposal_no}`}
+                          onClick={() => setEditing({ ...p, quantity: num(p.quantity, 6) })}
+                        >
+                          Change
+                        </button>
+                      )}
+                    </td>
+                  )}
+                </tr>,
+                editing?.id === p.id && (
+                  <tr key={p.id + '-edit'} className="detail-row">
+                    <td colSpan={9}>
+                      <form
+                        className="company-form inline-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          saveEdit();
+                        }}
+                      >
+                        <div className="form-grid">
+                          <label>
+                            Quantity ({p.unit})
+                            <input
+                              inputMode="decimal"
+                              value={editing.quantity}
+                              onChange={(e) => setEditing({ ...editing, quantity: e.target.value })}
+                            />
+                          </label>
+                          <label>
+                            Needed by
+                            <input
+                              type="date"
+                              value={editing.due_date}
+                              onChange={(e) => setEditing({ ...editing, due_date: e.target.value })}
+                            />
+                          </label>
+                          <label>
+                            Why changed
+                            <input
+                              maxLength={300}
+                              value={editing.note}
+                              onChange={(e) => setEditing({ ...editing, note: e.target.value })}
+                            />
+                          </label>
+                        </div>
+                        <p className="panel-sub">
+                          After you change it, someone else must approve it.
+                        </p>
+                        <div className="form-actions">
+                          <button className="button primary" disabled={busy}>
+                            Save change
+                          </button>
+                          <button type="button" className="button" onClick={() => setEditing(null)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                ),
+                rejecting?.id === p.id && (
+                  <tr key={p.id + '-reject'} className="detail-row">
+                    <td colSpan={9}>
+                      <form
+                        className="company-form inline-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          act(`purchase-proposals/${p.id}/reject`, {
+                            version: p.version,
+                            reason: rejecting.reason,
+                          });
+                        }}
+                      >
+                        <label>
+                          Reason for rejecting *
+                          <input
+                            maxLength={300}
+                            value={rejecting.reason}
+                            onChange={(e) => setRejecting({ ...rejecting, reason: e.target.value })}
+                          />
+                        </label>
+                        <div className="form-actions">
+                          <button className="button primary" disabled={busy}>
+                            Reject proposal
+                          </button>
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={() => setRejecting(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                ),
+              ])}
+            </tbody>
+          </table>
+        </div>
+        {list.busy && <p role="status">Loading proposals…</p>}
+        {!list.items.length && !list.busy && (
+          <div className="empty">
+            <strong>{pending ? 'Nothing waiting for approval.' : 'No proposals here yet.'}</strong>
+            <p>
+              {pending
+                ? 'Bought items get a proposal automatically when their buffer drops to yellow or below.'
+                : 'Decided proposals appear here.'}
+            </p>
+          </div>
+        )}
+        <Pager cursors={cursors} next={list.next} setCursors={setCursors} />
       </section>
     </>
   );
