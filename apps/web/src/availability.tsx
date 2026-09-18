@@ -1140,24 +1140,26 @@ export function Availability({
               ]
             : []),
         ].map(([group, list]) => (
-          <div
-            key={group as string}
-            className="subtabs"
-            role="tablist"
-            aria-label={`Availability ${String(group).toLowerCase()}`}
-          >
+          <div key={group as string} className="subtabs">
             <span className="subtabs-label">{group}</span>
-            {(list as string[]).map((t) => (
-              <button
-                key={t}
-                role="tab"
-                aria-selected={tab === t}
-                className={tab === t ? 'selected' : ''}
-                onClick={() => setTab(t)}
-              >
-                {t}
-              </button>
-            ))}
+            {/* Tabs wrap inside their own column, so a second line starts under the first tab. */}
+            <div
+              className="subtabs-tabs"
+              role="tablist"
+              aria-label={`Availability ${String(group).toLowerCase()}`}
+            >
+              {(list as string[]).map((t) => (
+                <button
+                  key={t}
+                  role="tab"
+                  aria-selected={tab === t}
+                  className={tab === t ? 'selected' : ''}
+                  onClick={() => setTab(t)}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
           </div>
         ))}
       </nav>

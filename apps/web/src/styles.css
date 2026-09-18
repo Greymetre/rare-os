@@ -1365,15 +1365,25 @@ footer span {
   gap: 0;
   margin: 0;
   padding: 0 12px;
+  flex-wrap: nowrap;
+}
+.module-nav .subtabs-tabs {
+  display: flex;
   flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 8px;
 }
 .module-nav .subtabs + .subtabs {
   margin-top: 0;
   border-top: 1px solid #eff0f2;
 }
 .module-nav .subtabs-label {
-  flex: 0 0 96px;
+  flex: 0 0 132px;
+  align-self: stretch;
   min-width: 0;
+  margin: 10px 0;
+  border-right: 1px solid #d9dce3;
   display: flex;
   align-items: center;
   padding: 0 8px 0 12px;
@@ -1553,7 +1563,7 @@ td.actions {
   margin: 0;
 }
 @media (max-width: 1100px) {
-  .module-nav .subtabs {
+  .module-nav .subtabs-tabs {
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: thin;
