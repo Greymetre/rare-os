@@ -1,5 +1,6 @@
 import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
+import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -62,11 +63,13 @@ test('AV-0 availability foundation: units, staged CSV imports, duplicates, scale
   await expect(page.locator('.main > header')).toBeVisible();
   const me = await (await page.request.get('/api/me')).json();
   const call = (path: string, method = 'GET', data?: unknown) =>
-    page.request.fetch('/api/' + path, {
-      method,
-      headers: { Origin: env.APP_URL, 'X-CSRF-Token': me.csrfToken },
-      data,
-    });
+    withRateLimitRetry(() =>
+      page.request.fetch('/api/' + path, {
+        method,
+        headers: { Origin: env.APP_URL, 'X-CSRF-Token': me.csrfToken },
+        data,
+      }),
+    );
   const upload = (csv: string, name = 'units.csv', contentType = 'text/csv') =>
     page.request.fetch('/api/imports/units', {
       method: 'POST',
@@ -86,7 +89,7 @@ test('AV-0 availability foundation: units, staged CSV imports, duplicates, scale
           batch = await (await call('imports/' + batchId)).json();
           return ['validated', 'committed', 'failed', 'cancelled'].includes(batch.status);
         },
-        { timeout, intervals: [500, 1000] },
+        { timeout, intervals: [1000, 2000] },
       )
       .toBe(true);
     return batch;

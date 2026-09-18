@@ -1,5 +1,6 @@
 import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
+import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -66,11 +67,13 @@ test('AV-3 demand and stock: ledger, reversals, orders, imports, readiness, perm
     data?: unknown,
     headers: Record<string, string> = {},
   ) =>
-    page.request.fetch('/api/' + path, {
-      method,
-      headers: { Origin: env.APP_URL, 'X-CSRF-Token': me.csrfToken, ...headers },
-      data,
-    });
+    withRateLimitRetry(() =>
+      page.request.fetch('/api/' + path, {
+        method,
+        headers: { Origin: env.APP_URL, 'X-CSRF-Token': me.csrfToken, ...headers },
+        data,
+      }),
+    );
   async function ok(path: string, method = 'GET', data?: unknown) {
     const r = await call(path, method, data);
     const body = await r.json();
@@ -98,7 +101,7 @@ test('AV-3 demand and stock: ledger, reversals, orders, imports, readiness, perm
           batch = await (await call('imports/' + batchId)).json();
           return ['validated', 'committed', 'failed', 'cancelled'].includes(batch.status);
         },
-        { timeout, intervals: [500, 1000] },
+        { timeout, intervals: [1000, 2000] },
       )
       .toBe(true);
     return batch;
