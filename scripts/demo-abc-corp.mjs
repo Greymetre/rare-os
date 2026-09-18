@@ -34,6 +34,20 @@ const FINISHED = [
   ['FGk', 'SKU-111', 'DIV-A', 'stranger', 1950, 30],
   ['FGl', 'SKU-112', 'DIV-B', 'repeater', 3100, 30],
 ];
+const MONTHLY_UNITS = {
+  FGa: 900,
+  FGb: 820,
+  FGc: 640,
+  FGd: 300,
+  FGe: 260,
+  FGf: 210,
+  FGg: 180,
+  FGh: 45,
+  FGi: 30,
+  FGj: 120,
+  FGk: 110,
+  FGl: 190,
+};
 const RAW = [
   ['RMa', 'SUP-1', 320, 'KG'],
   ['RMb', 'SUP-2', 540, 'KG'],
@@ -97,6 +111,83 @@ const ROUTING = {
   FGk: [2, 2, 4, 2, 2],
   FGl: [3, 4, 5, 3, 2],
 };
+
+// Plant 1 stock and demand (AV-3). Opening stock is the prototype's on-hand; dates are relative to today.
+const LOCATIONS = [
+  ['RM-STORE', 'Raw material store', 'STORES', true],
+  ['FG-STORE', 'Finished goods store', 'FINISHED', true],
+  ['WIP', 'Line work in progress', 'PRODUCTION', true],
+  ['QC-HOLD', 'Quality hold', 'QUARANTINE', false],
+];
+const ON_HAND = {
+  FGa: 340,
+  FGb: 360,
+  FGc: 320,
+  FGd: 90,
+  FGe: 100,
+  RMa: 1500,
+  RMb: 520,
+  RMc: 1100,
+  RMd: 1050,
+  RMe: 1000,
+  RMf: 1200,
+  RMg: 1000,
+  RMh: 1700,
+};
+// [PO, item, quantity, supplier, due in days]
+const PURCHASE_ORDERS = [
+  ['PO-101', 'RMa', 400, 'SUP-1', 4],
+  ['PO-102', 'RMb', 300, 'SUP-2', 9],
+  ['PO-103', 'RMd', 300, 'SUP-3', 13],
+  ['PO-104', 'RMg', 300, 'SUP-3', 15],
+];
+// [order, customer, promise in days, partial delivery allowed, [[item, quantity]...]]
+const SALES_ORDERS = [
+  ['O-101', 'OEM-1', 5, true, [['FGc', 120]]],
+  ['O-102', 'DIST-1', 4, true, [['FGa', 300]]],
+  ['O-103', 'DIST-2', 6, true, [['FGb', 250]]],
+  ['O-104', 'OEM-2', 8, true, [['FGh', 40]]],
+  ['O-105', 'DIST-3', 5, true, [['FGc', 180]]],
+  ['O-106', 'DIST-1', 7, true, [['FGd', 220]]],
+  ['O-107', 'OEM-1', 9, true, [['FGi', 30]]],
+  ['O-108', 'DIST-4', 5, true, [['FGa', 150]]],
+  ['O-109', 'DIST-2', 8, true, [['FGf', 200]]],
+  ['O-110', 'OEM-3', 10, true, [['FGg', 90]]],
+  ['O-111', 'DIST-3', 9, true, [['FGe', 160]]],
+  ['O-112', 'DIST-2', 11, true, [['FGb', 400]]],
+  [
+    'O-113',
+    'OEM-2',
+    10,
+    false,
+    [
+      ['FGa', 80],
+      ['FGd', 60],
+      ['FGf', 40],
+    ],
+  ],
+  [
+    'O-114',
+    'DIST-1',
+    12,
+    true,
+    [
+      ['FGe', 90],
+      ['FGl', 50],
+    ],
+  ],
+];
+// Daily demand history for the last 90 days: monthly units spread over working days with a fixed weekly pattern.
+const DAILY_PATTERN = [1.1, 0.9, 1.3, 1.0, 0.8, 0.9, 0];
+
+// Buffers (AV-4): prototype profiles; FGa-FGe and every raw material are buffered, the other
+// finished goods are made to order. Lead times for made items are the prototype's lt_days.
+const PROFILES = [
+  ['BP-RM-SHORT', 'Bought, short lead time', 30, 0, 35],
+  ['BP-RM-LONG', 'Bought, long lead time', 40, 0, 45],
+  ['BP-FG', 'Finished goods', 30, 0, 30],
+];
+const BUFFERED_FG = { FGa: 4, FGb: 4, FGc: 5, FGd: 4, FGe: 4 };
 
 const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
 await db.connect();
@@ -243,6 +334,96 @@ try {
         ],
       );
   }
+  // Stock and demand for Plant 1; each record is added only when missing.
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [DEMO.tenant]);
+  const locations = await db.query(
+    'INSERT INTO stock_locations(id,tenant_id,site_id,code,name,location_type,nettable) SELECT gen_random_uuid(),$1,$2,l.code,l.name,l.kind,l.nettable FROM unnest($3::text[],$4::text[],$5::text[],$6::boolean[]) AS l(code,name,kind,nettable) ON CONFLICT DO NOTHING',
+    [
+      DEMO.tenant,
+      DEMO.plant,
+      LOCATIONS.map((l) => l[0]),
+      LOCATIONS.map((l) => l[1]),
+      LOCATIONS.map((l) => l[2]),
+      LOCATIONS.map((l) => l[3]),
+    ],
+  );
+  const openings = await db.query(
+    `INSERT INTO stock_movements(id,tenant_id,movement_no,site_id,location_id,item_id,movement_type,quantity,entered_quantity,entered_unit_id,movement_date,reference,external_ref)
+     SELECT gen_random_uuid(),$1,next_number('stock_movement'),$2,l.id,i.id,'OPENING',o.qty,o.qty,i.base_unit_id,current_date,'Demo opening stock','DEMO-OPEN-'||i.code
+     FROM unnest($3::text[],$4::numeric[]) WITH ORDINALITY AS o(code,qty,ord)
+     JOIN items i ON i.tenant_id=$1 AND i.code=o.code
+     JOIN stock_locations l ON l.tenant_id=$1 AND l.site_id=$2 AND l.code=CASE WHEN i.item_type='FG' THEN 'FG-STORE' ELSE 'RM-STORE' END
+     WHERE NOT EXISTS (SELECT 1 FROM stock_movements m WHERE m.tenant_id=$1 AND lower(m.external_ref)=lower('DEMO-OPEN-'||i.code))
+     ORDER BY o.ord`,
+    [DEMO.tenant, DEMO.plant, Object.keys(ON_HAND), Object.values(ON_HAND)],
+  );
+  let purchaseOrders = 0;
+  for (const [no, item, qty, supplier, due] of PURCHASE_ORDERS) {
+    const po = await db.query(
+      'INSERT INTO purchase_orders(id,tenant_id,site_id,po_no,supplier_id,order_date) SELECT gen_random_uuid(),$1,$2,$3,id,current_date-3 FROM suppliers WHERE tenant_id=$1 AND code=$4 ON CONFLICT DO NOTHING RETURNING id',
+      [DEMO.tenant, DEMO.plant, no, supplier],
+    );
+    purchaseOrders += po.rowCount;
+    if (po.rowCount)
+      await db.query(
+        'INSERT INTO purchase_order_lines(id,tenant_id,po_id,line_no,item_id,unit_id,unit_factor,quantity,due_date) SELECT gen_random_uuid(),$1,$2,1,id,base_unit_id,1,$3,current_date+$4::int FROM items WHERE tenant_id=$1 AND code=$5',
+        [DEMO.tenant, po.rows[0].id, qty, due, item],
+      );
+  }
+  let salesOrders = 0;
+  for (const [no, customer, promise, partial, lines] of SALES_ORDERS) {
+    const order = await db.query(
+      'INSERT INTO sales_orders(id,tenant_id,site_id,order_no,customer_id,order_date,promise_date,allow_partial) SELECT gen_random_uuid(),$1,$2,$3,id,current_date-2,current_date+$4::int,$5 FROM customers WHERE tenant_id=$1 AND code=$6 ON CONFLICT DO NOTHING RETURNING id',
+      [DEMO.tenant, DEMO.plant, no, promise, partial, customer],
+    );
+    salesOrders += order.rowCount;
+    if (order.rowCount)
+      await db.query(
+        'INSERT INTO sales_order_lines(id,tenant_id,order_id,line_no,item_id,quantity,promise_date) SELECT gen_random_uuid(),$1,$2,l.n*10,i.id,l.qty,current_date+$3::int FROM unnest($4::text[],$5::numeric[]) WITH ORDINALITY AS l(code,qty,n) JOIN items i ON i.tenant_id=$1 AND i.code=l.code',
+        [DEMO.tenant, order.rows[0].id, promise, lines.map((l) => l[0]), lines.map((l) => l[1])],
+      );
+  }
+  const history = await db.query(
+    `INSERT INTO demand_history(tenant_id,site_id,item_id,demand_date,quantity)
+     SELECT $1,$2,i.id,d.day,round(f.monthly / 26.0 * ($5::numeric[])[extract(isodow FROM d.day)::int])
+     FROM unnest($3::text[],$4::numeric[]) AS f(code,monthly)
+     JOIN items i ON i.tenant_id=$1 AND i.code=f.code
+     CROSS JOIN generate_series(current_date-90,current_date-1,interval '1 day') AS d(day)
+     ON CONFLICT DO NOTHING`,
+    [
+      DEMO.tenant,
+      DEMO.plant,
+      FINISHED.map((f) => f[0]),
+      FINISHED.map((f) => MONTHLY_UNITS[f[0]]),
+      DAILY_PATTERN,
+    ],
+  );
+  const profiles = await db.query(
+    'INSERT INTO buffer_profiles(id,tenant_id,code,name,red_base_pct,red_safety_pct,green_pct) SELECT gen_random_uuid(),$1,p.code,p.name,p.red,p.safety,p.green FROM unnest($2::text[],$3::text[],$4::numeric[],$5::numeric[],$6::numeric[]) AS p(code,name,red,safety,green) ON CONFLICT DO NOTHING',
+    [
+      DEMO.tenant,
+      PROFILES.map((p) => p[0]),
+      PROFILES.map((p) => p[1]),
+      PROFILES.map((p) => p[2]),
+      PROFILES.map((p) => p[3]),
+      PROFILES.map((p) => p[4]),
+    ],
+  );
+  const settings = await db.query(
+    `INSERT INTO item_buffers(id,tenant_id,site_id,item_id,policy,profile_id,lead_time_days)
+     SELECT gen_random_uuid(),$1,$2,i.id,
+       CASE WHEN i.make_buy='BUY' OR i.code=ANY($3::text[]) THEN 'BUFFER' ELSE 'MTO' END,
+       CASE WHEN i.make_buy='MAKE' AND i.code=ANY($3::text[]) THEN (SELECT id FROM buffer_profiles WHERE tenant_id=$1 AND code='BP-FG')
+            WHEN i.make_buy='BUY' THEN (SELECT id FROM buffer_profiles WHERE tenant_id=$1 AND code=
+              CASE WHEN coalesce(src.lead_time_days,s.lead_time_days,0) >= 14 THEN 'BP-RM-LONG' ELSE 'BP-RM-SHORT' END) END,
+       CASE WHEN i.make_buy='MAKE' THEN (($4::jsonb)->>i.code)::int END
+     FROM items i
+     LEFT JOIN item_suppliers src ON src.item_id=i.id AND src.preferred
+     LEFT JOIN suppliers s ON s.id=src.supplier_id
+     WHERE i.tenant_id=$1
+     ON CONFLICT DO NOTHING`,
+    [DEMO.tenant, DEMO.plant, Object.keys(BUFFERED_FG), JSON.stringify(BUFFERED_FG)],
+  );
   if (created.rowCount)
     await db.query(
       "INSERT INTO audit_log(tenant_id,action,entity_type,entity_id,details) VALUES($1::uuid,'demo.seeded','company',$1::text,'{\"source\":\"scripts/demo-abc-corp.mjs\"}')",
@@ -251,8 +432,8 @@ try {
   await db.query('COMMIT');
   console.log(
     created.rowCount
-      ? `ABC Corp (Demo) created with Plant 1, ${units.rowCount} units, ${items.rowCount} items, 4 suppliers, 7 customers, a 3-shift calendar, 5 resources, 12 BOMs and 12 routings. Sign in as ${admin.email} and switch company.`
-      : `ABC Corp (Demo) already present; added ${units.rowCount} unit(s), ${items.rowCount} item(s), ${calendar.rowCount} calendar(s), ${resources.rowCount} resource(s), ${boms} BOM(s) and ${routings} routing(s) that were missing. Existing data unchanged.`,
+      ? `ABC Corp (Demo) created with Plant 1, ${units.rowCount} units, ${items.rowCount} items, 4 suppliers, 7 customers, a 3-shift calendar, 5 resources, 12 BOMs, 12 routings, ${locations.rowCount} stock locations, opening stock for ${openings.rowCount} items, ${purchaseOrders} open purchase orders, ${salesOrders} customer orders, ${history.rowCount} demand history rows, ${profiles.rowCount} buffer profiles and ${settings.rowCount} buffer settings. Sign in as ${admin.email} and switch company.`
+      : `ABC Corp (Demo) already present; added ${units.rowCount} unit(s), ${items.rowCount} item(s), ${calendar.rowCount} calendar(s), ${resources.rowCount} resource(s), ${boms} BOM(s), ${routings} routing(s), ${locations.rowCount} stock location(s), ${openings.rowCount} opening stock movement(s), ${purchaseOrders} purchase order(s), ${salesOrders} customer order(s), ${history.rowCount} demand history row(s), ${profiles.rowCount} buffer profile(s) and ${settings.rowCount} buffer setting(s) that were missing. Existing data unchanged.`,
   );
 } catch (e) {
   await db.query('ROLLBACK');

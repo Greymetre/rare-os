@@ -16,6 +16,11 @@ for (const file of [
   'packages/schema/plant-model.mjs',
   'packages/schema/plant-model-db.mjs',
   'packages/engines/plant-model.mjs',
+  'packages/schema/demand-stock.mjs',
+  'packages/schema/demand-stock-db.mjs',
+  'packages/schema/buffers.mjs',
+  'packages/schema/planning-db.mjs',
+  'packages/engines/ddmrp.mjs',
 ])
   await readFile(file);
 console.log('Runtime source and migrations are readable.');

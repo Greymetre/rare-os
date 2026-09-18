@@ -40,7 +40,7 @@ function unitFields(req: Request, editing = false) {
 function kindFor(actor: any, kind: string) {
   const def = importKind(kind);
   if (!def) fail(404, 'IMPORT_TYPE_NOT_FOUND', 'This import type is not available.');
-  if (!actor.permissions.includes(def!.permission))
+  if (![def!.permission, ...(def!.alsoAllowed ?? [])].some((p) => actor.permissions.includes(p)))
     fail(
       403,
       'PERMISSION_DENIED',
@@ -94,7 +94,8 @@ export class AvailabilityController {
             (SELECT count(*) FROM items WHERE active)::int AS items,
             (SELECT count(*) FROM items i WHERE i.active AND i.make_buy='BUY' AND NOT EXISTS (SELECT 1 FROM item_suppliers x JOIN suppliers s ON s.id=x.supplier_id WHERE x.item_id=i.id AND x.active AND s.active))::int AS unsourced,
             (SELECT count(*) FROM suppliers WHERE active)::int AS suppliers,
-            (SELECT count(*) FROM customers WHERE active)::int AS customers`,
+            (SELECT count(*) FROM customers WHERE active)::int AS customers,
+            (SELECT to_char(r.finished_at,'YYYY-MM-DD HH24:MI') FROM planning_state s JOIN planning_runs r ON r.id=s.current_run_id) AS planned_at`,
         )
       ).rows[0];
       const upcoming = (key: string, title: string, milestone: string, detail: string) => ({
@@ -155,11 +156,25 @@ export class AvailabilityController {
           },
           {
             key: 'plant_model',
-            title: 'Calendars, resources, BOMs and routings',
+            title: 'Plant setup, stock and demand',
             status: 'info',
-            detail: 'Checked per plant below. Choose a plant to see what is missing.',
+            detail:
+              'Calendars, resources, BOMs, routings, stock locations, opening stock and demand are checked per plant below. Choose a plant to see what is missing.',
           },
-          upcoming('demand', 'Orders and stock', 'AV-3', 'Customer orders and stock ledger.'),
+          {
+            key: 'planning',
+            title: 'Material buffers',
+            status: counts.planned_at ? 'ready' : 'missing',
+            detail: counts.planned_at
+              ? `Buffers last calculated on ${counts.planned_at}. See the buffer board per plant.`
+              : 'Set buffer profiles and buffer settings; buffers are calculated automatically.',
+          },
+          upcoming(
+            'purchase',
+            'Purchase proposals and approvals',
+            'AV-5',
+            'Approve suggested orders and receive them into stock.',
+          ),
         ],
       };
     });

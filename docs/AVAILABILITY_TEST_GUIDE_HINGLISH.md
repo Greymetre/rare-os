@@ -143,7 +143,7 @@ Pehle apni company mein ek MAKE item (jaise `FG-TEST`, unit NOS) aur do BUY item
 
 ### 5. Readiness
 
-**Readiness** tab → Plant chuno → "Plant setup" panel: Plant calendar, Resources, BOMs, Routings. Calendar/resource bante hi Ready; jin MAKE items ka aaj effective BOM ya is plant mein routing nahi, unke codes dikhenge. Sab bana do → **4 / 4 ready**.
+**Readiness** tab → Plant chuno → "Plant setup" panel: Plant calendar, Resources, BOMs, Routings. Calendar/resource bante hi Ready; jin MAKE items ka aaj effective BOM ya is plant mein routing nahi, unke codes dikhenge. Sab bana do → calendar, resources, BOMs aur routings Ready (AV-3 ke baad is panel mein stock aur demand bhi dikhte hain).
 
 ### 6. Imports
 
@@ -156,3 +156,161 @@ Pehle apni company mein ek MAKE item (jaise `FG-TEST`, unit NOS) aur do BUY item
 
 1. Role: Dashboard + View assigned plants + View planning master data + Maintain planning masters + Validate and import files. User ko **sirf Plant A** ka access do.
 2. Is user se: Plant dropdown mein sirf Plant A. Resources import file mein Plant B ki row → **plants you cannot access: …**.
+
+## AV-3 — Demand aur stock
+
+**Kahan:** Availability mein ab tabs do rows mein hain. **Setup** row mein naya tab **Stock locations** hai. **Stock and demand** row mein **Stock, Customer orders, Purchase orders, Demand history** aur **Imports** hain. Har tab upar ke **Plant** dropdown wale plant ke liye kaam karta hai.
+
+Demo data ke liye `scripts/demo-abc-corp.mjs` dobara chalao. ABC Corp ke Plant 1 mein ye jud jayega:
+
+- 4 locations (RM-STORE, FG-STORE, WIP, QC-HOLD)
+- 13 items ka opening stock
+- 4 open POs
+- 14 customer orders
+- 12 FG items ki 90 din ki demand history
+
+Pehle se bana data waisa hi rahega.
+
+Apni test company mein pehle yeh bana lo:
+
+- Items: `RM-A` (unit KG, 3 decimals), `RM-B` (unit NOS) aur ek MAKE item `FG-A` (NOS)
+- Unit conversion `BOX → KG = 25`
+- Ek customer aur ek supplier
+
+### 1. Stock locations
+
+1. **Stock locations** → **Create location**: code `STORE`, type STORES → Save.
+2. Doosri location `QC`, type QUARANTINE, aur "Counts as available stock" untick karo.
+3. Same code chhote letters mein dobara banao → **already exists** aana chahiye.
+
+### 2. Stock movement aur ledger
+
+1. **Stock** → **Post movement** → type **Opening stock**, location STORE, item `RM-A`, quantity 100 → Post. **Current stock** mein 100 KG dikhega.
+2. `RM-A` ka opening dobara post karo → **already posted … Use an adjustment** aana chahiye.
+3. **Receipt**: quantity 2, unit `BOX` → 50 KG judega aur stock 150 ho jayega.
+4. **Issue** 200 → **Not enough stock: … has 150 KG available** aana chahiye, aur kuch save nahi hoga.
+5. **Issue** 1.2345 → decimals wala error aana chahiye (KG mein 3 decimals tak hi chalte hain).
+6. **Adjustment** → Direction Decrease, 0.5, reason khaali → **Reason is required**. Reason daalo → post ho jayega.
+7. Movement date kal ki daalo → **cannot be in the future**.
+8. **Stock ledger** mein receipt ke saamne **Reverse** → reason daalo → Post reversal. Stock 50 kam ho jayega. Ledger mein dono entries rahengi ("Reversal of #…" aur "(reversed by #…)").
+9. Usi movement ko dobara reverse → **already reversed**. Reversal ko reverse karne par button hi nahi dikhega.
+10. Opening ko reverse karo jab uska kuch stock pehle hi issue ho chuka ho → **Some of it was already used**.
+11. **Stock locations** mein STORE ko Inactive karo jab usme stock ho → **still holds stock** aana chahiye.
+
+### 3. Customer orders
+
+1. **Customer orders** → **Create order**: order number khaali chhodo, customer, promise date, line 10 `FG-A` qty 1.5 → Save → **whole number** error aana chahiye. Qty 12 karke Save → **Order SO-000001 created**.
+2. Promise date order date se pehle rakho → error aana chahiye.
+3. Order kholo, ek line **Remove** karke Save karo → woh line cancel ho jayegi. Status filter **All** karke order dobara kholo, line ka record dikhega.
+4. **Cancel order** → reason → Confirm. Order **Cancelled** filter mein dikhega aur edit nahi hoga.
+
+### 4. Purchase orders
+
+1. **Create purchase order**: item MAKE wala (`FG-A`) → **is MAKE** error aana chahiye.
+2. `RM-A`, quantity 8, unit BOX, received 10 → **cannot be more than the ordered** error aana chahiye. Received 3 karke Save → **PO-000001** banega.
+
+### 5. Imports
+
+1. **Customer order lines**: ek row = ek order line. Same `order_no` wali rows milkar ek order banti hain.
+   - Ek order mein customer galat rakho → us order ki saari rows error mein, doosra order sahi.
+   - Sahi file commit karo. Phir ek quantity badal kar nayi file import karo → preview mein **update 1, unchanged 1**.
+   - File mein kisi existing order ki koi line na ho → woh line cancel ho jayegi. Isliye poora order bhejo.
+2. **Purchase order lines**: same tareeka; `received_quantity` optional hai.
+3. **Stock movements**: har row mein `external_ref` zaroori hai.
+   - Same file dobara import (ya same refs) → **unchanged**. Stock double nahi hota.
+   - Same ref par quantity badli → **Posted movements cannot be changed**.
+   - File ke andar ISSUE se stock minus mein jaaye → us row par **Not enough stock**.
+   - File validate karo, commit se pehle Stock tab se issue karke stock khatam karo, phir commit → **Data changed after validation**, kuch post nahi hoga.
+4. **Demand history**: ek row = plant + item + date. Future date → error. Wahi din dobara alag quantity ke saath → update.
+
+### 6. Readiness
+
+**Readiness** tab → plant chuno. Plant setup panel mein naye items dikhenge:
+
+- **Stock locations**, **Opening stock** aur **Demand** — Ready ya Missing.
+- **Open purchase orders** — Info (sirf jaankari).
+
+### 7. Permissions
+
+1. Role banao: Dashboard + View assigned plants + View planning master data + **View stock and movements** + **Post stock receipts and issues** + Validate and import files. Sirf Plant A ka access do.
+2. Is user se:
+   - **Post movement** mein sirf Receipt/Issue types dikhenge.
+   - **Reverse** button nahi dikhega.
+   - **Customer orders** tab nahi dikhega.
+3. Stock movements file mein ADJUSTMENT row → **ADJUSTMENT rows need the "Post opening stock, adjustments and reversals" permission**.
+4. Naye permissions Roles screen mein: Demand group (View/Create/Edit customer orders, Import demand history), Materials group (View stock, receipts/issues, opening/adjustments/reversals, View/Create purchase orders).
+
+## AV-4 — Material buffers (kami pakadna)
+
+**Yeh kya karta hai:** har buffered item ke liye system red/yellow/green zones banata hai. Phir **net flow** nikalta hai: store ka stock + aane wala maal (open POs) − abhi ki pakki demand. Net flow jitna neeche, item utna urgent. Yellow ya usse neeche aane par system bata deta hai kitna kharidna ya banana hai.
+
+**Kahan:** Availability mein:
+
+- **Setup** row: **Buffer profiles** (zone ke size ke rules) aur **Buffer settings** (plant mein kaunsa item stock mein rakhna hai).
+- Nayi **Planning** row: **Buffer board**.
+
+Koi bhi data badlo (order, stock, PO, BOM, settings), to buffers 3–5 second mein apne aap dobara calculate ho jaate hain. Board par "Up to date" ya "Recalculating…" dikhta hai.
+
+Demo: `scripts/demo-abc-corp.mjs` dobara chalao. ABC Corp mein ye jud jayega:
+
+- 3 profiles (prototype wale)
+- FGa–FGe aur saare RM buffered, FGf–FGl made to order
+
+Kuch seconds mein board bhar jayega: 2 Red, 5 Yellow, 6 Above top of green, 7 Made to order.
+
+### Formula (seedha)
+
+- **ADU** (average daily usage) = pichhle N din ki demand history / N. Components ka ADU BOM se apne aap judta hai (FG × qty per).
+- **Yellow** = ADU × lead time. **Red** = yellow × red %. **Green** = yellow × green % (ya MOQ, jo bada ho). **Top of green** = red + yellow + green.
+- **Net flow** = on hand + open supply − qualified demand.
+- **Qualified demand** mein ye ginta hai:
+  - Aaj tak due orders.
+  - Lead time ke andar ke bade orders (spike).
+  - Made-to-order products ke orders ka BOM se component ka hissa.
+
+### 1. Profile aur settings
+
+1. **Buffer profiles** → **Create profile**:
+   - code `TEST`, red 50, green 50, usage window 30 → Save.
+   - Green 0 daalo → error aana chahiye.
+2. **Buffer settings** → plant chuno → **Add item**:
+   - Ek BUY raw material, profile TEST, lead time khaali (supplier ka lead time lagega).
+   - Ek MAKE product, lead time 5.
+   - MAKE product ka lead time khaali chhodo → **set its manufacturing lead time** aana chahiye.
+3. Ek product ko policy **Made or bought to order** ke saath jodo.
+
+### 2. Buffer board
+
+1. **Buffer board** → plant chuno. Upar ye dikhega:
+   - "Run #N … Up to date"
+   - Tiles: Stock-out risk, Red, Yellow, Green, Above top of green, Needs data
+2. Kisi tile par click karo → sirf us zone ke items dikhenge. Dobara click karo → sab items.
+3. Row par click karo → details khulengi: ADU, lead time, zones, aur "on hand + open supply − demand = net flow".
+4. Yellow/Red item par **Suggested order** dikhega:
+   - BUY: supplier ki MOQ aur multiple ke hisaab se (jaise "Buy 300 KG · SUP-1 · by date").
+   - MAKE: "Make 50 NOS".
+5. Jis BUY item ka preferred supplier nahi hai, woh **Needs data** mein aayega ("No lead time…"). Kabhi zero buffer nahi dikhega.
+
+### 3. Order badlo → zone badle (milestone ki shart)
+
+1. Kisi raw material ka zone note karo.
+2. Uske made-to-order product ka ek bada customer order banao, promise date raw material ke lead time ke andar rakho.
+3. 5 second ruko → board apne aap "Recalculating…" → "Up to date". Raw material ka zone neeche aa jayega (jaise Red → Stock-out risk) aur suggested order badh jayega.
+4. Usi raw material ka purchase order banao → net flow badhega, zone upar jayega.
+5. Customer order cancel karo → wapas pehle jaisa.
+
+### 4. Run now aur import
+
+1. **Run now** → "Planning run #N queued". Kuch second mein naya run number dikhega.
+2. Imports → **Buffer settings** template (plant, item, policy, profile, lead_time_days, adu_override). Galat profile code → error. Sahi file commit karo → board update ho jayega.
+3. Jo profile use ho raha hai use Inactive karo → **used by N buffered item(s)** aana chahiye.
+
+### 5. Permissions
+
+1. Role: Dashboard + View assigned plants + View planning master data + **View buffer board and planning results**. Sirf Plant A.
+2. Is user se:
+   - Board dikhega.
+   - **Run now** button nahi dikhega.
+   - Profiles mein **Create** nahi dikhega.
+   - Plant B ka board nahi khulega.
+3. Naye permissions: **Recalculate buffers on demand**, **Maintain buffer profiles and buffer settings**.

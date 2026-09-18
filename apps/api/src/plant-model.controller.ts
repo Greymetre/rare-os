@@ -21,6 +21,8 @@ import {
   writeResource,
   writeRouting,
 } from '../../../packages/schema/plant-model-db.mjs';
+import { demandStockReadiness } from '../../../packages/schema/demand-stock-db.mjs';
+import { bufferReadiness } from '../../../packages/schema/planning-db.mjs';
 import { Controller, Get, Post, Patch, Put, Req, Param, HttpException } from '@nestjs/common';
 import type { Request } from 'express';
 import type { PoolClient } from 'pg';
@@ -30,20 +32,20 @@ import { requirePlant } from './plants.controller.js';
 
 type Problem = { column: string; message: string };
 
-function invalid(errors: Problem[]): never {
+export function invalid(errors: Problem[]): never {
   throw new HttpException(
     { code: 'VALIDATION_ERROR', message: errors.map((e) => e.message).join(' '), fields: errors },
     400,
   );
 }
 
-function cursorOf(req: Request) {
+export function cursorOf(req: Request, size = 3) {
   if (req.query.cursor === undefined) return null;
   try {
     const parsed = JSON.parse(Buffer.from(String(req.query.cursor), 'base64url').toString('utf8'));
     if (
       Array.isArray(parsed) &&
-      parsed.length === 3 &&
+      parsed.length === size &&
       parsed.every((v) => typeof v === 'string' && v.length <= 80)
     )
       return parsed as string[];
@@ -52,23 +54,23 @@ function cursorOf(req: Request) {
   }
   return fail(400, 'INVALID_CURSOR', 'This page link is invalid. Return to the first page.');
 }
-const encode = (cursor: string[] | null) =>
+export const encode = (cursor: string[] | null) =>
   cursor ? Buffer.from(JSON.stringify(cursor)).toString('base64url') : null;
-const search = (req: Request) => {
+export const search = (req: Request) => {
   const q = req.query.q === undefined ? '' : String(req.query.q).trim().toLowerCase();
   if (q.length > 40) fail(400, 'VALIDATION_ERROR', 'Search must be at most 40 characters.');
   return q;
 };
 
-async function loaded<T>(value: T | null, what: string): Promise<T> {
+export async function loaded<T>(value: T | null, what: string): Promise<T> {
   if (!value) fail(404, 'RECORD_NOT_FOUND', `This ${what} was not found in your company.`);
   return value!;
 }
-function sameVersion(current: number, expected: number, what: string) {
+export function sameVersion(current: number, expected: number, what: string) {
   if (current !== expected)
     fail(409, 'STALE_RECORD', `This ${what} changed elsewhere. Refresh before saving.`);
 }
-function today() {
+export function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
@@ -84,7 +86,11 @@ export class PlantModelController {
       const plant = await requirePlant(db, actor, id(plantId));
       return {
         plant: { id: plant.id, code: plant.code, name: plant.name },
-        items: await plantReadiness(db, plant.id, today()),
+        items: [
+          ...(await plantReadiness(db, plant.id, today())),
+          ...(await demandStockReadiness(db, plant.id, today())),
+          await bufferReadiness(db, plant.id),
+        ],
       };
     });
   }

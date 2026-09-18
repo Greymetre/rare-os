@@ -5,7 +5,7 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const today = () => new Date().toISOString().slice(0, 10);
 const num = (v: unknown) => (v === null || v === undefined || v === '' ? '' : String(Number(v)));
 
-function Messages({ error, notice }: { error: string; notice: string }) {
+export function Messages({ error, notice }: { error: string; notice: string }) {
   return (
     <>
       {error && (
@@ -22,7 +22,7 @@ function Messages({ error, notice }: { error: string; notice: string }) {
   );
 }
 
-function useList(csrf: string, path: string | null, deps: unknown[]) {
+export function useList(csrf: string, path: string | null, deps: unknown[]) {
   const call = useApi(csrf);
   const [items, setItems] = useState<any[]>([]),
     [next, setNext] = useState<string | null>(null),
@@ -76,7 +76,7 @@ export function PlantPicker({
       </div>
     );
   return (
-    <div className="table-footer plant-picker">
+    <div className="plant-picker">
       <label>
         Plant
         <select value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
@@ -121,18 +121,19 @@ export function PlantReadiness({
     );
   if (!data) return <p role="status">Checking plant setup…</p>;
   const ready = data.items.filter((i: any) => i.status === 'ready').length;
+  const counted = data.items.filter((i: any) => i.status !== 'info').length;
   return (
     <section className="panel">
       <div className="panel-heading">
         <h2>Plant setup: {data.plant.name}</h2>
         <span className="badge">
-          {ready} / {data.items.length} ready
+          {ready} / {counted} ready
         </span>
       </div>
       {data.items.map((i: any) => (
         <div className="check-row readiness-row" key={i.key} data-status={i.status}>
           <span className={'status-pill ' + i.status}>
-            {i.status === 'ready' ? 'Ready' : 'Missing'}
+            {i.status === 'ready' ? 'Ready' : i.status === 'info' ? 'Info' : 'Missing'}
           </span>
           <div>
             <strong>{i.title}</strong>
@@ -216,7 +217,7 @@ export function Calendars({
   return (
     <>
       {canManage && !form && (
-        <div className="table-footer">
+        <div className="toolbar">
           <span />
           <button className="button primary" onClick={() => void edit()}>
             Create calendar
@@ -416,7 +417,7 @@ export function Calendars({
                 </select>
               </label>
             )}
-            <div className="table-footer">
+            <div className="form-actions">
               <button className="button primary" disabled={busy}>
                 Save calendar
               </button>
@@ -544,7 +545,7 @@ export function Resources({
   return (
     <>
       {canManage && !form && (
-        <div className="table-footer">
+        <div className="toolbar">
           <span />
           <button
             className="button primary"
@@ -618,7 +619,7 @@ export function Resources({
                 </select>
               </label>
             )}
-            <div className="table-footer">
+            <div className="form-actions">
               <button className="button primary" disabled={busy}>
                 Save resource
               </button>
@@ -701,9 +702,15 @@ export function Resources({
 
 // ---------- Document editors (BOMs and routings) ----------
 
-type Column = { key: string; label: string; width?: string; inputMode?: 'decimal' | 'numeric' };
+export type Column = {
+  key: string;
+  label: string;
+  width?: string;
+  inputMode?: 'decimal' | 'numeric';
+  type?: 'date';
+};
 
-function LineTable({
+export function LineTable({
   label,
   columns,
   rows,
@@ -737,6 +744,7 @@ function LineTable({
                       aria-label={`${label} ${i + 1} ${c.label}`}
                       value={row[c.key] ?? ''}
                       inputMode={c.inputMode}
+                      type={c.type}
                       onChange={(e) =>
                         onChange(
                           rows.map((r, n) => (n === i ? { ...r, [c.key]: e.target.value } : r)),
@@ -798,7 +806,7 @@ function DocumentList({
   );
   return (
     <>
-      <div className="table-footer">
+      <div className="toolbar">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -998,7 +1006,7 @@ export function Boms({
                 </select>
               </label>
             )}
-            <div className="table-footer">
+            <div className="form-actions">
               {canManage && (
                 <button className="button primary" disabled={busy}>
                   Save BOM
@@ -1191,7 +1199,7 @@ export function Routings({
                 </select>
               </label>
             )}
-            <div className="table-footer">
+            <div className="form-actions">
               {canManage && (
                 <button className="button primary" disabled={busy}>
                   Save routing

@@ -28,3 +28,35 @@ export function parseQuantity(input, decimals, { allowNegative = false, label = 
     (sign && (integer !== '0' || trimmed) ? '-' : '') + integer + (trimmed ? '.' + trimmed : '');
   return { value };
 }
+
+// Exact decimal arithmetic on canonical strings (BigInt), for unit conversions.
+const SCALE = 12;
+function toScaled(text) {
+  const [, sign, whole, fraction = ''] = /^(-)?(\d+)(?:\.(\d+))?$/.exec(String(text));
+  const digits = BigInt(whole + fraction.padEnd(SCALE, '0').slice(0, SCALE));
+  return sign ? -digits : digits;
+}
+function fromScaled(value, scale = SCALE) {
+  const negative = value < 0n;
+  const digits = (negative ? -value : value).toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, -scale),
+    fraction = digits.slice(-scale).replace(/0+$/, '');
+  return (negative ? '-' : '') + whole + (fraction ? '.' + fraction : '');
+}
+// a × b, exact up to 12 decimal places (inputs have at most 12).
+export function multiplyDecimal(a, b) {
+  return fromScaled((toScaled(a) * toScaled(b)) / 10n ** BigInt(SCALE));
+}
+// a ÷ b rounded half-up to `scale` decimal places.
+export function divideDecimal(a, b, scale = SCALE) {
+  const n = toScaled(a) * 10n ** BigInt(scale),
+    d = toScaled(b);
+  if (d === 0n) throw Error('Division by zero');
+  let q = n / d;
+  const r = n % d;
+  if ((r < 0n ? -r : r) * 2n >= (d < 0n ? -d : d)) q += n < 0n !== d < 0n ? -1n : 1n;
+  return fromScaled(q, scale);
+}
+export function addDecimal(a, b) {
+  return fromScaled(toScaled(a) + toScaled(b));
+}

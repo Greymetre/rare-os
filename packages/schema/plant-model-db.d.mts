@@ -3,6 +3,14 @@ type Db = {
 };
 type Problem = { column: string; message: string };
 type Doc = { id?: string; value: any; errors: Problem[]; existing?: any; line?: number };
+export function plantsByCode(db: Db, codes: string[]): Promise<Map<string, any>>;
+export function resolvePlant(
+  map: Map<string, any>,
+  code: string,
+  scope: Set<string> | null,
+  errors: Problem[],
+): any | null;
+export function itemsByCode(db: Db, codes: string[]): Promise<Map<string, any>>;
 export function plantScope(db: Db, actorId: string | null): Promise<Set<string> | null>;
 export function calendarDetail(db: Db, id: string): Promise<any | null>;
 export function listCalendars(db: Db, siteId: string): Promise<any[]>;

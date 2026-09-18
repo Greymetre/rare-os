@@ -7,10 +7,12 @@ export type ImportError = { column: string; message: string };
 export type ImportKind = {
   label: string;
   permission: string;
+  alsoAllowed?: string[];
   columns: string[];
   example: string[][];
   validate(raw: Record<string, string>): { value: any; errors: ImportError[] };
-  key(value: any): string;
+  key: ((value: any) => string) | null;
+  duplicate?: (value: any) => string;
   plantScoped?: boolean;
   grouped?: boolean;
 };

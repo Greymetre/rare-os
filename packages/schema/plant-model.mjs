@@ -282,11 +282,12 @@ export const GROUPED_IMPORTS = {
 // Codes and revisions are case-insensitive, so `fga` and `FGa` name the same document.
 const sameHeader = (field, value) => {
   const text = String(value ?? '').trim();
-  return ['ref', 'revision'].includes(field.type) ? text.toLowerCase() : text;
+  return ['ref', 'revision', 'code'].includes(field.type) ? text.toLowerCase() : text;
 };
 
+// def: a GROUPED_IMPORTS entry, or its kind name.
 export function groupRows(kind, rows) {
-  const def = GROUPED_IMPORTS[kind];
+  const def = typeof kind === 'string' ? GROUPED_IMPORTS[kind] : kind;
   const groups = new Map();
   for (const row of rows) {
     const key = def.groupKey(row.data);

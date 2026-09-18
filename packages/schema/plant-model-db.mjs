@@ -32,7 +32,7 @@ export async function plantScope(db, actorId) {
   );
 }
 
-async function plantsByCode(db, codes) {
+export async function plantsByCode(db, codes) {
   const rows = (
     await db.query('SELECT id,code,name,active FROM sites WHERE lower(code)=ANY($1::text[])', [
       [...new Set(codes.map(lc))],
@@ -41,7 +41,7 @@ async function plantsByCode(db, codes) {
   return new Map(rows.map((r) => [lc(r.code), r]));
 }
 
-function resolvePlant(map, code, scope, errors) {
+export function resolvePlant(map, code, scope, errors) {
   const plant = map.get(lc(code));
   if (!plant) errors.push(err('plant', `Plant ${code} was not found.`));
   else if (!plant.active) errors.push(err('plant', `Plant ${plant.code} is inactive.`));
@@ -51,7 +51,7 @@ function resolvePlant(map, code, scope, errors) {
   return null;
 }
 
-async function itemsByCode(db, codes) {
+export async function itemsByCode(db, codes) {
   const rows = (
     await db.query(
       'SELECT i.id,i.code,i.active,i.make_buy,i.item_type,i.base_unit_id,u.code AS base_unit,u.decimals AS base_decimals FROM items i JOIN units u ON u.id=i.base_unit_id WHERE lower(i.code)=ANY($1::text[])',

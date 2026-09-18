@@ -22,8 +22,18 @@ export const GROUPED_IMPORTS: Record<
     example: string[][];
   }
 >;
+export type GroupedImport = {
+  label: string;
+  headerFields: MasterField[];
+  lineFields: MasterField[];
+  linesKey: string;
+  groupKey(raw: any): string;
+  validate(raw: any): Result;
+  example: string[][];
+  permission?: string;
+};
 export function groupRows(
-  kind: string,
+  kind: string | GroupedImport,
   rows: { line: number; data: Record<string, string> }[],
 ): {
   key: string;

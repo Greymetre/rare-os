@@ -1,6 +1,16 @@
 // Shared by the API (upload checks) and the worker (row validation) so both apply identical rules.
 import { MASTER_KINDS, validateFields, validateMaster } from './masters.mjs';
 import { GROUPED_IMPORTS, RESOURCE_FIELDS, validateResource } from './plant-model.mjs';
+import { BUFFER_SETTING_FIELDS, validateBufferSetting } from './buffers.mjs';
+import {
+  DEMAND_HISTORY_FIELDS,
+  MOVEMENT_FIELDS,
+  ORDER_IMPORTS,
+  STOCK_LOCATION_FIELDS,
+  validateDemandHistory,
+  validateMovement,
+  validateStockLocation,
+} from './demand-stock.mjs';
 
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 export const MAX_IMPORT_ROWS = 50000;
@@ -182,6 +192,103 @@ for (const [kind, def] of Object.entries(GROUPED_IMPORTS)) {
   };
 }
 
+IMPORT_KINDS.stock_locations = {
+  label: 'Stock locations',
+  permission: 'masters.manage',
+  plantScoped: true,
+  columns: STOCK_LOCATION_FIELDS.map((f) => f.name),
+  example: [
+    ['PLANT-1', 'RM-STORE', 'Raw material store', 'STORES', 'yes'],
+    ['PLANT-1', 'QC-HOLD', 'Quality hold', 'QUARANTINE', 'no'],
+  ],
+  validate: validateStockLocation,
+  key: (v) => `${v.plant.toLowerCase()}|${v.code.toLowerCase()}`,
+  duplicate: (v) => `Duplicate location ${v.code} in plant ${v.plant}`,
+};
+
+// Movements are posted in file order; duplicates are caught by external reference in the database layer.
+IMPORT_KINDS.stock_movements = {
+  label: 'Stock movements',
+  permission: 'inventory.move',
+  // Opening stock and adjustments alone may be imported with the adjust permission.
+  alsoAllowed: ['inventory.adjust'],
+  plantScoped: true,
+  columns: MOVEMENT_FIELDS.map((f) => f.name),
+  example: [
+    [
+      'PLANT-1',
+      'RM-STORE',
+      'RM-STEEL',
+      'OPENING',
+      '1250.5',
+      '',
+      '2026-09-01',
+      'Stock count',
+      '',
+      'OPEN-RM-STEEL',
+    ],
+    [
+      'PLANT-1',
+      'RM-STORE',
+      'RM-STEEL',
+      'ISSUE',
+      '100',
+      '',
+      '2026-09-02',
+      'WO-1001',
+      '',
+      'ISS-000451',
+    ],
+  ],
+  validate: (raw) => validateMovement(raw, { requireExternalRef: true }),
+  key: null,
+};
+
+IMPORT_KINDS.demand_history = {
+  label: 'Demand history',
+  permission: 'demand.import',
+  plantScoped: true,
+  columns: DEMAND_HISTORY_FIELDS.map((f) => f.name),
+  example: [
+    ['PLANT-1', 'FG-PUMP-01', '2026-09-01', '14'],
+    ['PLANT-1', 'FG-PUMP-01', '2026-09-02', '9'],
+  ],
+  validate: validateDemandHistory,
+  key: (v) => `${v.plant.toLowerCase()}|${v.item.toLowerCase()}|${v.demand_date}`,
+  duplicate: (v) => `Duplicate row for ${v.item} on ${v.demand_date} in plant ${v.plant}`,
+};
+
+for (const [kind, def] of Object.entries(ORDER_IMPORTS)) {
+  const fields = [...def.headerFields, ...def.lineFields];
+  const number = kind === 'sales_orders' ? 'order_no' : 'po_no';
+  IMPORT_KINDS[kind] = {
+    label: def.label,
+    permission: def.permission,
+    plantScoped: true,
+    grouped: true,
+    columns: fields.map((f) => f.name),
+    example: def.example,
+    validate: (raw) => validateFields(fields, raw),
+    key: (v) => `${v[number].toLowerCase()}|${v.line_no}`,
+    duplicate: (v) => `Duplicate line ${v.line_no} for ${v[number]}`,
+  };
+}
+
+IMPORT_KINDS.buffer_settings = {
+  label: 'Buffer settings',
+  permission: 'buffers.manage',
+  plantScoped: true,
+  columns: BUFFER_SETTING_FIELDS.map((f) => f.name),
+  example: [
+    ['PLANT-1', 'RM-STEEL', 'BUFFER', 'BP-RM-SHORT', '', ''],
+    ['PLANT-1', 'FG-PUMP-01', 'BUFFER', 'BP-FG', '4', ''],
+    ['PLANT-1', 'FG-SPECIAL', 'MTO', '', '', ''],
+  ],
+  validate: validateBufferSetting,
+  key: (v) => `${v.plant.toLowerCase()}|${v.item.toLowerCase()}`,
+  duplicate: (v) => `Duplicate row for ${v.item} in plant ${v.plant}`,
+};
+
 export function importKind(kind) {
   return Object.hasOwn(IMPORT_KINDS, kind) ? IMPORT_KINDS[kind] : null;
 }
@@ -238,12 +345,12 @@ export function validateRows(kind, rows) {
         errors: [{ column: '*', message: row.columnCountError }],
       };
     const { value, errors } = def.validate(row.data);
-    if (!errors.length) {
+    if (!errors.length && def.key) {
       const key = def.key(value);
       if (seen.has(key))
         errors.push({
           column: def.columns[0],
-          message: `Duplicate ${def.columns[0]} ${value[def.columns[0]]}; first used on line ${seen.get(key)}.`,
+          message: `${def.duplicate ? def.duplicate(value) : `Duplicate ${def.columns[0]} ${value[def.columns[0]]}`}; first used on line ${seen.get(key)}.`,
         });
       else seen.set(key, row.line);
     }

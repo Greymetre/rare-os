@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { permissions } from '../packages/schema/permissions.mjs';
 import pg from 'pg';
 import assert from 'node:assert/strict';
@@ -326,6 +327,213 @@ try {
   assert.equal((await db.query('SELECT * FROM sites WHERE id=$1', [hiddenSite])).rowCount, 0);
   console.log(
     'PASS plant model: plant/company references, one default calendar, unique BOM components and operations, CHECK limits, no header deletes',
+  );
+  // AV-3: the stock ledger is append-only, balances follow it and never go negative.
+  const store = '20000000-0000-4000-8000-0000000000d1';
+  const otherStore = '20000000-0000-4000-8000-0000000000d2';
+  await db.query(
+    "INSERT INTO stock_locations(id,tenant_id,site_id,code,name,location_type) VALUES($1,$2,$3,'DBSTORE','Store','STORES')",
+    [store, tenant, site],
+  );
+  const movement = (no, type, quantity, extra = {}) =>
+    db.query(
+      'INSERT INTO stock_movements(id,tenant_id,movement_no,site_id,location_id,item_id,movement_type,quantity,entered_quantity,entered_unit_id,movement_date,reason,external_ref,reverses_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,abs($8::numeric),$9,current_date,$10,$11,$12)',
+      [
+        extra.id ?? randomUUID(),
+        tenant,
+        no,
+        extra.site ?? site,
+        extra.location ?? store,
+        itemId,
+        type,
+        quantity,
+        isoUnit,
+        extra.reason ?? '',
+        extra.ref ?? null,
+        extra.reverses ?? null,
+      ],
+    );
+  const opening = '20000000-0000-4000-8000-0000000000d3';
+  await movement(9001, 'OPENING', 100, { id: opening, ref: 'DB-OPEN-1' });
+  const issue = '20000000-0000-4000-8000-0000000000d5';
+  await movement(9002, 'ISSUE', -40, { id: issue });
+  await db.query('SAVEPOINT av3');
+  await assert.rejects(
+    () => movement(9003, 'ISSUE', -61),
+    (e) => e.code === '23514' && e.constraint === 'stock_not_negative',
+    'issue below zero',
+  );
+  await db.query('ROLLBACK TO SAVEPOINT av3');
+  for (const [label, run] of [
+    ['issue with a positive quantity', () => movement(9004, 'ISSUE', 5)],
+    ['adjustment without a reason', () => movement(9005, 'ADJUSTMENT', 5)],
+    ['reversal without the original', () => movement(9006, 'REVERSAL', -5, { reason: 'x' })],
+    ['movement number reused', () => movement(9001, 'RECEIPT', 5)],
+    [
+      'external reference reused in another case',
+      () => movement(9007, 'RECEIPT', 5, { ref: 'db-open-1' }),
+    ],
+    ['location from another plant', () => movement(9008, 'RECEIPT', 5, { site: hiddenSite })],
+  ]) {
+    await db.query('SAVEPOINT av3');
+    await assert.rejects(run, (e) => ['23514', '23505', '23503'].includes(e.code), label);
+    await db.query('ROLLBACK TO SAVEPOINT av3');
+  }
+  await movement(9009, 'REVERSAL', 40, { reverses: issue, reason: 'Issued by mistake' });
+  await db.query('SAVEPOINT av3');
+  await assert.rejects(
+    () => movement(9010, 'REVERSAL', 40, { reverses: issue, reason: 'Twice' }),
+    (e) => e.code === '23505',
+    'second reversal of one movement',
+  );
+  await db.query('ROLLBACK TO SAVEPOINT av3');
+  const ledger = (
+    await db.query(
+      'SELECT b.quantity, (SELECT sum(m.quantity) FROM stock_movements m WHERE m.location_id=b.location_id AND m.item_id=b.item_id) AS ledger FROM stock_balances b WHERE b.location_id=$1',
+      [store],
+    )
+  ).rows[0];
+  assert.equal(Number(ledger.quantity), Number(ledger.ledger));
+  for (const [label, sql] of [
+    ['edit a posted movement', 'UPDATE stock_movements SET quantity=1'],
+    ['delete a posted movement', 'DELETE FROM stock_movements'],
+    ['write balances directly', 'UPDATE stock_balances SET quantity=1000'],
+    [
+      'insert balances directly',
+      `INSERT INTO stock_balances(tenant_id,site_id,location_id,item_id,quantity,last_movement_no) VALUES('${tenant}','${site}','${store}','${fg}',5,1)`,
+    ],
+    ['delete orders', 'DELETE FROM sales_orders'],
+    ['delete order lines', 'DELETE FROM sales_order_lines'],
+    ['delete purchase orders', 'DELETE FROM purchase_orders'],
+    ['delete demand history', 'DELETE FROM demand_history'],
+    ['delete stock locations', 'DELETE FROM stock_locations'],
+  ])
+    await denied(label, '42501', sql);
+  const customer = '20000000-0000-4000-8000-0000000000d4';
+  await db.query(
+    "INSERT INTO customers(id,tenant_id,code,name,customer_type) VALUES($1,$2,'DBC','Customer','OEM')",
+    [customer, tenant],
+  );
+  await db.query(
+    "INSERT INTO sales_orders(id,tenant_id,site_id,order_no,customer_id,order_date,promise_date) VALUES(gen_random_uuid(),$1,$2,'DB-SO-1',$3,'2026-09-01','2026-09-10')",
+    [tenant, site, customer],
+  );
+  await denied(
+    'duplicate order number in another case',
+    '23505',
+    "INSERT INTO sales_orders(id,tenant_id,site_id,order_no,customer_id,order_date,promise_date) VALUES(gen_random_uuid(),$1,$2,'db-so-1',$3,'2026-09-01','2026-09-10')",
+    [tenant, site, customer],
+  );
+  await denied(
+    'promise before order date',
+    '23514',
+    "INSERT INTO sales_orders(id,tenant_id,site_id,order_no,customer_id,order_date,promise_date) VALUES(gen_random_uuid(),$1,$2,'DB-SO-2',$3,'2026-09-10','2026-09-01')",
+    [tenant, site, customer],
+  );
+  await denied(
+    'negative demand history',
+    '23514',
+    "INSERT INTO demand_history(tenant_id,site_id,item_id,demand_date,quantity) VALUES($1,$2,$3,'2026-09-01',-1)",
+    [tenant, site, itemId],
+  );
+  await db.query('RESET ROLE');
+  await db.query("SELECT set_config('app.tenant_id','',true)");
+  await db.query(
+    "INSERT INTO stock_locations(id,tenant_id,site_id,code,name,location_type) VALUES($1,$2,$3,'HIDDEN','Hidden','STORES')",
+    [otherStore, other, hiddenSite],
+  );
+  await db.query('SET LOCAL ROLE rare_app');
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
+  assert.equal(
+    (await db.query('SELECT * FROM stock_locations WHERE id=$1', [otherStore])).rowCount,
+    0,
+  );
+  await denied(
+    'movement into another company location',
+    '42501',
+    "INSERT INTO stock_movements(id,tenant_id,movement_no,site_id,location_id,item_id,movement_type,quantity,entered_quantity,entered_unit_id,movement_date) VALUES(gen_random_uuid(),$1,9100,$2,$3,$4,'RECEIPT',1,1,$5,current_date)",
+    [other, hiddenSite, otherStore, itemId, isoUnit],
+  );
+  console.log(
+    'PASS demand and stock: append-only ledger, balances equal the ledger and never go negative, one reversal, unique references and order numbers, no deletes, company isolation',
+  );
+  // AV-4: planning inputs leave change markers; results are derived; runs promote in queue order.
+  await db.query('DELETE FROM planning_input_events');
+  await db.query(
+    "INSERT INTO items(id,tenant_id,code,name,item_type,make_buy,base_unit_id) VALUES(gen_random_uuid(),$1,'DBPLAN','Plan','RM','BUY',$2)",
+    [tenant, isoUnit],
+  );
+  assert.ok(
+    (await db.query('SELECT count(*)::int AS n FROM planning_input_events')).rows[0].n >= 1,
+    'an input change leaves a marker',
+  );
+  const profile = '20000000-0000-4000-8000-0000000000e1';
+  await db.query(
+    "INSERT INTO buffer_profiles(id,tenant_id,code,name,red_base_pct,green_pct) VALUES($1,$2,'DBBP','Profile',50,50)",
+    [profile, tenant],
+  );
+  await denied(
+    'buffered item without a profile',
+    '23514',
+    "INSERT INTO item_buffers(id,tenant_id,site_id,item_id,policy) VALUES(gen_random_uuid(),$1,$2,$3,'BUFFER')",
+    [tenant, site, itemId],
+  );
+  await db.query(
+    "INSERT INTO item_buffers(id,tenant_id,site_id,item_id,policy,profile_id) VALUES(gen_random_uuid(),$1,$2,$3,'BUFFER',$4)",
+    [tenant, site, itemId, profile],
+  );
+  await denied(
+    'second setting for the same plant and item',
+    '23505',
+    "INSERT INTO item_buffers(id,tenant_id,site_id,item_id,policy) VALUES(gen_random_uuid(),$1,$2,$3,'MTO')",
+    [tenant, site, itemId],
+  );
+  await db.query('INSERT INTO planning_state(tenant_id) VALUES($1) ON CONFLICT DO NOTHING', [
+    tenant,
+  ]);
+  const runs = {};
+  for (const n of [7, 5]) {
+    runs[n] = randomUUID();
+    await db.query(
+      "INSERT INTO planning_runs(id,tenant_id,run_no,trigger,input_version) VALUES($1,$2,$3,'auto',0)",
+      [runs[n], tenant, 900000 + n],
+    );
+  }
+  const promote = async (n) =>
+    (await db.query('SELECT promote_planning_run($1,$2) AS ok', [runs[n], 900000 + n])).rows[0].ok;
+  assert.equal(await promote(7), true);
+  assert.equal(await promote(5), false, 'an earlier-queued run finishing later is not promoted');
+  assert.equal(
+    (await db.query('SELECT current_run_id FROM planning_state')).rows[0].current_run_id,
+    runs[7],
+  );
+  await db.query(
+    "INSERT INTO planning_results(tenant_id,run_id,site_id,item_id,policy,status,adu,on_hand,open_supply,qualified_demand,spike_demand,outside_horizon) VALUES($1,$2,$3,$4,'BUFFER','planned',1,0,0,0,0,0)",
+    [tenant, runs[7], site, itemId],
+  );
+  for (const [label, sql] of [
+    ['rewrite a planning result', 'UPDATE planning_results SET nfp=1'],
+    ['delete buffer profiles', 'DELETE FROM buffer_profiles'],
+    ['delete buffer settings', 'DELETE FROM item_buffers'],
+    ['delete planning runs', 'DELETE FROM planning_runs'],
+  ])
+    await denied(label, '42501', sql);
+  const due = await db.query('SELECT * FROM planning_due(100)');
+  assert.deepEqual(
+    due.fields.map((f) => f.name),
+    ['tenant_id'],
+  );
+  await db.query('RESET ROLE');
+  await db.query("SELECT set_config('app.tenant_id','',true)");
+  await db.query('INSERT INTO planning_input_events(tenant_id) VALUES($1)', [other]);
+  await db.query('SET LOCAL ROLE rare_app');
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
+  assert.equal(
+    (await db.query('SELECT * FROM planning_input_events WHERE tenant_id=$1', [other])).rowCount,
+    0,
+  );
+  console.log(
+    'PASS material buffers: input change markers, profile required for buffers, one setting per plant and item, queue-order promotion, derived results not editable, company isolation',
   );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);

@@ -2,6 +2,7 @@ import pg from 'pg';
 import { Queue, Worker, createNodeRedisClient } from 'bullmq';
 import { createClient } from 'redis';
 import { commitImport, failImport, validateImport } from './imports.js';
+import { failRun, queueRun, runPlanning } from '../../../packages/schema/planning-db.mjs';
 const env = process.env;
 const pool = new pg.Pool({ connectionString: env.DATABASE_URL, max: 5, statement_timeout: 30000 });
 const redis = createClient({ url: env.REDIS_URL });
@@ -33,6 +34,9 @@ const handlers: Record<string, (db: pg.PoolClient, payload: any) => Promise<void
   'foundation.seeded': async () => {},
   'import.validate': validateImport,
   'import.commit': commitImport,
+  'planning.run': async (db, payload) => {
+    await runPlanning(db, payload.runId);
+  },
 };
 
 const worker = new Worker(
@@ -68,13 +72,21 @@ worker.on('failed', (job, error) => {
       error: error.message.slice(0, 200),
     }),
   );
-  if (!job || job.attemptsMade < ATTEMPTS || !job.name.startsWith('import.')) return;
+  if (!job || job.attemptsMade < ATTEMPTS) return;
+  if (!job.name.startsWith('import.') && job.name !== 'planning.run') return;
   void tx(job.data.tenantId, async (db) => {
     const event = (
       await db.query('SELECT payload FROM outbox_events WHERE id=$1', [job.data.eventId])
     ).rows[0];
-    if (event) await failImport(db, event.payload, job.name);
-  }).catch(() => console.error('Could not record failed import status'));
+    if (!event) return;
+    if (job.name === 'planning.run')
+      await failRun(
+        db,
+        event.payload.runId,
+        'The calculation did not finish. The previous buffers stay in place; the next change or Run now tries again.',
+      );
+    else await failImport(db, event.payload, job.name);
+  }).catch(() => console.error('Could not record failed job status'));
 });
 
 let stopping = false,
@@ -107,13 +119,33 @@ async function dispatch() {
     dispatching = false;
   }
 }
+// Recalculate buffers a moment after planning inputs change, one queued run per company.
+let planning = false;
+async function planningTick() {
+  if (stopping || planning) return;
+  planning = true;
+  try {
+    const due = (await pool.query('SELECT tenant_id FROM planning_due(20)')).rows;
+    for (const { tenant_id } of due)
+      await tx(tenant_id, (db) => queueRun(db, tenant_id, { trigger: 'auto' }));
+  } catch {
+    console.error('Planning tick unavailable; retrying shortly');
+  } finally {
+    planning = false;
+  }
+}
+
 await dispatch();
 const timer = setInterval(dispatch, 1000);
-console.log('Availability worker ready: outbox dispatch and import jobs for all companies.');
+const planningTimer = setInterval(planningTick, 3000);
+console.log(
+  'Availability worker ready: outbox dispatch, import jobs and buffer recalculation for all companies.',
+);
 for (const sig of ['SIGTERM', 'SIGINT'])
   process.once(sig, async () => {
     stopping = true;
     clearInterval(timer);
+    clearInterval(planningTimer);
     await worker.close();
     await queue.close();
     await redis.quit();

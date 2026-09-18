@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 import { download, useApi } from './api-client';
 import { Boms, Calendars, PlantPicker, PlantReadiness, Resources, Routings } from './plant-model';
+import {
+  CustomerOrders,
+  DemandHistory,
+  PurchaseOrders,
+  Stock,
+  StockLocations,
+} from './demand-stock';
+import { BufferBoard, BufferProfiles, BufferSettings } from './planning';
 
 type Batch = {
   id: string;
@@ -112,7 +120,7 @@ function Units({
   }, [search, after, revision, refreshKey]);
   return (
     <>
-      <div className="table-footer">
+      <div className="toolbar">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -624,7 +632,7 @@ function MasterTable({
   }
   return (
     <>
-      <div className="table-footer">
+      <div className="toolbar">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -818,7 +826,33 @@ function Imports({
       ['resources', 'Resources'],
       ['boms', 'BOM lines'],
       ['routings', 'Routing operations'],
+      ['stock_locations', 'Stock locations'],
     ].map(([kind, label]) => ({ kind, label, canManage: permissions.includes('masters.manage') })),
+    {
+      kind: 'stock_movements',
+      label: 'Stock movements',
+      canManage: permissions.includes('inventory.move') || permissions.includes('inventory.adjust'),
+    },
+    {
+      kind: 'sales_orders',
+      label: 'Customer order lines',
+      canManage: permissions.includes('orders.create'),
+    },
+    {
+      kind: 'purchase_orders',
+      label: 'Purchase order lines',
+      canManage: permissions.includes('purchase.create'),
+    },
+    {
+      kind: 'demand_history',
+      label: 'Demand history',
+      canManage: permissions.includes('demand.import'),
+    },
+    {
+      kind: 'buffer_settings',
+      label: 'Buffer settings',
+      canManage: permissions.includes('buffers.manage'),
+    },
   ];
   const labelOf = (kind: string) => options.find((o) => o.kind === kind)?.label ?? kind;
   const canImport = (kind: string) =>
@@ -882,13 +916,15 @@ function Imports({
     <>
       {importable.length > 0 && (
         <section className="panel company-form">
-          <h2>Import master data</h2>
+          <h2>Import data</h2>
           <p>
             1. Choose what to import · 2. Download its template · 3. Fill one row per record · 4.
             Upload the CSV · 5. Review errors and preview · 6. Commit. Nothing is saved until you
-            commit. Import units first, then items and suppliers, then item sourcing.
+            commit. Import units first, then items and suppliers, then item sourcing; stock
+            locations before stock movements. Stock movements need a unique external reference per
+            row, so a file imported twice never posts stock twice.
           </p>
-          <div className="table-footer">
+          <div className="toolbar">
             <label>
               Import type
               <select value={kind} disabled={busy} onChange={(e) => setKind(e.target.value)}>
@@ -1053,32 +1089,67 @@ export function Availability({
     );
   if (!kinds) return <p role="status">Loading planning data…</p>;
   const order = ['items', 'suppliers', 'item_suppliers', 'customers', 'unit_conversions'];
-  const plantTabs = ['Calendars', 'Resources', 'Routings'];
-  const tabs = [
+  const has = (p: string) => permissions.includes(p);
+  const plantTabs = [
+    'Calendars',
+    'Resources',
+    'Routings',
+    'Stock locations',
+    'Stock',
+    'Customer orders',
+    'Purchase orders',
+    'Demand history',
+    'Buffer settings',
+    'Buffer board',
+  ];
+  const setupTabs = [
     'Readiness',
     'Units',
     ...order.map((k) => kinds.find((x) => x.kind === k)?.label).filter(Boolean),
-    ...plantTabs.slice(0, 2),
+    'Calendars',
+    'Resources',
     'BOMs',
     'Routings',
-    'Imports',
+    'Stock locations',
+    ...(has('planning.read') ? ['Buffer profiles', 'Buffer settings'] : []),
   ] as string[];
+  const transactionTabs = [
+    ...(has('inventory.read') ? ['Stock'] : []),
+    ...(has('orders.read') ? ['Customer orders'] : []),
+    ...(has('purchase.read') ? ['Purchase orders'] : []),
+    ...(has('orders.read') ? ['Demand history'] : []),
+    'Imports',
+  ];
   const current = kinds.find((k) => k.label === tab);
   return (
     <>
-      <div className="subtabs" role="tablist" aria-label="Availability sections">
-        {tabs.map((t) => (
-          <button
-            key={t}
-            role="tab"
-            aria-selected={tab === t}
-            className={tab === t ? 'selected' : ''}
-            onClick={() => setTab(t)}
+      <nav className="module-nav" aria-label="Availability sections">
+        {[
+          ['Setup', setupTabs],
+          ['Stock and demand', transactionTabs],
+          ...(has('planning.read') ? [['Planning', ['Buffer board']]] : []),
+        ].map(([group, list]) => (
+          <div
+            key={group as string}
+            className="subtabs"
+            role="tablist"
+            aria-label={`Availability ${String(group).toLowerCase()}`}
           >
-            {t}
-          </button>
+            <span className="subtabs-label">{group}</span>
+            {(list as string[]).map((t) => (
+              <button
+                key={t}
+                role="tab"
+                aria-selected={tab === t}
+                className={tab === t ? 'selected' : ''}
+                onClick={() => setTab(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
         ))}
-      </div>
+      </nav>
       {(tab === 'Readiness' || plantTabs.includes(tab)) && (
         <PlantPicker csrf={csrf} value={plantId} onChange={setPlantId} />
       )}
@@ -1099,6 +1170,63 @@ export function Availability({
           csrf={csrf}
           plantId={plantId}
           canManage={canManage}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Stock locations' && plantId && (
+        <StockLocations
+          csrf={csrf}
+          plantId={plantId}
+          canManage={canManage}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Stock' && plantId && (
+        <Stock
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Customer orders' && plantId && (
+        <CustomerOrders
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Purchase orders' && plantId && (
+        <PurchaseOrders
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Demand history' && plantId && (
+        <DemandHistory key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {tab === 'Buffer profiles' && (
+        <BufferProfiles csrf={csrf} canManage={has('buffers.manage')} refreshKey={refreshKey} />
+      )}
+      {tab === 'Buffer settings' && plantId && (
+        <BufferSettings
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          canManage={has('buffers.manage')}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Buffer board' && plantId && (
+        <BufferBoard
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
           refreshKey={refreshKey}
         />
       )}

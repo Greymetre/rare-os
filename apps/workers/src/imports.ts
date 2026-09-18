@@ -18,10 +18,51 @@ import {
   writeResource,
   writeRouting,
 } from '../../../packages/schema/plant-model-db.mjs';
+import { MOVEMENT_PERMISSIONS, ORDER_IMPORTS } from '../../../packages/schema/demand-stock.mjs';
+import {
+  checkDemandHistory,
+  checkMovements,
+  checkOrders,
+  checkStockLocations,
+  orderAction,
+  postMovements,
+  stockLocationAction,
+  writeDemandHistory,
+  writeOrder,
+  writeStockLocation,
+} from '../../../packages/schema/demand-stock-db.mjs';
+import {
+  bufferSettingAction,
+  checkBufferSettings,
+  writeBufferSettings,
+} from '../../../packages/schema/planning-db.mjs';
 import type { PoolClient } from 'pg';
 
 const PAGE = 5000;
 const CHUNK = 1000;
+
+// Documents imported as one row per line: BOMs, routings, customer orders and purchase orders.
+const DOCUMENTS: Record<string, any> = { ...GROUPED_IMPORTS, ...ORDER_IMPORTS };
+const isOrder = (kind: string) => kind === 'sales_orders' || kind === 'purchase_orders';
+const today = () => new Date().toISOString().slice(0, 10);
+const PERMISSION_LABELS: Record<string, string> = {
+  'inventory.adjust': 'Post opening stock, adjustments and reversals',
+  'inventory.move': 'Post stock receipts and issues',
+  'orders.update': 'Edit and cancel customer orders',
+};
+
+// Permissions of the uploader; null means platform access (every permission).
+async function actorPermissions(db: PoolClient, actorId: string | null) {
+  if (!actorId) return null;
+  return new Set<string>(
+    (
+      await db.query(
+        'SELECT rp.permission_code FROM app_users u JOIN role_permissions rp ON rp.role_id=u.role_id WHERE u.id=$1 AND u.active',
+        [actorId],
+      )
+    ).rows.map((r) => r.permission_code),
+  );
+}
 
 type Payload = { batchId: string; actorId: string | null; actorSubject: string | null };
 type Result = { line: number; value: any; errors: { column: string; message: string }[] };
@@ -94,10 +135,10 @@ async function groupedDocuments(
   results: Result[],
   actorId: string | null,
 ) {
-  const def = GROUPED_IMPORTS[kind];
+  const def = DOCUMENTS[kind];
   const byLine = new Map(results.map((r) => [r.line, r]));
   const docs: { doc: Doc; rows: Result[] }[] = [];
-  for (const group of groupRows(kind, staged)) {
+  for (const group of groupRows(def, staged)) {
     const rows = group.rows.map((r) => byLine.get(r.line)!);
     for (const [line, message] of group.mismatch)
       byLine.get(line)!.errors.push({ column: '*', message });
@@ -114,6 +155,7 @@ async function groupedDocuments(
   }
   const valid = docs.filter((d) => d.doc.value && !d.doc.errors.length).map((d) => d.doc);
   if (kind === 'boms') await checkBoms(db, valid);
+  else if (isOrder(kind)) await checkOrders(db, kind, valid, await plantScope(db, actorId));
   else await checkRoutings(db, valid, await plantScope(db, actorId));
   return docs;
 }
@@ -139,7 +181,7 @@ async function masterActions(db: PoolClient, kind: string, results: Result[]) {
   const valid = results.filter((r) => !r.errors.length);
   const existing = await existingRecords(db, kind, valid);
   return results.map((r) =>
-    r.errors.length ? null : decideAction(kind, r.value, existing.get(def.key(r.value))),
+    r.errors.length ? null : decideAction(kind, r.value, existing.get(def.key!(r.value))),
   );
 }
 
@@ -158,21 +200,45 @@ export async function validateImport(db: PoolClient, payload: Payload) {
   if (batch.kind === 'units') actions = await unitActions(db, results);
   else if (batch.kind === 'resources')
     actions = await resourceActions(db, results, payload.actorId);
-  else if (GROUPED_IMPORTS[batch.kind]) {
+  else if (DEMAND_STOCK_ROWS.has(batch.kind))
+    actions = await demandStockActions(db, batch.kind, results, payload.actorId);
+  else if (DOCUMENTS[batch.kind]) {
     const docs = await groupedDocuments(db, batch.kind, staged, results, payload.actorId);
+    const permissions = await actorPermissions(db, payload.actorId);
+    const actionOf = new Map<Doc, string>();
+    for (const { doc, rows } of docs) {
+      if (!doc.value || doc.errors.length || rows.some((r) => r.errors.length)) continue;
+      const action =
+        batch.kind === 'boms'
+          ? await bomAction(db, doc)
+          : isOrder(batch.kind)
+            ? await orderAction(db, batch.kind, doc)
+            : await routingAction(db, doc);
+      // Changing an existing customer order needs edit permission, not just create.
+      if (
+        action === 'update' &&
+        batch.kind === 'sales_orders' &&
+        permissions &&
+        !permissions.has('orders.update')
+      )
+        doc.errors.push({
+          column: 'order_no',
+          message: `Order ${doc.value.order_no} already exists and would change. You need the "${PERMISSION_LABELS['orders.update']}" permission.`,
+        });
+      else actionOf.set(doc, action);
+    }
     markDocumentErrors(docs);
     const byLine = new Map<number, string>();
     for (const { doc, rows } of docs) {
-      if (rows.some((r) => r.errors.length)) continue;
-      const action =
-        batch.kind === 'boms' ? await bomAction(db, doc) : await routingAction(db, doc);
+      const action = actionOf.get(doc);
+      if (!action || rows.some((r) => r.errors.length)) continue;
       summary[action]++;
       for (const r of rows) byLine.set(r.line, action);
     }
     actions = results.map((r) => (r.errors.length ? null : (byLine.get(r.line) ?? null)));
   } else actions = await masterActions(db, batch.kind, results);
   // Grouped imports count documents; other imports count rows.
-  if (!GROUPED_IMPORTS[batch.kind]) for (const a of actions) if (a) summary[a]++;
+  if (!DOCUMENTS[batch.kind]) for (const a of actions) if (a) summary[a]++;
   for (let i = 0; i < results.length; i += CHUNK) {
     const part = results.slice(i, i + CHUNK);
     await db.query(
@@ -237,7 +303,11 @@ export async function commitImport(db: PoolClient, payload: Payload) {
       updated: written.length - created,
       unchanged: batch.valid_rows - written.length,
     };
-  } else if (batch.kind === 'resources' || GROUPED_IMPORTS[batch.kind]) {
+  } else if (DEMAND_STOCK_ROWS.has(batch.kind)) {
+    const counts = await commitDemandStock(db, batch, payload);
+    if (!counts) return;
+    summary = counts;
+  } else if (batch.kind === 'resources' || DOCUMENTS[batch.kind]) {
     const counts = await commitPlantModel(db, batch, payload);
     if (!counts) return;
     summary = counts;
@@ -313,7 +383,7 @@ async function commitPlantModel(db: PoolClient, batch: any, payload: Payload) {
     }
     return counts;
   }
-  const def = GROUPED_IMPORTS[batch.kind];
+  const def = DOCUMENTS[batch.kind];
   const groups = new Map<string, { line: number; value: any }[]>();
   for (const r of staged) {
     const key = def.groupKey(r.payload);
@@ -327,19 +397,152 @@ async function commitPlantModel(db: PoolClient, batch: any, payload: Payload) {
   const bad = docs.find((d) => d.errors.length);
   if (bad) return failWith(bad.line, bad.errors[0].message);
   if (batch.kind === 'boms') await checkBoms(db, docs);
+  else if (isOrder(batch.kind)) await checkOrders(db, batch.kind, docs, scope);
   else await checkRoutings(db, docs, scope);
   const changed = docs.find((d) => d.errors.length);
   if (changed) return failWith(changed.line, changed.errors[0].message);
   for (const doc of docs) {
-    const action = batch.kind === 'boms' ? await bomAction(db, doc) : await routingAction(db, doc);
+    const action =
+      batch.kind === 'boms'
+        ? await bomAction(db, doc)
+        : isOrder(batch.kind)
+          ? await orderAction(db, batch.kind, doc)
+          : await routingAction(db, doc);
     if (action === 'unchanged') counts.unchanged++;
     else {
       if (batch.kind === 'boms') await writeBom(db, batch.tenant_id, doc);
+      else if (isOrder(batch.kind)) await writeOrder(db, batch.kind, batch.tenant_id, doc);
       else await writeRouting(db, batch.tenant_id, doc);
       counts[action === 'create' ? 'created' : 'updated']++;
     }
   }
   return counts;
+}
+
+// ---------- Stock locations, stock movements and demand history (one record per row) ----------
+
+const DEMAND_STOCK_ROWS = new Set([
+  'stock_locations',
+  'stock_movements',
+  'demand_history',
+  'buffer_settings',
+]);
+
+async function checkDemandStockRows(
+  db: PoolClient,
+  kind: string,
+  rows: (Result & { existing?: any; action?: string })[],
+  actorId: string | null,
+) {
+  const scope = await plantScope(db, actorId);
+  if (kind === 'buffer_settings') {
+    await checkBufferSettings(db, rows, scope);
+    for (const r of rows) if (!r.errors.length) r.action = bufferSettingAction(r.value, r.existing);
+  } else if (kind === 'stock_locations') {
+    await checkStockLocations(db, rows, scope);
+    for (const r of rows) if (!r.errors.length) r.action = stockLocationAction(r.value, r.existing);
+  } else if (kind === 'demand_history')
+    await checkDemandHistory(db, rows, scope, { today: today() });
+  else {
+    // Opening stock and adjustments need more authority than receipts and issues.
+    const permissions = await actorPermissions(db, actorId);
+    for (const r of rows) {
+      const needed =
+        MOVEMENT_PERMISSIONS[r.value.movement_type as keyof typeof MOVEMENT_PERMISSIONS];
+      if (!r.errors.length && permissions && needed && !permissions.has(needed))
+        r.errors.push({
+          column: 'movement_type',
+          message: `${r.value.movement_type} rows need the "${PERMISSION_LABELS[needed]}" permission.`,
+        });
+    }
+    await checkMovements(db, rows, scope, { today: today() });
+    for (const r of rows) if (!r.errors.length) r.action = r.existing ? 'unchanged' : 'create';
+  }
+  return rows;
+}
+
+async function demandStockActions(
+  db: PoolClient,
+  kind: string,
+  results: Result[],
+  actorId: string | null,
+) {
+  const rows = results.map((r) => ({ ...r, existing: null as any, action: undefined as any }));
+  await checkDemandStockRows(db, kind, rows, actorId);
+  return rows.map((r, i) => {
+    results[i].errors = r.errors;
+    return r.errors.length ? null : r.action;
+  });
+}
+
+async function commitDemandStock(db: PoolClient, batch: any, payload: Payload) {
+  const rows = (await stagedRows(db, batch.id, 'value')).map((r) => ({
+    line: r.line,
+    value: r.payload,
+    errors: [] as { column: string; message: string }[],
+    existing: null as any,
+    action: undefined as any,
+  }));
+  await checkDemandStockRows(db, batch.kind, rows, payload.actorId);
+  const bad = rows.find((r) => r.errors.length);
+  if (bad) {
+    await markFailed(
+      db,
+      batch.id,
+      `Data changed after validation (line ${bad.line}: ${bad.errors[0].message}). Retry validation, then commit again. Nothing was changed.`,
+    );
+    return null;
+  }
+  if (batch.kind === 'demand_history')
+    return writeDemandHistory(
+      db,
+      batch.tenant_id,
+      rows.map((r) => r.value),
+    );
+  const counts = { created: 0, updated: 0, unchanged: 0 };
+  if (batch.kind === 'buffer_settings') {
+    const changed = rows.filter((r) => r.action !== 'unchanged');
+    await writeBufferSettings(
+      db,
+      batch.tenant_id,
+      changed.map((r) => r.value),
+    );
+    for (const r of rows)
+      counts[r.action === 'create' ? 'created' : r.action === 'update' ? 'updated' : 'unchanged']++;
+    return counts;
+  }
+  if (batch.kind === 'stock_locations') {
+    for (const r of rows) {
+      if (r.action === 'unchanged') counts.unchanged++;
+      else {
+        await writeStockLocation(db, batch.tenant_id, r.value, r.existing, true);
+        counts[r.action === 'create' ? 'created' : 'updated']++;
+      }
+    }
+    return counts;
+  }
+  const fresh = rows.filter((r) => r.action === 'create').map((r) => r.value);
+  // A concurrent issue elsewhere can still empty the stock; the savepoint keeps the failure status.
+  await db.query('SAVEPOINT post_movements');
+  try {
+    await postMovements(
+      db,
+      batch.tenant_id,
+      { id: payload.actorId, subject: payload.actorSubject },
+      fresh,
+      batch.id,
+    );
+  } catch (e: any) {
+    if (e?.constraint !== 'stock_not_negative') throw e;
+    await db.query('ROLLBACK TO SAVEPOINT post_movements');
+    await markFailed(
+      db,
+      batch.id,
+      'Data changed after validation: stock was used elsewhere and a movement would take it below zero. Retry validation, then commit again. Nothing was changed.',
+    );
+    return null;
+  }
+  return { created: fresh.length, updated: 0, unchanged: rows.length - fresh.length };
 }
 
 // Called once retries are exhausted: surface a clear status instead of a batch stuck in progress.
