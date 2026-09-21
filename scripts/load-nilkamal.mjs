@@ -1,4 +1,4 @@
-// LOCAL DEVELOPMENT ONLY. Replaces every company with one company, "Nilkamal", holding the
+// Replaces every company with one company, "Nilkamal", holding the
 // Barjora plant (1116) from the Nilkamal simulation handover (21-Sep-2026): items, BOMs, routings,
 // work centres, MB52 stock, open POs, open production orders, 27 months of invoice demand and
 // the demo's weekly buffers. Build the bundle first with scripts/nilkamal-convert.py.
@@ -9,21 +9,24 @@
 //
 // Run: docker compose run --rm --no-deps -v "$PWD/.local/nilkamal:/data:ro" seed \
 //        node scripts/load-nilkamal.mjs /data/bundle.json --replace-all-companies
+// On a server add --on-server. The bundle is client data.
 import fs from 'node:fs';
 import pg from 'pg';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000001';
 const SEED_ADMIN_USER = '30000000-0000-4000-8000-000000000001';
 const PLANT_ID = 'd0000000-0000-4000-8000-0000000011a6';
-const [file, flag] = process.argv.slice(2);
+const [file, ...flags] = process.argv.slice(2);
 const appUrl = process.env.APP_URL ?? '';
-if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(appUrl))
-  throw Error(
-    `Refused: APP_URL is ${appUrl || 'not set'}. This loader runs on a local stack only.`,
-  );
-if (!file || flag !== '--replace-all-companies')
+const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(appUrl);
+if (!file || !flags.includes('--replace-all-companies'))
   throw Error(
     'Usage: node scripts/load-nilkamal.mjs <bundle.json> --replace-all-companies (deletes every company).',
+  );
+// A server needs a second, explicit flag.
+if (!local && !flags.includes('--on-server'))
+  throw Error(
+    `Refused: APP_URL is ${appUrl || 'not set'}. On a server add --on-server (every company there is deleted).`,
   );
 const b = JSON.parse(fs.readFileSync(file, 'utf8'));
 
