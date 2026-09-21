@@ -1,0 +1,71 @@
+# Nilkamal (Barjora) — local data aur calculation guide
+
+Reference: `Nilkamal_Simulation_Demo_Developer_Handover_21Sep2026` (final v13 demo). Neev (login, roles,
+masters, stock, orders, buffers, kharidari) waisa hi hai; buffer ka hisaab aur flow ab Nilkamal demo
+jaisa hai. **Yeh client data hai: sirf local par, kabhi commit ya share mat karna.**
+
+## Load kaise karein (sirf local)
+
+```sh
+# 1. Handover se bundle banao (Python 3 + openpyxl). Output .local/ mein jata hai (git/docker ignore).
+python3 scripts/nilkamal-convert.py ../../Nilkamal_Simulation_Demo_Developer_Handover_21Sep2026 .local/nilkamal/bundle.json
+
+# 2. Backup, phir load. Yeh BAAKI SAARI COMPANIES DELETE karta hai; sirf APP_URL localhost par chalta hai.
+npm run backup:local
+docker compose run --rm --no-deps -v "$PWD/.local/nilkamal:/data:ro" \
+  -v "$PWD/scripts/load-nilkamal.mjs:/app/scripts/load-nilkamal.mjs:ro" seed \
+  node scripts/load-nilkamal.mjs /data/bundle.json --replace-all-companies
+
+# 3. Demo se har buffer match karo (Chrome chahiye).
+node scripts/nilkamal-parity.mjs ../../Nilkamal_Simulation_Demo_Developer_Handover_21Sep2026
+```
+
+Workspace company (admin + uske users) rename hokar **"Nilkamal"** banti hai, plant **1116 Barjora**.
+Saari dates poore hafton mein aage khiskti hain, taaki demo ka model day 27-Jul-2026 is hafte mein aaye
+(21-Sep-2026 ko shift 56 din tha). Dobara chalao to data fir se fresh ho jata hai ("Reset to seed" jaisa).
+
+## Kya load hota hai
+
+| Data                                               | Source                                  | Hamare system mein             |
+| -------------------------------------------------- | --------------------------------------- | ------------------------------ |
+| 57 FG + 217 components                             | demo seed (A2/BOM se)                   | Items                          |
+| 57 BOM, 1,094 lines (repeat components alag lines) | 1116-Barjora BOM                        | BOMs                           |
+| 16 work centres, 57 routings                       | seed (CT sheet)                         | Resources, Routings            |
+| Component stock, 6 storage locations               | MB52 unrestricted                       | Stock (opening)                |
+| FG stock                                           | demo ke FG buffer positions (MB52 nahi) | Stock, location FG01           |
+| 35 open POs, 69 lines                              | A5 open PO, sheet 1116, balance qty     | Purchase orders                |
+| 76 open production orders                          | A5 open production orders               | **Production orders (naya)**   |
+| 20,392 din ki bikri (Apr-24..Jun-26, returns net)  | Sleep Sale file                         | Demand history                 |
+| 56 FG + 30 component buffers, 1 MTO                | demo                                    | Buffer settings (NK-FG, NK-RM) |
+
+Supplier lead time 10 din (demo assumption, A1 file nahi mili). MOQ = max(10, ADU×1.5 ko 10 mein round),
+multiple 50 (bought) / 10 (made) — demo ke planning parameters, master data nahi.
+
+## Hisaab (WEEKLY method = Nilkamal)
+
+- Demand **history ki aakhri date** tak padhi jaati hai (aaj tak nahi).
+- Weekly mean = aakhri 13 Monday-hafton ka average. CV = aakhri 52 saat-din blocks (std/mean).
+- Safety: CV < 0.5 → 30%, < 1.0 → 50%, warna 70%. DLT = lead time ÷ 7, round, kam se kam 1 hafta.
+- Yellow = mean × DLT hafte; red = yellow × 50% × (1 + safety); green = ek hafte ka mean.
+  Zones 0.1 tak, phir poore units mein.
+- FG (made): ADU = mean/7; qualified demand mein ADU × lead time. Production orders FG supply nahi.
+- Component: qualified demand = open production orders + FG ki make recommendation (scheduled se
+  zyada wala hissa) × BOM, sirf jo lead time ke andar hai. "Needed by" = parent date − lead time.
+- Stock record hi nahi to "No stock position" (missing), zero nahi. TOG se upar bhi green (excess nahi).
+- Order: TOG tak; bought = MOQ + multiple; made red/breach = 10 ka multiple, yellow = poore units.
+
+Parity (21-Sep-2026): **86/86 buffers aur 13/13 recommendations** demo se exact (zones, on hand, on
+order, qualified demand, net flow, zone, order qty). Demo ke fixed-lead-time mode se compare hota hai.
+
+## Screens
+
+- **Stock and demand → Production orders**: order par click → poora BOM: per unit, zaroorat, buffer zone,
+  on hand ("not available" agar stock record nahi), on order, net flow, needed by, verdict.
+- **Planning → Buffer board**: detail mein weekly usage, CV, safety, demand ka breakdown aur driving orders.
+- **Buffer profiles**: "Zone method" = Weekly (Nilkamal).
+
+## Abhi baaki (demo mein hai, yahan nahi)
+
+Scheduler/Gantt aur dynamic lead time (FG zones load ke hisaab se), insert order + split lots, clubbing,
+drag, expedite, customer ko nayi date, MTO size scaling. Yeh scheduling milestones mein aayenge. Approval
+hamara maker-checker hi rahega (demo ka one-click nahi).

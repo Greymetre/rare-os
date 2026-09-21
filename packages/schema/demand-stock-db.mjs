@@ -830,7 +830,10 @@ export async function checkDemandHistory(db, rows, scope, { today }) {
     if (item) {
       v.item = item.code;
       v.item_id = item.id;
-      const q = parseQuantity(v.quantity, item.base_decimals, { label: 'Quantity' });
+      const q = parseQuantity(v.quantity, item.base_decimals, {
+        label: 'Quantity',
+        allowNegative: true,
+      });
       if (q.error) e.push(err('quantity', `${q.error} (unit ${item.base_unit})`));
     }
     if (v.demand_date > today)
@@ -912,6 +915,244 @@ export async function listDemandHistory(db, siteId, { q = '', cursor = null, lim
   const items = rows.slice(0, limit);
   const last = items[items.length - 1];
   return { items, nextCursor: rows.length > limit ? [last.demand_date, lc(last.item)] : null };
+}
+
+// ---------- Production orders ----------
+
+export async function checkProductionOrders(db, rows, scope) {
+  const pending = rows.filter((r) => !r.errors.length);
+  const plants = await plantsByCode(
+    db,
+    pending.map((r) => r.value.plant),
+  );
+  const items = await itemsByCode(
+    db,
+    pending.map((r) => r.value.item),
+  );
+  for (const row of pending) {
+    const v = row.value,
+      e = row.errors;
+    const plant = resolvePlant(plants, v.plant, scope, e);
+    if (plant) {
+      v.plant = plant.code;
+      v.site_id = plant.id;
+    }
+    const item = resolveItem(items, v.item, '', e);
+    if (item) {
+      v.item = item.code;
+      v.item_id = item.id;
+      if (item.make_buy !== 'MAKE')
+        e.push(err('item', `Item ${item.code} is bought; production orders are for made items.`));
+      const q = parseQuantity(v.quantity, item.base_decimals, { label: 'Open quantity' });
+      if (q.error) e.push(err('quantity', `${q.error} (unit ${item.base_unit})`));
+    }
+  }
+  const ok = pending.filter((r) => !r.errors.length);
+  const existing = new Map();
+  for (let i = 0; i < ok.length; i += CHUNK) {
+    const part = ok.slice(i, i + CHUNK);
+    for (const o of (
+      await db.query(
+        `SELECT o.*,to_char(o.start_date,'YYYY-MM-DD') AS start_date,to_char(o.due_date,'YYYY-MM-DD') AS due_date
+         FROM production_orders o JOIN unnest($1::uuid[],$2::text[]) AS k(site_id,no)
+           ON k.site_id=o.site_id AND lower(o.order_no)=lower(k.no)`,
+        [part.map((r) => r.value.site_id), part.map((r) => r.value.order_no)],
+      )
+    ).rows)
+      existing.set(`${o.site_id}|${lc(o.order_no)}`, o);
+  }
+  for (const row of ok) {
+    const v = row.value;
+    const old = existing.get(`${v.site_id}|${lc(v.order_no)}`) ?? null;
+    row.existing = old;
+    row.action = !old
+      ? 'create'
+      : old.item_id === v.item_id &&
+          dec(old.quantity) === dec(v.quantity) &&
+          (old.start_date ?? null) === (v.start_date ?? null) &&
+          old.due_date === v.due_date &&
+          old.order_type === (v.order_type ?? '') &&
+          old.reference === (v.reference ?? '') &&
+          old.status === 'OPEN'
+        ? 'unchanged'
+        : 'update';
+  }
+  return rows;
+}
+
+// Creates or replaces orders by plant and number; a re-imported order is open again.
+export async function writeProductionOrders(db, tenantId, values) {
+  let created = 0,
+    updated = 0;
+  for (let i = 0; i < values.length; i += CHUNK) {
+    const part = values.slice(i, i + CHUNK);
+    for (const r of (
+      await db.query(
+        `INSERT INTO production_orders(id,tenant_id,site_id,order_no,item_id,quantity,start_date,due_date,order_type,reference)
+         SELECT gen_random_uuid(),$1,o.site,o.no,o.item,o.qty,o.start,o.due,o.kind,o.ref
+         FROM unnest($2::uuid[],$3::text[],$4::uuid[],$5::numeric[],$6::date[],$7::date[],$8::text[],$9::text[]) AS o(site,no,item,qty,start,due,kind,ref)
+         ON CONFLICT (tenant_id,site_id,lower(order_no)) DO UPDATE SET item_id=excluded.item_id,quantity=excluded.quantity,
+           start_date=excluded.start_date,due_date=excluded.due_date,order_type=excluded.order_type,reference=excluded.reference,
+           status='OPEN',version=production_orders.version+1,updated_at=now()
+         WHERE (production_orders.item_id,production_orders.quantity,production_orders.start_date,production_orders.due_date,
+                production_orders.order_type,production_orders.reference,production_orders.status)
+           IS DISTINCT FROM (excluded.item_id,excluded.quantity,excluded.start_date,excluded.due_date,excluded.order_type,excluded.reference,'OPEN')
+         RETURNING (xmax=0) AS inserted`,
+        [
+          tenantId,
+          part.map((v) => v.site_id),
+          part.map((v) => v.order_no),
+          part.map((v) => v.item_id),
+          part.map((v) => v.quantity),
+          part.map((v) => v.start_date ?? null),
+          part.map((v) => v.due_date),
+          part.map((v) => v.order_type ?? ''),
+          part.map((v) => v.reference ?? ''),
+        ],
+      )
+    ).rows)
+      r.inserted ? created++ : updated++;
+  }
+  return { created, updated, unchanged: values.length - created - updated };
+}
+
+export async function listProductionOrders(
+  db,
+  siteId,
+  { q = '', status = 'OPEN', cursor = null, limit = 25 },
+) {
+  const params = [siteId, q];
+  let where =
+    'o.site_id=$1 AND (starts_with(lower(o.order_no),$2) OR starts_with(lower(i.code),$2))';
+  if (status) {
+    params.push(status);
+    where += ` AND o.status=$${params.length}`;
+  }
+  if (cursor) {
+    params.push(...cursor);
+    const n = params.length;
+    where += ` AND (o.due_date,lower(o.order_no)) > ($${n - 1}::date,$${n})`;
+  }
+  params.push(limit + 1);
+  const rows = (
+    await db.query(
+      `SELECT o.id,o.order_no,i.code AS item,i.name AS item_name,u.code AS unit,o.quantity,
+         to_char(o.start_date,'YYYY-MM-DD') AS start_date,to_char(o.due_date,'YYYY-MM-DD') AS due_date,
+         o.status,o.order_type,o.reference,o.version
+       FROM production_orders o JOIN items i ON i.id=o.item_id JOIN units u ON u.id=i.base_unit_id
+       WHERE ${where} ORDER BY o.due_date,lower(o.order_no) LIMIT $${params.length}`,
+      params,
+    )
+  ).rows;
+  const items = rows.slice(0, limit);
+  const last = items[items.length - 1];
+  return {
+    items,
+    nextCursor: rows.length > limit ? [last.due_date, lc(last.order_no)] : null,
+  };
+}
+
+// One production order with its full BOM explosion against the current buffer calculation.
+export async function productionOrderDetail(db, id, today) {
+  const order = (
+    await db.query(
+      `SELECT o.*,i.code AS item,i.name AS item_name,u.code AS unit,s.code AS plant,
+         to_char(o.start_date,'YYYY-MM-DD') AS start_date,to_char(o.due_date,'YYYY-MM-DD') AS due_date
+       FROM production_orders o JOIN items i ON i.id=o.item_id JOIN units u ON u.id=i.base_unit_id
+       JOIN sites s ON s.id=o.site_id WHERE o.id=$1`,
+      [id],
+    )
+  ).rows[0];
+  if (!order) return null;
+  const bom = (
+    await db.query(
+      `SELECT id,revision,base_quantity FROM boms WHERE item_id=$1 AND active AND effective_from <= $2::date
+         AND (effective_to IS NULL OR effective_to >= $2::date) ORDER BY effective_from DESC LIMIT 1`,
+      [order.item_id, today],
+    )
+  ).rows[0];
+  order.bom = bom ? bom.revision : null;
+  if (!bom) {
+    order.lines = [];
+    return order;
+  }
+  const lines = (
+    await db.query(
+      `SELECT l.line_no,l.component_item_id,c.code AS component,c.name AS component_name,c.make_buy,
+         l.quantity,l.unit_id,l.scrap_pct,c.base_unit_id,cu.code AS unit,
+         r.status AS plan_status,r.zone,r.on_hand,r.open_supply,r.qualified_demand,r.nfp,r.dlt,
+         (SELECT sum(b.quantity) FROM stock_balances b JOIN stock_locations sl ON sl.id=b.location_id AND sl.nettable
+           WHERE b.site_id=$2 AND b.item_id=l.component_item_id) AS stock,
+         EXISTS (SELECT 1 FROM stock_balances b WHERE b.site_id=$2 AND b.item_id=l.component_item_id) AS stock_known,
+         (SELECT coalesce(src.lead_time_days,sup.lead_time_days) FROM item_suppliers src JOIN suppliers sup ON sup.id=src.supplier_id
+           WHERE src.item_id=l.component_item_id AND src.preferred AND src.active) AS supplier_lead_time,
+         pp.proposal_no
+       FROM bom_lines l JOIN items c ON c.id=l.component_item_id JOIN units cu ON cu.id=c.base_unit_id
+       LEFT JOIN planning_state ps ON true
+       LEFT JOIN planning_results r ON r.run_id=ps.current_run_id AND r.site_id=$2 AND r.item_id=l.component_item_id AND r.policy='BUFFER'
+       LEFT JOIN purchase_proposals pp ON pp.site_id=$2 AND pp.item_id=l.component_item_id AND pp.status='PROPOSED'
+       WHERE l.bom_id=$1 ORDER BY l.line_no`,
+      [bom.id, order.site_id],
+    )
+  ).rows;
+  const factor = await conversionFactors(
+    db,
+    lines.map((l) => l.component_item_id),
+  );
+  order.lines = lines.map((l) => {
+    const f = Number(factor(l.unit_id, l.base_unit_id, l.component_item_id) ?? 1);
+    const per =
+      (Number(l.quantity) * f) / Number(bom.base_quantity) / (1 - Number(l.scrap_pct) / 100);
+    const requirement = per * Number(order.quantity);
+    const buffered = l.plan_status !== null;
+    const lead = buffered && l.dlt !== null ? Number(l.dlt) : (l.supplier_lead_time ?? null);
+    const onHand = l.stock_known ? Number(l.stock ?? 0) : null;
+    const verdict = !l.stock_known
+      ? 'No stock position'
+      : !buffered
+        ? onHand >= requirement - 1e-9
+          ? 'Not buffered: stock covers this order'
+          : 'Not buffered: stock does not cover this order'
+        : l.plan_status !== 'planned'
+          ? 'Buffer data missing'
+          : l.zone === 'green' || l.zone === 'excess'
+            ? 'Covered by buffer, no action'
+            : l.proposal_no
+              ? `Order recommended (proposal #${l.proposal_no})`
+              : 'Order recommended';
+    return {
+      line_no: l.line_no,
+      component: l.component,
+      component_name: l.component_name,
+      make_buy: l.make_buy,
+      unit: l.unit,
+      per_unit: Math.round(per * 1e6) / 1e6,
+      requirement: Math.round(requirement * 1e6) / 1e6,
+      buffered,
+      zone: l.plan_status === 'planned' ? l.zone : buffered ? 'missing' : null,
+      on_hand: onHand,
+      open_supply: buffered ? Number(l.open_supply) : null,
+      qualified_demand: buffered ? Number(l.qualified_demand) : null,
+      nfp: l.nfp === null ? null : Number(l.nfp),
+      lead_time_days: lead,
+      required_date: lead === null ? null : addDaysIso(order.due_date, -lead),
+      verdict,
+    };
+  });
+  return order;
+}
+
+const addDaysIso = (day, n) => {
+  const d = new Date(day + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+export async function closeProductionOrder(db, id) {
+  await db.query(
+    "UPDATE production_orders SET status='CLOSED',version=version+1,updated_at=now() WHERE id=$1",
+    [id],
+  );
 }
 
 // ---------- Readiness ----------

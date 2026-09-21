@@ -7,6 +7,7 @@ import {
 } from '../../../packages/schema/demand-stock.mjs';
 import {
   cancelOrder,
+  closeProductionOrder,
   checkMovements,
   checkOrders,
   checkStockLocations,
@@ -14,11 +15,13 @@ import {
   listDemandHistory,
   listMovements,
   listOrders,
+  listProductionOrders,
   listStockLocations,
   movementDetail,
   nextOrderNo,
   orderDetail,
   postMovements,
+  productionOrderDetail,
   reversalFor,
   stockInLocation,
   writeOrder,
@@ -497,6 +500,65 @@ export class DemandStockController {
       const plant = await requirePlant(db, actor, id(plantId));
       const page = await listDemandHistory(db, plant.id, { q, cursor });
       return { items: page.items, nextCursor: encode(page.nextCursor) };
+    });
+  }
+
+  // ---------- Production orders (imported; they consume components) ----------
+  @Get('plants/:plantId/production-orders') async productionOrders(
+    @Req() req: Request,
+    @Param('plantId') plantId: string,
+  ) {
+    const actor = await access(req, 'orders.read');
+    const q = search(req),
+      cursor = cursorOf(req, 2);
+    const status = req.query.status === undefined ? 'OPEN' : String(req.query.status) || null;
+    if (status && !['OPEN', 'CLOSED'].includes(status))
+      fail(400, 'VALIDATION_ERROR', 'Unknown production order status.');
+    return scoped(actor.tenant_id, async (db) => {
+      const plant = await requirePlant(db, actor, id(plantId));
+      const page = await listProductionOrders(db, plant.id, { q, status, cursor });
+      return { items: page.items, nextCursor: encode(page.nextCursor) };
+    });
+  }
+
+  @Get('production-orders/:id') async productionOrder(
+    @Req() req: Request,
+    @Param('id') orderId: string,
+  ) {
+    const actor = await access(req, 'orders.read');
+    return scoped(actor.tenant_id, async (db) => {
+      const o: any = await loaded(
+        await productionOrderDetail(db, id(orderId), today()),
+        'production order',
+      );
+      await requirePlant(db, actor, o.site_id);
+      return o;
+    });
+  }
+
+  @Post('production-orders/:id/close') async closeProduction(
+    @Req() req: Request,
+    @Param('id') orderId: string,
+  ) {
+    id(orderId);
+    const v = version(body(req, ['version']).version);
+    return mutate(req, 'orders.update', async (db, actor) => {
+      const o: any = await loaded(
+        (await db.query('SELECT * FROM production_orders WHERE id=$1 FOR UPDATE', [orderId]))
+          .rows[0],
+        'production order',
+      );
+      await requirePlant(db, actor, o.site_id);
+      sameVersion(o.version, v, 'production order');
+      if (o.status !== 'OPEN')
+        fail(409, 'ORDER_CLOSED', `Production order ${o.order_no} is already closed.`);
+      await closeProductionOrder(db, o.id);
+      await audit(db, actor, 'production_order.closed', 'production_order', o.id, o, {
+        status: 'CLOSED',
+      });
+      return {
+        message: `Production order ${o.order_no} closed. Its components are no longer reserved for it.`,
+      };
     });
   }
 }

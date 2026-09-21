@@ -195,11 +195,7 @@ export function validateBom(raw) {
   if (Array.isArray(raw?.lines) && raw.lines.length > 999)
     errors.push({ column: 'lines', message: 'A BOM can have at most 999 lines.' });
   errors.push(...l.errors);
-  for (const c of duplicates(l.values.map((x) => x.component_item).filter(Boolean)))
-    errors.push({
-      column: 'lines',
-      message: `Component ${c} is listed more than once. Combine the quantities on one line.`,
-    });
+  // A component may repeat on several lines (SAP source BOMs do); each line counts once.
   if (value.parent_item)
     for (const x of l.values)
       if (x.component_item && x.component_item.toLowerCase() === value.parent_item.toLowerCase())

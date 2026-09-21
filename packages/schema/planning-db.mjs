@@ -1,6 +1,6 @@
 // Database side of material buffers (AV-4): profiles, buffer settings and versioned planning runs.
 // Every function receives a pg client inside a company-scoped (RLS) transaction.
-import { effectiveAdu, planPlant } from '../engines/ddmrp.mjs';
+import { effectiveAdu, effectiveSeries, planPlant } from '../engines/ddmrp.mjs';
 import { conversionFactors } from './demand-stock-db.mjs';
 import { itemsByCode, plantsByCode, resolvePlant } from './plant-model-db.mjs';
 import { syncProposals } from './purchase-db.mjs';
@@ -18,6 +18,11 @@ const PROFILE_COLUMNS = [
   'order_cycle_days',
   'spike_threshold_pct',
   'adu_window_days',
+  'method',
+  'zone_weeks',
+  'cv_weeks',
+  'order_multiple',
+  'moq_adu_days',
 ];
 
 // ---------- Buffer profiles ----------
@@ -226,6 +231,7 @@ async function loadInputs(db, today) {
     await db.query(
       `SELECT b.site_id,b.item_id,i.code,i.make_buy,u.decimals,b.policy,b.lead_time_days,b.adu_override,
          p.red_base_pct,p.red_safety_pct,p.green_pct,p.order_cycle_days,p.spike_threshold_pct,p.adu_window_days,
+         p.method,p.zone_weeks,p.cv_weeks,p.order_multiple,p.moq_adu_days,
          src.moq,src.lot_multiple,src.purchase_unit_id,pu.code AS purchase_unit,pu.decimals AS purchase_decimals,
          src.supplier_id,coalesce(src.lead_time_days,s.lead_time_days) AS source_lead_time,i.base_unit_id
        FROM item_buffers b
@@ -269,22 +275,71 @@ async function loadInputs(db, today) {
     }
     return m;
   };
+  // WEEKLY profiles read demand up to the plant's latest history date (the source extract may end
+  // before today); items without a buffer setting follow the plant. Others end yesterday.
+  const ends = new Map(
+    (
+      await db.query(
+        `SELECT h.site_id,to_char(max(h.demand_date),'YYYY-MM-DD') AS last_day,
+           EXISTS (SELECT 1 FROM item_buffers b JOIN buffer_profiles p ON p.id=b.profile_id AND p.active
+                   WHERE b.site_id=h.site_id AND b.active AND b.policy='BUFFER' AND p.method='WEEKLY') AS weekly
+         FROM demand_history h WHERE h.demand_date <= $1::date GROUP BY h.site_id`,
+        [today],
+      )
+    ).rows.map((r) => [r.site_id, r]),
+  );
+  const weeklySites = [...ends.values()].filter((e) => e.weekly);
   // Own usage per item: demand history over the item's profile window (90 days without a setting).
   const direct = bySite(
     (
       await db.query(
-        `SELECT h.site_id,h.item_id,sum(h.quantity) FILTER (WHERE h.demand_date >= $1::date - w.days) / w.days AS adu
+        `WITH e AS (SELECT * FROM unnest($2::uuid[],$3::date[]) AS e(site_id,last_day))
+         SELECT h.site_id,h.item_id,
+           sum(h.quantity) FILTER (WHERE CASE WHEN wk.weekly THEN h.demand_date > e.last_day - w.days AND h.demand_date <= e.last_day
+             ELSE h.demand_date >= $1::date - w.days AND h.demand_date < $1::date END) / w.days AS adu
          FROM demand_history h
+         LEFT JOIN e ON e.site_id=h.site_id
          LEFT JOIN item_buffers b ON b.site_id=h.site_id AND b.item_id=h.item_id AND b.active
          LEFT JOIN buffer_profiles p ON p.id=b.profile_id
          CROSS JOIN LATERAL (SELECT coalesce(p.adu_window_days,90) AS days) w
-         WHERE h.demand_date < $1::date AND h.demand_date >= $1::date - 365
+         CROSS JOIN LATERAL (SELECT e.last_day IS NOT NULL AND (p.method='WEEKLY' OR (p.id IS NULL AND b.policy IS DISTINCT FROM 'BUFFER')) AS weekly) wk
+         WHERE h.demand_date <= $1::date AND h.demand_date >= $1::date - 800
          GROUP BY h.site_id,h.item_id,w.days`,
-        [today],
+        [today, weeklySites.map((e) => e.site_id), weeklySites.map((e) => e.last_day)],
       )
     ).rows,
-    (r) => Number(r.adu ?? 0),
+    (r) => Math.max(0, Number(r.adu ?? 0)),
   );
+  // WEEKLY series: Monday-week totals and 7-day block totals ending at the latest history date.
+  const zoneWeeks = Math.max(1, ...settings.map((s) => Number(s.zone_weeks ?? 1)));
+  const cvWeeks = Math.max(1, ...settings.map((s) => Number(s.cv_weeks ?? 1)));
+  const weeklySeries = new Map();
+  for (const e of weeklySites) {
+    const weeks = new Map(),
+      blocks = new Map();
+    const at = (m, id, n, i, q) => {
+      if (!m.has(id)) m.set(id, new Array(n).fill(0));
+      m.get(id)[n - 1 - i] += q;
+    };
+    for (const r of (
+      await db.query(
+        `SELECT item_id,((date_trunc('week',$2::date)::date - date_trunc('week',demand_date)::date)/7) AS wk,
+           (($2::date - demand_date)/7) AS blk,sum(quantity) AS qty
+         FROM demand_history WHERE site_id=$1 AND demand_date <= $2::date
+           AND demand_date > least(date_trunc('week',$2::date)::date - 7*$3, $2::date - 7*$4)
+         GROUP BY 1,2,3`,
+        [e.site_id, e.last_day, zoneWeeks, cvWeeks],
+      )
+    ).rows) {
+      const q = Number(r.qty);
+      if (Number(r.wk) < zoneWeeks) at(weeks, r.item_id, zoneWeeks, Number(r.wk), q);
+      if (Number(r.blk) < cvWeeks) at(blocks, r.item_id, cvWeeks, Number(r.blk), q);
+    }
+    weeklySeries.set(e.site_id, {
+      weeks: effectiveSeries(weeks, usage, zoneWeeks),
+      blocks: effectiveSeries(blocks, usage, cvWeeks),
+    });
+  }
   const onHand = bySite(
     (
       await db.query(
@@ -294,6 +349,28 @@ async function loadInputs(db, today) {
     ).rows,
     (r) => Number(r.qty),
   );
+  // Items with any stock record at the plant, including zero or non-nettable stock.
+  const stockKnown = new Map();
+  for (const r of (await db.query('SELECT DISTINCT site_id,item_id FROM stock_balances')).rows) {
+    if (!stockKnown.has(r.site_id)) stockKnown.set(r.site_id, new Set());
+    stockKnown.get(r.site_id).add(r.item_id);
+  }
+  const productionOrders = new Map();
+  for (const o of (
+    await db.query(
+      `SELECT o.site_id,o.item_id,o.order_no,i.code,to_char(o.due_date,'YYYY-MM-DD') AS due,o.quantity
+       FROM production_orders o JOIN items i ON i.id=o.item_id WHERE o.status='OPEN'`,
+    )
+  ).rows) {
+    if (!productionOrders.has(o.site_id)) productionOrders.set(o.site_id, []);
+    productionOrders.get(o.site_id).push({
+      ref: o.order_no,
+      itemId: o.item_id,
+      code: o.code,
+      due: o.due,
+      qty: Number(o.quantity),
+    });
+  }
   const supply = bySite(
     (
       await db.query(
@@ -326,6 +403,11 @@ async function loadInputs(db, today) {
           green_pct: Number(s.green_pct),
           order_cycle_days: s.order_cycle_days,
           spike_threshold_pct: Number(s.spike_threshold_pct),
+          method: s.method,
+          zone_weeks: s.zone_weeks,
+          cv_weeks: s.cv_weeks,
+          order_multiple: s.order_multiple === null ? null : Number(s.order_multiple),
+          moq_adu_days: s.moq_adu_days === null ? null : Number(s.moq_adu_days),
         }
       : null;
     const f = s.purchase_unit_id ? factor(s.purchase_unit_id, s.base_unit_id, s.item_id) : null;
@@ -352,7 +434,17 @@ async function loadInputs(db, today) {
           : null,
     });
   }
-  return { sites, usage, direct, onHand, supply, demand };
+  return {
+    sites,
+    usage,
+    direct,
+    onHand,
+    supply,
+    demand,
+    weeklySeries,
+    stockKnown,
+    productionOrders,
+  };
 }
 
 export function planSites(inputs, today) {
@@ -364,6 +456,20 @@ export function planSites(inputs, today) {
     const adu = effectiveAdu(inputs.direct.get(siteId) ?? new Map(), inputs.usage, overrides);
     // A buffered item whose profile was deactivated is reported as missing data, not dropped.
     const noProfile = settings.filter((s) => s.policy === 'BUFFER' && !s.profile);
+    // Each WEEKLY item reads the last zone_weeks / cv_weeks of the plant's exploded series.
+    const plantSeries = inputs.weeklySeries?.get(siteId);
+    const series = new Map();
+    if (plantSeries)
+      for (const s of settings) {
+        if (s.profile?.method !== 'WEEKLY') continue;
+        const w = plantSeries.weeks.get(s.itemId),
+          b = plantSeries.blocks.get(s.itemId);
+        if (w && b)
+          series.set(s.itemId, {
+            weeks: w.slice(-s.profile.zone_weeks),
+            blocks: b.slice(-s.profile.cv_weeks),
+          });
+      }
     const rows = planPlant({
       today,
       settings: settings.filter((s) => !(s.policy === 'BUFFER' && !s.profile)),
@@ -372,6 +478,9 @@ export function planSites(inputs, today) {
       onHand: inputs.onHand.get(siteId) ?? new Map(),
       supply: inputs.supply.get(siteId) ?? new Map(),
       demand: inputs.demand.get(siteId) ?? [],
+      productionOrders: inputs.productionOrders?.get(siteId) ?? [],
+      series,
+      stockKnown: inputs.stockKnown?.get(siteId) ?? new Set(),
     });
     for (const s of noProfile)
       rows.push({
@@ -398,10 +507,12 @@ async function saveResults(db, tenantId, runId, results) {
     await db.query(
       `INSERT INTO planning_results(tenant_id,run_id,site_id,item_id,policy,status,adu,dlt,top_of_red,top_of_yellow,top_of_green,
          on_hand,open_supply,qualified_demand,spike_demand,outside_horizon,nfp,zone,priority_pct,on_hand_alert,
-         recommended_kind,recommended_qty,recommended_purchase_qty,purchase_unit,supplier_id,due_date,messages)
+         recommended_kind,recommended_qty,recommended_purchase_qty,purchase_unit,supplier_id,due_date,messages,
+         zone_adu,zone_days,cv,safety_pct,lead_time_demand,production_demand,planned_make_demand,required_date,drivers)
        SELECT $1,$2,r.* FROM unnest($3::uuid[],$4::uuid[],$5::text[],$6::text[],$7::numeric[],$8::int[],$9::numeric[],$10::numeric[],
          $11::numeric[],$12::numeric[],$13::numeric[],$14::numeric[],$15::numeric[],$16::numeric[],$17::numeric[],$18::text[],$19::numeric[],
-         $20::text[],$21::text[],$22::numeric[],$23::numeric[],$24::text[],$25::uuid[],$26::date[],$27::jsonb[]) AS r`,
+         $20::text[],$21::text[],$22::numeric[],$23::numeric[],$24::text[],$25::uuid[],$26::date[],$27::jsonb[],
+         $28::numeric[],$29::int[],$30::numeric[],$31::numeric[],$32::numeric[],$33::numeric[],$34::numeric[],$35::date[],$36::jsonb[]) AS r`,
       [
         tenantId,
         runId,
@@ -430,6 +541,15 @@ async function saveResults(db, tenantId, runId, results) {
         col((r) => r.recommended?.supplierId ?? null),
         col((r) => r.recommended?.due ?? null),
         col((r) => JSON.stringify(r.messages ?? [])),
+        col((r) => r.zoneAdu ?? null),
+        col((r) => r.zoneDays ?? null),
+        col((r) => r.cv ?? null),
+        col((r) => r.safetyPct ?? null),
+        col((r) => r.leadTimeDemand ?? 0),
+        col((r) => r.productionDemand ?? 0),
+        col((r) => r.plannedMakeDemand ?? 0),
+        col((r) => r.requiredDate ?? null),
+        col((r) => JSON.stringify((r.drivers ?? []).map(({ itemId, ...d }) => d))),
       ],
     );
   }
@@ -524,7 +644,8 @@ export async function listBoard(db, siteId, { q = '', zone = null, cursor = null
   const rows = (
     await db.query(
       `SELECT r.*,${rank} AS rank,i.code AS item,i.name AS item_name,i.make_buy,u.code AS unit,s.code AS supplier,
-         to_char(r.due_date,'YYYY-MM-DD') AS due_date,pp.proposal_no AS pending_proposal_no
+         to_char(r.due_date,'YYYY-MM-DD') AS due_date,to_char(r.required_date,'YYYY-MM-DD') AS required_date,
+         pp.proposal_no AS pending_proposal_no
        FROM planning_results r JOIN items i ON i.id=r.item_id JOIN units u ON u.id=i.base_unit_id
        LEFT JOIN suppliers s ON s.id=r.supplier_id
        LEFT JOIN purchase_proposals pp ON pp.site_id=r.site_id AND pp.item_id=r.item_id AND pp.status='PROPOSED'

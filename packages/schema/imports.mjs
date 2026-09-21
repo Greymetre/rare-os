@@ -6,9 +6,11 @@ import {
   DEMAND_HISTORY_FIELDS,
   MOVEMENT_FIELDS,
   ORDER_IMPORTS,
+  PRODUCTION_ORDER_FIELDS,
   STOCK_LOCATION_FIELDS,
   validateDemandHistory,
   validateMovement,
+  validateProductionOrder,
   validateStockLocation,
 } from './demand-stock.mjs';
 
@@ -183,10 +185,10 @@ for (const [kind, def] of Object.entries(GROUPED_IMPORTS)) {
     columns: fields.map((f) => f.name),
     example: def.example,
     validate: (raw) => validateFields(fields, raw),
+    // A component may repeat on several BOM lines (SAP source BOMs do); each line counts once.
     key:
       kind === 'boms'
-        ? (v) =>
-            `${v.parent_item.toLowerCase()}|${v.revision.toLowerCase()}|${v.component_item.toLowerCase()}`
+        ? null
         : (v) =>
             `${v.plant.toLowerCase()}|${v.item.toLowerCase()}|${v.revision.toLowerCase()}|${v.sequence}`,
   };
@@ -256,6 +258,20 @@ IMPORT_KINDS.demand_history = {
   validate: validateDemandHistory,
   key: (v) => `${v.plant.toLowerCase()}|${v.item.toLowerCase()}|${v.demand_date}`,
   duplicate: (v) => `Duplicate row for ${v.item} on ${v.demand_date} in plant ${v.plant}`,
+};
+
+IMPORT_KINDS.production_orders = {
+  label: 'Production orders',
+  permission: 'orders.create',
+  plantScoped: true,
+  columns: PRODUCTION_ORDER_FIELDS.map((f) => f.name),
+  example: [
+    ['PLANT-1', 'WO-15625002', 'FG-PUMP-01', '10', '2026-09-21', '2026-09-22', 'PCMT', 'SAP COOIS'],
+    ['PLANT-1', 'WO-15625004', 'FG-PUMP-02', '8', '', '2026-09-23', '', ''],
+  ],
+  validate: validateProductionOrder,
+  key: (v) => `${v.plant.toLowerCase()}|${v.order_no.toLowerCase()}`,
+  duplicate: (v) => `Duplicate production order ${v.order_no} in plant ${v.plant}`,
 };
 
 for (const [kind, def] of Object.entries(ORDER_IMPORTS)) {

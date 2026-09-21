@@ -239,11 +239,47 @@ export const DEMAND_HISTORY_FIELDS = [
   plant,
   { name: 'item', label: 'Item code', type: 'ref', ref: 'items', required: true },
   { name: 'demand_date', label: 'Demand date', type: 'date', required: true },
-  { name: 'quantity', label: 'Quantity', type: 'decimal', decimals: 6, required: true },
+  // Net of returns: a day with more returns than sales is negative.
+  { name: 'quantity', label: 'Quantity', type: 'text', required: true, max: 20 },
 ];
 
 export function validateDemandHistory(raw) {
-  return validateFields(DEMAND_HISTORY_FIELDS, raw);
+  const r = validateFields(DEMAND_HISTORY_FIELDS, raw);
+  if (r.value.quantity) {
+    const q = parseQuantity(r.value.quantity, 6, { allowNegative: true, label: 'Quantity' });
+    if (q.error) r.errors.push({ column: 'quantity', message: q.error });
+    else r.value.quantity = q.value;
+  }
+  return r;
+}
+
+// Open production (work) orders: supply of the item they make, demand on its components.
+export const PRODUCTION_ORDER_FIELDS = [
+  plant,
+  { name: 'order_no', label: 'Production order number', type: 'code', required: true },
+  { name: 'item', label: 'Item code', type: 'ref', ref: 'items', required: true },
+  {
+    name: 'quantity',
+    label: 'Open quantity',
+    type: 'decimal',
+    decimals: 6,
+    positive: true,
+    required: true,
+  },
+  { name: 'start_date', label: 'Start date', type: 'date' },
+  { name: 'due_date', label: 'Finish date', type: 'date', required: true },
+  { name: 'order_type', label: 'Order type', type: 'text', max: 20 },
+  { name: 'reference', label: 'Reference', type: 'text', max: 120 },
+];
+
+export function validateProductionOrder(raw) {
+  const r = validateFields(PRODUCTION_ORDER_FIELDS, raw);
+  if (r.value.start_date && r.value.due_date && r.value.start_date > r.value.due_date)
+    r.errors.push({
+      column: 'start_date',
+      message: 'Start date must be on or before the finish date.',
+    });
+  return r;
 }
 
 const lower = (v) =>

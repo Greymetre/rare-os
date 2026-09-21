@@ -152,10 +152,18 @@ test('locations and demand history field rules', () => {
   );
   assert.match(
     messages(
-      validateDemandHistory({ plant: 'P1', item: 'FG', demand_date: '2026-02-30', quantity: '-1' }),
+      validateDemandHistory({ plant: 'P1', item: 'FG', demand_date: '2026-02-30', quantity: 'x' }),
     ),
-    /must be a date.*cannot be negative/,
+    /must be a date.*Quantity/,
   );
+  // Net of returns: a day with more returns than sales is negative (Nilkamal invoice history).
+  const net = validateDemandHistory({
+    plant: 'P1',
+    item: 'FG',
+    demand_date: '2026-02-03',
+    quantity: '-4',
+  });
+  assert.deepEqual([net.errors, net.value.quantity], [[], '-4']);
 });
 
 test('order CSV files group lines by order number and flag duplicates', () => {

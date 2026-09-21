@@ -4,6 +4,7 @@ import { Boms, Calendars, PlantPicker, PlantReadiness, Resources, Routings } fro
 import {
   CustomerOrders,
   DemandHistory,
+  ProductionOrders,
   PurchaseOrders,
   Stock,
   StockLocations,
@@ -839,6 +840,11 @@ function Imports({
       canManage: permissions.includes('orders.create'),
     },
     {
+      kind: 'production_orders',
+      label: 'Production orders',
+      canManage: permissions.includes('orders.create'),
+    },
+    {
       kind: 'purchase_orders',
       label: 'Purchase order lines',
       canManage: permissions.includes('purchase.create'),
@@ -1097,6 +1103,7 @@ export function Availability({
     'Stock locations',
     'Stock',
     'Customer orders',
+    'Production orders',
     'Purchase orders',
     'Demand history',
     'Buffer settings',
@@ -1116,7 +1123,7 @@ export function Availability({
   ] as string[];
   const transactionTabs = [
     ...(has('inventory.read') ? ['Stock'] : []),
-    ...(has('orders.read') ? ['Customer orders'] : []),
+    ...(has('orders.read') ? ['Customer orders', 'Production orders'] : []),
     ...(has('purchase.read') ? ['Purchase orders'] : []),
     ...(has('orders.read') ? ['Demand history'] : []),
     'Imports',
@@ -1205,6 +1212,15 @@ export function Availability({
       )}
       {tab === 'Customer orders' && plantId && (
         <CustomerOrders
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Production orders' && plantId && (
+        <ProductionOrders
+          key={plantId}
           csrf={csrf}
           plantId={plantId}
           permissions={permissions}

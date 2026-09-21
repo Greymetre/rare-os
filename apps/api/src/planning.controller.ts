@@ -33,6 +33,11 @@ const PROFILE_FIELDS = [
   'order_cycle_days',
   'spike_threshold_pct',
   'adu_window_days',
+  'method',
+  'zone_weeks',
+  'cv_weeks',
+  'order_multiple',
+  'moq_adu_days',
 ];
 const SETTING_FIELDS = ['policy', 'profile', 'lead_time_days', 'adu_override'];
 const BOARD_FILTERS = ['breach', 'red', 'yellow', 'green', 'excess', 'missing', 'not_applicable'];

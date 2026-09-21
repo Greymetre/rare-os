@@ -23,12 +23,14 @@ import {
   checkDemandHistory,
   checkMovements,
   checkOrders,
+  checkProductionOrders,
   checkStockLocations,
   orderAction,
   postMovements,
   stockLocationAction,
   writeDemandHistory,
   writeOrder,
+  writeProductionOrders,
   writeStockLocation,
 } from '../../../packages/schema/demand-stock-db.mjs';
 import {
@@ -426,6 +428,7 @@ const DEMAND_STOCK_ROWS = new Set([
   'stock_movements',
   'demand_history',
   'buffer_settings',
+  'production_orders',
 ]);
 
 async function checkDemandStockRows(
@@ -443,6 +446,7 @@ async function checkDemandStockRows(
     for (const r of rows) if (!r.errors.length) r.action = stockLocationAction(r.value, r.existing);
   } else if (kind === 'demand_history')
     await checkDemandHistory(db, rows, scope, { today: today() });
+  else if (kind === 'production_orders') await checkProductionOrders(db, rows, scope);
   else {
     // Opening stock and adjustments need more authority than receipts and issues.
     const permissions = await actorPermissions(db, actorId);
@@ -493,6 +497,15 @@ async function commitDemandStock(db: PoolClient, batch: any, payload: Payload) {
     );
     return null;
   }
+  if (batch.kind === 'production_orders')
+    return writeProductionOrders(
+      db,
+      batch.tenant_id,
+      rows.filter((r) => r.action !== 'unchanged').map((r) => r.value),
+    ).then((c) => ({
+      ...c,
+      unchanged: c.unchanged + rows.filter((r) => r.action === 'unchanged').length,
+    }));
   if (batch.kind === 'demand_history')
     return writeDemandHistory(
       db,

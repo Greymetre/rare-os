@@ -17,9 +17,13 @@ const parsers = {
   code(raw, f) {
     const v = blank(raw) ? '' : String(raw).trim();
     if (!v) return { error: `${f.label} is required.` };
-    if (!/^[A-Za-z0-9][A-Za-z0-9_./-]{0,39}$/.test(v))
+    // SAP material codes can carry an inch mark, e.g. TP12GM40"WPOLYMRN (items only).
+    const pattern = f.quote
+      ? /^[A-Za-z0-9][A-Za-z0-9_./"-]{0,39}$/
+      : /^[A-Za-z0-9][A-Za-z0-9_./-]{0,39}$/;
+    if (!pattern.test(v))
       return {
-        error: `${f.label} must be 1-40 letters or numbers (dot, slash, hyphen, underscore allowed).`,
+        error: `${f.label} must be 1-40 letters or numbers (dot, slash, hyphen, underscore${f.quote ? ', inch mark "' : ''} allowed).`,
       };
     return { value: v };
   },
@@ -110,7 +114,7 @@ export const MASTER_KINDS = {
     permission: 'masters.manage',
     table: 'items',
     fields: [
-      code('Item code'),
+      { ...code('Item code'), quote: true },
       name,
       {
         name: 'item_type',

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useApi } from './api-client';
 import { LineTable, Messages, useList, type Column } from './plant-model';
 
@@ -1419,6 +1419,263 @@ export function DemandHistory({
             {q
               ? 'No demand history matches this search.'
               : 'No demand history in this plant. Import it from Imports → Demand history (one row per item and day).'}
+          </div>
+        )}
+        <Pager cursors={cursors} next={list.next} setCursors={setCursors} />
+      </section>
+    </>
+  );
+}
+
+// ---------- Production orders ----------
+
+const VERDICT_CLASS = (v: string) =>
+  v.startsWith('Covered') || v.endsWith('covers this order')
+    ? 'ok'
+    : v.startsWith('No stock') || v.startsWith('Buffer data')
+      ? 'off'
+      : 'warn';
+
+function OrderMaterials({ csrf, orderId, canClose, onClosed }: any) {
+  const call = useApi(csrf);
+  const [order, setOrder] = useState<any>(null),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    call('production-orders/' + orderId)
+      .then((d) => live && setOrder(d))
+      .catch((e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [orderId]);
+  if (error)
+    return (
+      <div className="error" role="alert">
+        {error}
+      </div>
+    );
+  if (!order) return <p role="status">Exploding the BOM…</p>;
+  const lines = order.lines as any[];
+  const count = (f: (l: any) => boolean) => lines.filter(f).length;
+  return (
+    <div className="order-materials">
+      <p className="panel-sub">
+        {order.bom
+          ? `BOM ${order.bom}: ${lines.length} line(s) for ${num(order.quantity)} ${order.unit}. ` +
+            `${count((l) => l.buffered && (l.zone === 'green' || l.zone === 'excess'))} covered by buffer, ` +
+            `${count((l) => l.buffered && ['yellow', 'red', 'breach'].includes(l.zone))} need an order, ` +
+            `${count((l) => !l.buffered && l.on_hand !== null)} not buffered, ` +
+            `${count((l) => l.on_hand === null)} with no stock position.`
+          : 'This item has no active BOM, so its components are unknown.'}{' '}
+        Purchasing is netted once per component across all orders: see the buffer board and purchase
+        proposals.
+      </p>
+      {lines.length > 0 && (
+        <div className="table-wrap">
+          <table className="compact">
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th className="num">Per unit</th>
+                <th className="num">Needed for this order</th>
+                <th>Buffer</th>
+                <th className="num">On hand</th>
+                <th className="num">On order</th>
+                <th className="num">Net flow</th>
+                <th>Needed by</th>
+                <th>Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.line_no}>
+                  <td>
+                    <strong>{l.component}</strong>
+                    <div className="cell-sub">{l.component_name}</div>
+                  </td>
+                  <td className="num">
+                    {num(l.per_unit)} {l.unit}
+                  </td>
+                  <td className="num">
+                    {num(l.requirement)} {l.unit}
+                  </td>
+                  <td>
+                    {l.buffered ? (
+                      <span className={'zone-pill ' + l.zone}>{l.zone}</span>
+                    ) : (
+                      <span className="cell-sub">not buffered</span>
+                    )}
+                  </td>
+                  <td className="num">{l.on_hand === null ? 'not available' : num(l.on_hand)}</td>
+                  <td className="num">{l.open_supply === null ? '—' : num(l.open_supply)}</td>
+                  <td className="num">{l.nfp === null ? '—' : num(l.nfp)}</td>
+                  <td className="nowrap">
+                    {l.required_date ?? '—'}
+                    {l.lead_time_days !== null && (
+                      <div className="cell-sub">finish less {l.lead_time_days} d</div>
+                    )}
+                  </td>
+                  <td>
+                    <span className={'status-pill ' + VERDICT_CLASS(l.verdict)}>{l.verdict}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {canClose && order.status === 'OPEN' && (
+        <div className="form-actions">
+          <button
+            className="button"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              call('production-orders/' + order.id + '/close', 'POST', { version: order.version })
+                .then((d) => onClosed(d.message))
+                .catch((e) => setError(e.message))
+                .finally(() => setBusy(false));
+            }}
+          >
+            Close order (production finished)
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ProductionOrders({
+  csrf,
+  plantId,
+  permissions,
+  refreshKey,
+}: {
+  csrf: string;
+  plantId: string;
+  permissions: string[];
+  refreshKey: number;
+}) {
+  const [q, setQ] = useState(''),
+    [status, setStatus] = useState('OPEN'),
+    [cursors, setCursors] = useState<string[]>([]),
+    [open, setOpen] = useState<string | null>(null),
+    [notice, setNotice] = useState(''),
+    [revision, setRevision] = useState(0);
+  const list = useList(
+    csrf,
+    pagePath(`plants/${plantId}/production-orders`, {
+      q,
+      status,
+      cursor: cursors[cursors.length - 1],
+    }),
+    [refreshKey, revision],
+  );
+  return (
+    <>
+      <Messages error={list.error} notice={notice} />
+      <div className="toolbar">
+        <SearchBox
+          label="Production order search"
+          placeholder="Order number or item starts with…"
+          onSearch={(v) => {
+            setCursors([]);
+            setQ(v);
+          }}
+        />
+        <label>
+          Show
+          <select
+            value={status}
+            onChange={(e) => {
+              setCursors([]);
+              setStatus(e.target.value);
+            }}
+          >
+            <option value="OPEN">Open orders</option>
+            <option value="CLOSED">Closed orders</option>
+          </select>
+        </label>
+      </div>
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Production orders</h2>
+            <p className="panel-sub">
+              Open production orders reserve their components: each counts once as demand on every
+              buffered component whose lead time reaches its finish date. Click an order to see its
+              full BOM against the current buffers.
+            </p>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Item</th>
+                <th className="num">Open quantity</th>
+                <th>Start</th>
+                <th>Finish</th>
+                <th>Type</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.items.map((o) => [
+                <tr
+                  key={o.id}
+                  className="clickable"
+                  onClick={() => setOpen(open === o.id ? null : o.id)}
+                >
+                  <td>
+                    <button
+                      className="text-button cell-link"
+                      aria-expanded={open === o.id}
+                      aria-label={`Materials for ${o.order_no}`}
+                    >
+                      <strong>{o.order_no}</strong>
+                    </button>
+                    {o.reference && <div className="cell-sub">{o.reference}</div>}
+                  </td>
+                  <td>
+                    {o.item}
+                    <div className="cell-sub">{o.item_name}</div>
+                  </td>
+                  <td className="num">
+                    {num(o.quantity)} {o.unit}
+                  </td>
+                  <td>{o.start_date ?? '—'}</td>
+                  <td>{o.due_date}</td>
+                  <td>{o.order_type || '—'}</td>
+                </tr>,
+                open === o.id && (
+                  <tr key={o.id + '-detail'} className="detail-row">
+                    <td colSpan={6}>
+                      <OrderMaterials
+                        csrf={csrf}
+                        orderId={o.id}
+                        canClose={permissions.includes('orders.update')}
+                        onClosed={(m: string) => {
+                          setNotice(m);
+                          setOpen(null);
+                          setRevision((x) => x + 1);
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ),
+              ])}
+            </tbody>
+          </table>
+        </div>
+        {list.busy && <p role="status">Loading production orders…</p>}
+        {!list.items.length && !list.busy && (
+          <div className="empty">
+            {q
+              ? 'No production orders match this search.'
+              : 'No production orders in this plant. Import open orders from Imports → Production orders.'}
           </div>
         )}
         <Pager cursors={cursors} next={list.next} setCursors={setCursors} />

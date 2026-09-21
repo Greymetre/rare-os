@@ -74,7 +74,7 @@ test('resource: machine count, efficiency and changeover ranges', () => {
   );
 });
 
-test('BOM: duplicate components, self reference, dates and scrap limits', () => {
+test('BOM: repeated component lines, self reference, dates and scrap limits', () => {
   const base = { parent_item: 'FGa', revision: 'V1', effective_from: '2026-10-01' };
   assert.deepEqual(
     validateBom({ ...base, lines: [{ component_item: 'RMa', quantity: '2' }] }).errors,
@@ -93,7 +93,18 @@ test('BOM: duplicate components, self reference, dates and scrap limits', () => 
         ],
       }),
     ),
-    /Effective to must be on or after.*Line 2: Scrap % must be less than 100.*Component rma is listed more than once.*cannot be a component of itself/,
+    /Effective to must be on or after.*Line 2: Scrap % must be less than 100.*cannot be a component of itself/,
+  );
+  // SAP BOMs repeat a component on separate source lines; each line is kept and counts once.
+  assert.deepEqual(
+    validateBom({
+      ...base,
+      lines: [
+        { component_item: 'RMa', quantity: '2' },
+        { component_item: 'rma', quantity: '1' },
+      ],
+    }).errors,
+    [],
   );
 });
 

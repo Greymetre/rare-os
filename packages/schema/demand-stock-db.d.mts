@@ -91,6 +91,23 @@ export function listDemandHistory(
   siteId: string,
   options: { q?: string; cursor?: string[] | null; limit?: number },
 ): Page<string[]>;
+export function checkProductionOrders(
+  db: Db,
+  rows: Row[],
+  scope: Set<string> | null,
+): Promise<Row[]>;
+export function writeProductionOrders(
+  db: Db,
+  tenantId: string,
+  values: any[],
+): Promise<{ created: number; updated: number; unchanged: number }>;
+export function listProductionOrders(
+  db: Db,
+  siteId: string,
+  options: { q?: string; status?: string | null; cursor?: string[] | null; limit?: number },
+): Page<string[]>;
+export function productionOrderDetail(db: Db, id: string, today: string): Promise<any | null>;
+export function closeProductionOrder(db: Db, id: string): Promise<void>;
 export function demandStockReadiness(db: Db, siteId: string, today: string): Promise<any[]>;
 export function conversionFactors(
   db: Db,

@@ -322,10 +322,11 @@ try {
     'INSERT INTO bom_lines(id,tenant_id,bom_id,line_no,component_item_id,quantity,unit_id) VALUES(gen_random_uuid(),$1,$2,1,$3,2,$4)',
     [tenant, bom, itemId, isoUnit],
   );
+  // A component may repeat on another line (SAP BOMs do); the line number may not.
   await denied(
-    'same component twice in one BOM',
+    'same line number twice in one BOM',
     '23505',
-    'INSERT INTO bom_lines(id,tenant_id,bom_id,line_no,component_item_id,quantity,unit_id) VALUES(gen_random_uuid(),$1,$2,2,$3,1,$4)',
+    'INSERT INTO bom_lines(id,tenant_id,bom_id,line_no,component_item_id,quantity,unit_id) VALUES(gen_random_uuid(),$1,$2,1,$3,1,$4)',
     [tenant, bom, itemId, isoUnit],
   );
   await denied(
@@ -369,7 +370,7 @@ try {
   await db.query('ROLLBACK TO SAVEPOINT av2lines');
   assert.equal((await db.query('SELECT * FROM sites WHERE id=$1', [hiddenSite])).rowCount, 0);
   console.log(
-    'PASS plant model: plant/company references, one default calendar, unique BOM components and operations, CHECK limits, no header deletes',
+    'PASS plant model: plant/company references, one default calendar, unique BOM line numbers and operations, CHECK limits, no header deletes',
   );
   // AV-3: the stock ledger is append-only, balances follow it and never go negative.
   const store = '20000000-0000-4000-8000-0000000000d1';
@@ -472,12 +473,6 @@ try {
     '23514',
     "INSERT INTO sales_orders(id,tenant_id,site_id,order_no,customer_id,order_date,promise_date) VALUES(gen_random_uuid(),$1,$2,'DB-SO-2',$3,'2026-09-10','2026-09-01')",
     [tenant, site, customer],
-  );
-  await denied(
-    'negative demand history',
-    '23514',
-    "INSERT INTO demand_history(tenant_id,site_id,item_id,demand_date,quantity) VALUES($1,$2,$3,'2026-09-01',-1)",
-    [tenant, site, itemId],
   );
   await db.query('RESET ROLE');
   await db.query("SELECT set_config('app.tenant_id','',true)");
@@ -636,6 +631,64 @@ try {
     await denied(label, '42501', sql);
   console.log(
     'PASS purchase loop: one pending proposal per plant and item, decisions need a reason or an order, receipts once per request and never edited',
+  );
+  // Nilkamal rules (018): production orders, repeated BOM lines, net demand, SAP material codes.
+  const markers = async () =>
+    Number((await db.query('SELECT count(*) FROM planning_input_events')).rows[0].count);
+  const beforeOrders = await markers();
+  const production = (no, quantity = 10, start = null, extra = {}) =>
+    db.query(
+      'INSERT INTO production_orders(id,tenant_id,site_id,order_no,item_id,quantity,start_date,due_date) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,current_date+3)',
+      [tenant, extra.site ?? site, no, itemId, quantity, start],
+    );
+  await production('WO-15625002');
+  assert.ok((await markers()) > beforeOrders, 'a production order is a planning input');
+  for (const [label, run] of [
+    ['same production order number in another case', () => production('wo-15625002')],
+    ['production order without quantity', () => production('WO-2', 0)],
+    ['start after finish', () => production('WO-3', 5, '2099-01-01')],
+    ['production order in another plant', () => production('WO-4', 5, null, { site: hiddenSite })],
+  ]) {
+    await db.query('SAVEPOINT nk');
+    await assert.rejects(run, (e) => ['23514', '23505', '23503'].includes(e.code), label);
+    await db.query('ROLLBACK TO SAVEPOINT nk');
+  }
+  await denied('delete production orders', '42501', 'DELETE FROM production_orders');
+  await db.query(
+    'INSERT INTO demand_history(tenant_id,site_id,item_id,demand_date,quantity) VALUES($1,$2,$3,current_date-400,-4)',
+    [tenant, site, itemId],
+  );
+  const sapItem = (code) =>
+    db.query(
+      "INSERT INTO items(id,tenant_id,code,name,item_type,make_buy,base_unit_id) VALUES(gen_random_uuid(),$1,$2,'SAP item','RM','BUY',$3) RETURNING id",
+      [tenant, code, isoUnit],
+    );
+  const quoted = (await sapItem('TP12GM40"WPOLYMRN')).rows[0].id;
+  await db.query('SAVEPOINT nk');
+  await assert.rejects(
+    () => sapItem("TP12'X"),
+    (e) => e.code === '23514',
+    'apostrophe in code',
+  );
+  await db.query('ROLLBACK TO SAVEPOINT nk');
+  const parent = (
+    await db.query(
+      "INSERT INTO items(id,tenant_id,code,name,item_type,make_buy,base_unit_id) VALUES(gen_random_uuid(),$1,'DB-NK-FG','FG','FG','MAKE',$2) RETURNING id",
+      [tenant, isoUnit],
+    )
+  ).rows[0].id;
+  const nkBom = (
+    await db.query(
+      "INSERT INTO boms(id,tenant_id,item_id,revision,effective_from) VALUES(gen_random_uuid(),$1,$2,'V1',current_date) RETURNING id",
+      [tenant, parent],
+    )
+  ).rows[0].id;
+  await db.query(
+    'INSERT INTO bom_lines(id,tenant_id,bom_id,line_no,component_item_id,quantity,unit_id) VALUES(gen_random_uuid(),$1,$2,1,$3,2.45,$4),(gen_random_uuid(),$1,$2,2,$3,2.45,$4)',
+    [tenant, nkBom, quoted, isoUnit],
+  );
+  console.log(
+    'PASS Nilkamal rules: production orders are unique per plant, positive, dated in order, never deleted and planning inputs; net demand may be negative; SAP codes with an inch mark; repeated BOM lines',
   );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);

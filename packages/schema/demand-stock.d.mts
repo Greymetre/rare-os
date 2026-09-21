@@ -10,11 +10,13 @@ export const SALES_ORDER_LINE_FIELDS: MasterField[];
 export const PURCHASE_ORDER_HEADER_FIELDS: MasterField[];
 export const PURCHASE_ORDER_LINE_FIELDS: MasterField[];
 export const DEMAND_HISTORY_FIELDS: MasterField[];
+export const PRODUCTION_ORDER_FIELDS: MasterField[];
 export function validateStockLocation(raw: any): Result;
 export function validateMovement(raw: any, options?: { requireExternalRef?: boolean }): Result;
 export function validateSalesOrder(raw: any, options?: { requireNumber?: boolean }): Result;
 export function validatePurchaseOrder(raw: any, options?: { requireNumber?: boolean }): Result;
 export function validateDemandHistory(raw: any): Result;
+export function validateProductionOrder(raw: any): Result;
 export const ORDER_IMPORTS: Record<
   'sales_orders' | 'purchase_orders',
   GroupedImport & { permission: string }

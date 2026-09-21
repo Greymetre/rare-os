@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   bufferZones,
+  cvSafetyPct,
+  effectiveSeries,
+  weeklyZones,
   effectiveAdu,
   orderQuantity,
   planPlant,
@@ -234,4 +237,165 @@ test('an older run never replaces a result from newer inputs', () => {
   assert.equal(supersedes(null, 3), true);
   assert.equal(supersedes(5, 5), true);
   assert.equal(supersedes(7, 5), false);
+});
+
+// ---------- WEEKLY method (Nilkamal simulation handover, 21-Sep-2026) ----------
+
+const WEEKLY = {
+  method: 'WEEKLY',
+  red_base_pct: 50,
+  order_cycle_days: 7,
+  zone_weeks: 4,
+  cv_weeks: 4,
+};
+
+test('weekly zones: 13-week style mean, CV safety bands, whole-week lead time, 0.1 then whole units', () => {
+  assert.deepEqual(
+    [cvSafetyPct(0.499), cvSafetyPct(0.5), cvSafetyPct(0.999), cvSafetyPct(1)],
+    [30, 50, 50, 70],
+  );
+  // Mean 70/week; blocks 60/80 -> CV 0.143 -> 30% safety. 10 days rounds to 1 week.
+  const z = weeklyZones({
+    weeks: [70, 70, 70, 70],
+    blocks: [60, 80, 60, 80],
+    leadTimeDays: 10,
+    profile: WEEKLY,
+  });
+  assert.deepEqual([z.cv, z.safety, z.zoneDays], [0.143, 30, 7]);
+  // red = 70 x 0.5 x 1.3 = 45.5 -> 46 (0.1 kept, then whole units); yellow top 115.5 -> 116; TOG 185.5 -> 186
+  assert.deepEqual([z.topOfRed, z.topOfYellow, z.topOfGreen], [46, 116, 186]);
+  // 2 days is at least one week; 18 days is three weeks; volatile demand gets 70%.
+  assert.equal(
+    weeklyZones({ weeks: [7], blocks: [7, 7], leadTimeDays: 2, profile: WEEKLY }).zoneDays,
+    7,
+  );
+  const v = weeklyZones({ weeks: [70], blocks: [0, 0, 0, 280], leadTimeDays: 18, profile: WEEKLY });
+  assert.deepEqual([v.zoneDays, v.safety, v.topOfRed], [21, 70, 179]);
+});
+
+test('weekly series explode through the BOM like ADU', () => {
+  const usage = new Map([
+    [
+      'FG',
+      [
+        { componentId: 'RM', qtyPer: 2 },
+        { componentId: 'RM', qtyPer: 0.5 },
+      ],
+    ],
+  ]);
+  const s = effectiveSeries(new Map([['FG', [10, 20]]]), usage, 2);
+  assert.deepEqual(s.get('RM'), [25, 50]);
+});
+
+// FG made (lead time 2 days, 100/week); RM bought in 50s, 10-day lead time, 2.5 per FG.
+const weeklyPlant = (overrides = {}) => {
+  const usage = new Map([['FG', [{ componentId: 'RM', qtyPer: 2.5 }]]]);
+  const fgWeeks = [100, 100, 100, 100];
+  return {
+    today: '2026-07-27',
+    settings: [
+      {
+        itemId: 'FG',
+        code: 'FG',
+        makeBuy: 'MAKE',
+        decimals: 0,
+        policy: 'BUFFER',
+        leadTimeDays: 2,
+        aduOverride: null,
+        profile: { ...WEEKLY, order_multiple: 10, moq_adu_days: 1.5 },
+      },
+      {
+        itemId: 'RM',
+        code: 'RM',
+        makeBuy: 'BUY',
+        decimals: 3,
+        policy: 'BUFFER',
+        leadTimeDays: null,
+        aduOverride: null,
+        profile: WEEKLY,
+        source: {
+          moq: 50,
+          multiple: 50,
+          factor: 1,
+          unit: 'KG',
+          decimals: 3,
+          leadTimeDays: 10,
+          supplierId: 'S1',
+        },
+      },
+    ],
+    adu: new Map([
+      ['FG', 100 / 7],
+      ['RM', 250 / 7],
+    ]),
+    usage,
+    onHand: new Map([
+      ['FG', 60],
+      ['RM', 700],
+    ]),
+    supply: new Map([['RM', 100]]),
+    demand: [],
+    productionOrders: [
+      { ref: 'WO-1', itemId: 'FG', code: 'FG', due: '2026-07-30', qty: 40 },
+      { ref: 'WO-2', itemId: 'FG', code: 'FG', due: '2026-08-10', qty: 30 },
+    ],
+    series: new Map([
+      ['FG', { weeks: fgWeeks, blocks: fgWeeks }],
+      ['RM', { weeks: fgWeeks.map((x) => x * 2.5), blocks: fgWeeks.map((x) => x * 2.5) }],
+    ]),
+    stockKnown: new Set(['FG', 'RM']),
+    ...overrides,
+  };
+};
+
+test('weekly plant: lead-time demand on made items, production orders and planned make orders on components', () => {
+  const [fg, rm] = planPlant(weeklyPlant());
+  // FG: ADU 14.286; qualified = ADU x 2 days = 28.6; production orders are not FG supply here.
+  assert.deepEqual([fg.adu, fg.leadTimeDemand, fg.openSupply, fg.nfp], [14.286, 28.6, 0, 31.4]);
+  // Zones: red 50 x 1.3 = 65, yellow top 165, TOG 265 -> red; make to TOG in 10s, at least MOQ 20.
+  assert.deepEqual([fg.zones.topOfRed, fg.zone, fg.recommended.qty], [65, 'red', 240]);
+  // RM: WO-1 (due in 3 days) qualifies 100; WO-2 is 14 days out, beyond the 10-day lead time.
+  // The FG order of 240 less the 70 already scheduled adds 170 x 2.5 = 425.
+  assert.deepEqual([rm.productionDemand, rm.outsideHorizon, rm.plannedMakeDemand], [100, 75, 425]);
+  assert.equal(rm.nfp, 700 + 100 - 525);
+  // Earliest parent need: the planned make order (today + 2 days) less 10 days, already past.
+  assert.equal(rm.requiredDate, '2026-07-19');
+  assert.equal(rm.recommended.due, '2026-07-27');
+  assert.ok(rm.messages.some((m) => /has passed/.test(m)));
+  assert.deepEqual(
+    rm.drivers.map((d) => [d.kind, d.ref, d.qty]),
+    [
+      ['planned', 'FG', 425],
+      ['production', 'WO-1', 100],
+    ],
+  );
+  // No excess zone in the weekly method: far above TOG is still green.
+  const [, full] = planPlant(
+    weeklyPlant({
+      onHand: new Map([
+        ['FG', 5000],
+        ['RM', 99999],
+      ]),
+    }),
+  );
+  assert.equal(full.zone, 'green');
+});
+
+test('weekly plant: an item without any stock record is unknown, not zero', () => {
+  const [, rm] = planPlant(weeklyPlant({ stockKnown: new Set(['FG']) }));
+  assert.equal(rm.status, 'missing');
+  assert.match(rm.messages[0], /No stock position/);
+});
+
+test('standard plant: open production orders are supply of their item and demand on components', () => {
+  const [fg] = planPlant(
+    weeklyPlant({
+      settings: weeklyPlant().settings.map((s) => ({
+        ...s,
+        profile: { red_base_pct: 50, green_pct: 50 },
+      })),
+      series: new Map(),
+    }),
+  );
+  assert.equal(fg.openSupply, 70);
 });

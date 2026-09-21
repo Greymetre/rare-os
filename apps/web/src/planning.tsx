@@ -55,6 +55,11 @@ const PROFILE_BLANK = {
   order_cycle_days: '',
   spike_threshold_pct: '50',
   adu_window_days: '90',
+  method: 'STANDARD',
+  zone_weeks: '13',
+  cv_weeks: '52',
+  order_multiple: '',
+  moq_adu_days: '',
 };
 
 export function BufferProfiles({
@@ -114,9 +119,9 @@ export function BufferProfiles({
         <section className="panel company-form">
           <h2>{form.id ? `Edit profile ${form.code}` : 'New buffer profile'}</h2>
           <p className="panel-sub">
-            Yellow = average daily usage × lead time. Red = yellow × red base % × (1 + safety %).
-            Green = the larger of yellow × green %, usage over the order cycle, and the supplier
-            MOQ.
+            {form.method === 'WEEKLY'
+              ? 'Weekly (Nilkamal) method: yellow = mean of the last zone weeks × lead time in whole weeks. Red = yellow × red base % × (1 + safety), where safety is 30%, 50% or 70% for demand variability (CV) below 0.5, below 1.0 or above. Green = the weekly mean over the order cycle (one week if blank). Demand is read up to the latest history date.'
+              : 'Yellow = average daily usage × lead time. Red = yellow × red base % × (1 + safety %). Green = the larger of yellow × green %, usage over the order cycle, and the supplier MOQ.'}
           </p>
           <form
             onSubmit={(e) => {
@@ -127,12 +132,34 @@ export function BufferProfiles({
             <div className="form-grid">
               {!form.id && field('code', 'Profile code *', { maxLength: 40 })}
               {field('name', 'Profile name *', { maxLength: 120 })}
+              <label>
+                Zone method
+                <select
+                  value={form.method}
+                  onChange={(e) => setForm({ ...form, method: e.target.value })}
+                >
+                  <option value="STANDARD">Standard (daily usage)</option>
+                  <option value="WEEKLY">Weekly with variability safety (Nilkamal)</option>
+                </select>
+              </label>
               {field('red_base_pct', 'Red base % of yellow *', { inputMode: 'decimal' })}
               {field('red_safety_pct', 'Red safety % (variability)', { inputMode: 'decimal' })}
               {field('green_pct', 'Green % of yellow *', { inputMode: 'decimal' })}
               {field('order_cycle_days', 'Order cycle (days)', { inputMode: 'numeric' })}
               {field('spike_threshold_pct', 'Spike threshold % of red', { inputMode: 'decimal' })}
               {field('adu_window_days', 'Usage window (days)', { inputMode: 'numeric' })}
+              {form.method === 'WEEKLY' && (
+                <>
+                  {field('zone_weeks', 'Zone weeks', { inputMode: 'numeric' })}
+                  {field('cv_weeks', 'Variability weeks', { inputMode: 'numeric' })}
+                  {field('order_multiple', 'Order multiple (made items)', {
+                    inputMode: 'decimal',
+                  })}
+                  {field('moq_adu_days', 'Minimum order (days of usage)', {
+                    inputMode: 'decimal',
+                  })}
+                </>
+              )}
               {form.id && (
                 <label>
                   Status
@@ -181,6 +208,7 @@ export function BufferProfiles({
             <thead>
               <tr>
                 <th>Profile</th>
+                <th>Method</th>
                 <th className="num">Red base %</th>
                 <th className="num">Red safety %</th>
                 <th className="num">Green %</th>
@@ -199,9 +227,22 @@ export function BufferProfiles({
                     <strong>{p.code}</strong>
                     <div className="cell-sub">{p.name}</div>
                   </td>
+                  <td>
+                    {p.method === 'WEEKLY' ? (
+                      <>
+                        Weekly
+                        <div className="cell-sub">
+                          {p.zone_weeks} wk zones · CV over {p.cv_weeks} wk
+                          {p.order_multiple ? ` · multiple ${num(p.order_multiple)}` : ''}
+                        </div>
+                      </>
+                    ) : (
+                      'Standard'
+                    )}
+                  </td>
                   <td className="num">{num(p.red_base_pct)}</td>
-                  <td className="num">{num(p.red_safety_pct)}</td>
-                  <td className="num">{num(p.green_pct)}</td>
+                  <td className="num">{p.method === 'WEEKLY' ? 'by CV' : num(p.red_safety_pct)}</td>
+                  <td className="num">{p.method === 'WEEKLY' ? '—' : num(p.green_pct)}</td>
                   <td className="num">{p.order_cycle_days ? p.order_cycle_days + ' d' : '—'}</td>
                   <td className="num">{num(p.spike_threshold_pct)}</td>
                   <td className="num">{p.adu_window_days} d</td>
@@ -224,6 +265,9 @@ export function BufferProfiles({
                             green_pct: clean(p.green_pct),
                             spike_threshold_pct: clean(p.spike_threshold_pct),
                             order_cycle_days: p.order_cycle_days ?? '',
+                            order_multiple:
+                              p.order_multiple === null ? '' : clean(p.order_multiple),
+                            moq_adu_days: p.moq_adu_days === null ? '' : clean(p.moq_adu_days),
                           })
                         }
                       >
@@ -778,8 +822,22 @@ export function BufferBoard({
                           </div>
                           <div>
                             <dt>Lead time</dt>
-                            <dd>{r.dlt === null ? '—' : r.dlt + ' days'}</dd>
+                            <dd>
+                              {r.dlt === null ? '—' : r.dlt + ' days'}
+                              {r.cv !== null && r.zone_days
+                                ? ` (zones on ${r.zone_days / 7} week${r.zone_days === 7 ? '' : 's'})`
+                                : ''}
+                            </dd>
                           </div>
+                          {r.cv !== null && (
+                            <div>
+                              <dt>Weekly usage and variability</dt>
+                              <dd>
+                                {num(Number(r.zone_adu) * 7, 1)} {r.unit}/week · CV {num(r.cv, 3)} →
+                                red safety {num(r.safety_pct, 0)}%
+                              </dd>
+                            </div>
+                          )}
                           <div>
                             <dt>Zones (top of red / yellow / green)</dt>
                             <dd>
@@ -794,6 +852,30 @@ export function BufferBoard({
                               {num(r.qualified_demand)} qualified demand = {num(r.nfp)}
                             </dd>
                           </div>
+                          {Number(r.lead_time_demand) > 0 && (
+                            <div>
+                              <dt>Of which usage over lead time</dt>
+                              <dd>{num(r.lead_time_demand)}</dd>
+                            </div>
+                          )}
+                          {Number(r.production_demand) > 0 && (
+                            <div>
+                              <dt>Of which open production orders</dt>
+                              <dd>{num(r.production_demand)}</dd>
+                            </div>
+                          )}
+                          {Number(r.planned_make_demand) > 0 && (
+                            <div>
+                              <dt>Of which planned make orders</dt>
+                              <dd>{num(r.planned_make_demand)}</dd>
+                            </div>
+                          )}
+                          {r.required_date && (
+                            <div>
+                              <dt>Needed by</dt>
+                              <dd>{r.required_date} (earliest parent need less lead time)</dd>
+                            </div>
+                          )}
                           <div>
                             <dt>Of which spikes</dt>
                             <dd>{num(r.spike_demand)}</dd>
@@ -803,6 +885,42 @@ export function BufferBoard({
                             <dd>{num(r.outside_horizon)} (not counted yet)</dd>
                           </div>
                         </dl>
+                        {r.drivers?.length > 0 && (
+                          <div className="table-wrap">
+                            <table className="compact">
+                              <caption>Demand that qualifies here</caption>
+                              <thead>
+                                <tr>
+                                  <th>Driven by</th>
+                                  <th>Parent item</th>
+                                  <th className="num">Quantity</th>
+                                  <th>Parent needed</th>
+                                  <th>Needed here by</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {r.drivers.slice(0, 12).map((d: any) => (
+                                  <tr key={d.kind + d.ref}>
+                                    <td>
+                                      {d.kind === 'production'
+                                        ? 'Production order ' + d.ref
+                                        : 'Planned make order'}
+                                    </td>
+                                    <td>{d.item ?? d.ref}</td>
+                                    <td className="num">{num(d.qty)}</td>
+                                    <td>{d.need}</td>
+                                    <td>{d.requiredDate}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {r.drivers.length > 12 && (
+                              <p className="cell-sub">
+                                and {r.drivers.length - 12} more parent order(s).
+                              </p>
+                            )}
+                          </div>
+                        )}
                         {r.messages?.length > 0 && (
                           <ul className="messages">
                             {r.messages.map((m: string) => (

@@ -22,6 +22,31 @@ export const BUFFER_PROFILE_FIELDS = [
     min: 7,
     max: 365,
   },
+  // WEEKLY is the Nilkamal method: zones from recent weeks and safety from demand variability.
+  {
+    name: 'method',
+    label: 'Zone method',
+    type: 'enum',
+    options: ['STANDARD', 'WEEKLY'],
+    default: 'STANDARD',
+  },
+  { name: 'zone_weeks', label: 'Zone weeks (weekly method)', type: 'int', min: 1, max: 104 },
+  { name: 'cv_weeks', label: 'Variability weeks (weekly method)', type: 'int', min: 4, max: 104 },
+  {
+    name: 'order_multiple',
+    label: 'Order multiple for made items',
+    type: 'decimal',
+    decimals: 6,
+    positive: true,
+  },
+  {
+    name: 'moq_adu_days',
+    label: 'Minimum order in days of ADU',
+    type: 'decimal',
+    decimals: 3,
+    positive: true,
+    maxValue: 365,
+  },
 ];
 
 export const BUFFER_SETTING_FIELDS = [
@@ -44,6 +69,13 @@ export function validateBufferProfile(raw) {
   const r = validateFields(BUFFER_PROFILE_FIELDS, raw);
   if (r.value.adu_window_days === null || r.value.adu_window_days === undefined)
     r.value.adu_window_days = 90;
+  r.value.zone_weeks ??= 13;
+  r.value.cv_weeks ??= 52;
+  if (r.value.moq_adu_days && !r.value.order_multiple)
+    r.errors.push({
+      column: 'moq_adu_days',
+      message: 'Set an order multiple too: the minimum order is rounded to it.',
+    });
   return r;
 }
 
