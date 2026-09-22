@@ -50,6 +50,7 @@ import { PlantModelController } from './plant-model.controller.js';
 import { DemandStockController } from './demand-stock.controller.js';
 import { PlanningController } from './planning.controller.js';
 import { PurchaseController } from './purchase.controller.js';
+import { ScheduleController } from './schedule.controller.js';
 import { AccessController } from './access.controller.js';
 @Catch()
 class Errors implements ExceptionFilter {
@@ -386,6 +387,7 @@ class AppController {
     DemandStockController,
     PlanningController,
     PurchaseController,
+    ScheduleController,
   ],
 })
 class AppModule {}

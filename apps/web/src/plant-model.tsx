@@ -516,6 +516,7 @@ export function Resources({
       efficiency_pct: String(form.efficiency_pct),
       changeover_minutes: String(form.changeover_minutes),
       calendar: form.calendar || '',
+      planned_utilization_pct: String(form.planned_utilization_pct ?? ''),
     };
     if (form.id) Object.assign(payload, { active: form.active, version: form.version });
     else payload.code = form.code;
@@ -558,6 +559,7 @@ export function Resources({
                 efficiency_pct: 100,
                 changeover_minutes: 0,
                 calendar: '',
+                planned_utilization_pct: '',
               })
             }
           >
@@ -591,6 +593,10 @@ export function Resources({
             {field('machine_count', 'Machines *', { inputMode: 'numeric' })}
             {field('efficiency_pct', 'Efficiency %', { inputMode: 'decimal' })}
             {field('changeover_minutes', 'Changeover minutes', { inputMode: 'decimal' })}
+            {field('planned_utilization_pct', 'Planned utilisation % (lead time)', {
+              inputMode: 'decimal',
+              placeholder: 'Blank = no queue',
+            })}
             <label>
               Calendar
               <select
@@ -647,6 +653,7 @@ export function Resources({
               <th>Changeover min</th>
               <th>Calendar</th>
               <th>Capacity min/day</th>
+              <th>Planned use %</th>
               <th>Status</th>
               {canManage && <th>Actions</th>}
             </tr>
@@ -666,6 +673,7 @@ export function Resources({
                     ? 'No calendar'
                     : Math.round(r.capacity_minutes_per_day)}
                 </td>
+                <td>{r.planned_utilization_pct === null ? '—' : num(r.planned_utilization_pct)}</td>
                 <td>{r.active ? 'Active' : 'Inactive'}</td>
                 {canManage && (
                   <td>
@@ -677,6 +685,10 @@ export function Resources({
                           ...r,
                           efficiency_pct: num(r.efficiency_pct),
                           changeover_minutes: num(r.changeover_minutes),
+                          planned_utilization_pct:
+                            r.planned_utilization_pct === null
+                              ? ''
+                              : num(r.planned_utilization_pct),
                           calendar: r.calendar ?? '',
                         })
                       }

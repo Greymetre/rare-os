@@ -23,6 +23,7 @@ import {
 } from '../../../packages/schema/plant-model-db.mjs';
 import { demandStockReadiness } from '../../../packages/schema/demand-stock-db.mjs';
 import { bufferReadiness } from '../../../packages/schema/planning-db.mjs';
+import { scheduleReadiness } from '../../../packages/schema/schedule-db.mjs';
 import { Controller, Get, Post, Patch, Put, Req, Param, HttpException } from '@nestjs/common';
 import type { Request } from 'express';
 import type { PoolClient } from 'pg';
@@ -90,6 +91,7 @@ export class PlantModelController {
           ...(await plantReadiness(db, plant.id, today())),
           ...(await demandStockReadiness(db, plant.id, today())),
           await bufferReadiness(db, plant.id),
+          await scheduleReadiness(db, plant.id, today()),
         ],
       };
     });
@@ -202,6 +204,7 @@ export class PlantModelController {
       'efficiency_pct',
       'changeover_minutes',
       'calendar',
+      'planned_utilization_pct',
     ]);
     return mutate(req, 'masters.manage', async (db, actor) => {
       const plant = await requirePlant(db, actor, plantId);
@@ -234,6 +237,7 @@ export class PlantModelController {
       'efficiency_pct',
       'changeover_minutes',
       'calendar',
+      'planned_utilization_pct',
       'active',
       'version',
     ]);

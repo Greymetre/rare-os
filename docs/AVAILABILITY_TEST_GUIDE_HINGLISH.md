@@ -362,3 +362,46 @@ Demo: ABC Corp mein buffers calculate hote hi RMb, RMc, RMe, RMf, RMg ke proposa
 - **Create, edit and import purchase orders**: proposal change/raise ke liye.
 - **Post stock receipts and issues**: goods receipt ke liye.
 - Approver sirf apne plants ke proposals dekhta hai. Bina receipt permission ke **Receive goods** nahi dikhta.
+
+## AV-6 — Scheduler (kaunsa order kis machine par kab)
+
+**Yeh kya karta hai:** har recalculation mein plant ke saare **open production orders** machines par aage ki taraf (forward) schedule hote hain. Tareeka Nilkamal demo jaisa hai:
+
+1. **Sequence:** pehle due date ke hisaab se. Agar ek hi item ke orders ki due dates mein **grouping window** (default 1 din) se kam farak ho, to woh ek ke baad ek chalte hain. Isse changeover bachta hai, par tabhi jab kisi aur order ka promise late na ho.
+2. **Machine:** har resource par order us machine ko milta hai jo changeover gin kar sabse pehle free hoti hai. Ek hi item ke lagatar orders ek hi machine par rehte hain.
+3. **Time:** har operation tab shuru hota hai jab pichhla operation khatam ho aur machine free ho (changeover ke baad). Efficiency 85% ho to kaam 1/0.85 guna time leta hai.
+4. **Drum:** jis resource par load/capacity sabse zyada ho, woh apne aap drum banta hai (Nilkamal mein Quilting).
+5. **Lead time at planned loading** (Plant planning mein chalu karo): made item ka lead time = master lead time + har machine ki queue (processing × u/(1−u), u = planned utilisation × din ka factor). FG buffers ke zones isi hisaab se bade hote hain.
+
+**Kahan:**
+
+- **Planning** row → **Scheduler**, **Gantt**, **Resource load**.
+- **Setup** → **Plant planning** (grouping window, lead time basis, despatch profile).
+- **Resources** form → **Planned utilisation %**. **Buffer settings** → **Reference lot** (made items).
+- **Buffer board** → made item kholo → "Lead time down the routing at planned loading" table.
+
+Nilkamal (Barjora) par: 76 orders, drum **QU02 Quilting**, 0 late. Header mein "Simulation: planning date fixed at …" dikhta hai, kyunki demo ek fixed din par chalta hai.
+
+### 1. Scheduler
+
+1. Plant chuno → **Scheduler**. Upar tiles: orders, late, drum, last finish, aur grouping se bacha changeover.
+2. Table: sequence (#), order, item, quantity, **Release (start)**, **Finish**, **Promise**, **Slack (days)**, On time/Late, Materials (Clear / Gated / Cannot validate).
+3. "Grouped after WO-…" = same item ko pichhle order ke saath chalaya gaya.
+4. Filter: **Late**, **Material gated**, **Not schedulable** (routing nahi hai).
+
+### 2. Gantt aur Resource load
+
+1. **Gantt**: har machine ki lane, blocks par hover karo (order, item, qty, time). Hatched block = changeover. Resource aur din chuno, "Later →" se aage dekho.
+2. **Resource load**: har resource ke run minutes, changeover minutes, changeovers ki ginti, capacity/day, utilisation, aur pehle 14 din ka roz ka busy %. Row par click karo to har machine ka hisaab dikhega. Drum par "drum" likha hota hai.
+
+### 3. Publish (committed plan)
+
+1. **Scheduler** → note likho → **Publish run #N**. Ab "Published plan … Matches the latest calculation" dikhega.
+2. Kuch badlo (jaise **Plant planning** mein grouping window 0) → recalculation ke baad "The latest calculation differs". **Show → Published plan** mein purana sequence hi dikhega.
+3. Wahi run dobara publish karo → "already the published schedule". Purana run publish karo → "no longer current".
+
+### 4. Permissions
+
+- **View buffers, schedules and planning results**: saari screens dekhne ke liye.
+- **Publish a calculated schedule as the committed plan**: Publish button ke liye.
+- **Maintain buffer profiles and buffer settings**: Plant planning badalne ke liye.

@@ -399,12 +399,14 @@ test('AV-4 material buffers: zones from usage, net flow, recompute on order chan
       409,
       /used by 3 buffered item/,
     );
-    const header = 'plant,item,policy,profile,lead_time_days,adu_override';
+    const header = 'plant,item,policy,profile,lead_time_days,adu_override,reference_lot';
     const bad = await upload(
       'buffer_settings',
-      [header, `${plantTwo},${p}RM1,BUFFER,${p}NOPE,,`, `${plantTwo},${p}FG1,BUFFER,${p}BP,,`].join(
-        '\n',
-      ),
+      [
+        header,
+        `${plantTwo},${p}RM1,BUFFER,${p}NOPE,,,`,
+        `${plantTwo},${p}FG1,BUFFER,${p}BP,,,`,
+      ].join('\n'),
       `buffers-bad-${suffix}.csv`,
     );
     expect(bad.error_rows).toBe(2);
@@ -427,7 +429,7 @@ test('AV-4 material buffers: zones from usage, net flow, recompute on order chan
       header,
       ...Array.from(
         { length: 10000 },
-        (_, i) => `${plantTwo},${p}X${String(i).padStart(5, '0')},BUFFER,${p}BP,7,${(i % 20) + 1}`,
+        (_, i) => `${plantTwo},${p}X${String(i).padStart(5, '0')},BUFFER,${p}BP,7,${(i % 20) + 1},`,
       ),
     ].join('\n');
     const started = Date.now();

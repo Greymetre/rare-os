@@ -162,7 +162,7 @@ export async function saveCalendar(db, tenantId, siteId, value, existing) {
 export async function listResources(db, siteId) {
   const resources = (
     await db.query(
-      'SELECT r.id,r.code,r.name,r.resource_type,r.machine_count,r.efficiency_pct,r.changeover_minutes,r.calendar_id,c.code AS calendar,r.active,r.version FROM resources r LEFT JOIN calendars c ON c.id=r.calendar_id WHERE r.site_id=$1 ORDER BY lower(r.code) LIMIT 500',
+      'SELECT r.id,r.code,r.name,r.resource_type,r.machine_count,r.efficiency_pct,r.changeover_minutes,r.planned_utilization_pct,r.calendar_id,c.code AS calendar,r.active,r.version FROM resources r LEFT JOIN calendars c ON c.id=r.calendar_id WHERE r.site_id=$1 ORDER BY lower(r.code) LIMIT 500',
       [siteId],
     )
   ).rows;
@@ -238,6 +238,7 @@ export function resourceAction(value, old) {
     old.machine_count === value.machine_count &&
     dec(old.efficiency_pct) === dec(value.efficiency_pct) &&
     dec(old.changeover_minutes) === dec(value.changeover_minutes) &&
+    dec(old.planned_utilization_pct) === dec(value.planned_utilization_pct) &&
     (old.calendar_id ?? null) === (value.calendar_id ?? null);
   return same ? 'unchanged' : 'update';
 }
@@ -245,7 +246,7 @@ export function resourceAction(value, old) {
 export async function writeResource(db, tenantId, value, old, active = true) {
   if (old) {
     await db.query(
-      'UPDATE resources SET name=$2,resource_type=$3,machine_count=$4,efficiency_pct=$5,changeover_minutes=$6,calendar_id=$7,active=$8,version=version+1,updated_at=now() WHERE id=$1',
+      'UPDATE resources SET name=$2,resource_type=$3,machine_count=$4,efficiency_pct=$5,changeover_minutes=$6,calendar_id=$7,active=$8,planned_utilization_pct=$9,version=version+1,updated_at=now() WHERE id=$1',
       [
         old.id,
         value.name,
@@ -255,13 +256,14 @@ export async function writeResource(db, tenantId, value, old, active = true) {
         value.changeover_minutes,
         value.calendar_id,
         active,
+        value.planned_utilization_pct ?? null,
       ],
     );
     return old.id;
   }
   return (
     await db.query(
-      'INSERT INTO resources(id,tenant_id,site_id,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes,calendar_id) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
+      'INSERT INTO resources(id,tenant_id,site_id,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes,calendar_id,planned_utilization_pct) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
       [
         tenantId,
         value.site_id,
@@ -272,6 +274,7 @@ export async function writeResource(db, tenantId, value, old, active = true) {
         value.efficiency_pct,
         value.changeover_minutes,
         value.calendar_id,
+        value.planned_utilization_pct ?? null,
       ],
     )
   ).rows[0].id;

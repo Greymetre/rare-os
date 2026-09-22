@@ -39,7 +39,7 @@ const PROFILE_FIELDS = [
   'order_multiple',
   'moq_adu_days',
 ];
-const SETTING_FIELDS = ['policy', 'profile', 'lead_time_days', 'adu_override'];
+const SETTING_FIELDS = ['policy', 'profile', 'lead_time_days', 'adu_override', 'reference_lot'];
 const BOARD_FILTERS = ['breach', 'red', 'yellow', 'green', 'excess', 'missing', 'not_applicable'];
 
 @Controller('api')

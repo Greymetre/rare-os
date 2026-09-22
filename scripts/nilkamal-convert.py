@@ -203,14 +203,22 @@ for w in seed['work_centres']:
     if w['site'] != 'PLANT-' + PLANT:
         continue
     resources.append({'code': w['op'], 'name': text(w['name']), 'machines': max(1, int(round(w['machine_count']))),
-                      'efficiency': w['efficiency_pct'], 'changeover': w['changeover_min']})
+                      'efficiency': w['efficiency_pct'], 'changeover': w['changeover_min'],
+                      # The master's planned utilisation drives the dynamic lead time (Lead time reality).
+                      'planned_utilization': round(w['util_plan'], 6) if w.get('util_plan') is not None else None})
 routings = {}
 for f in fgs:
     mins = seed['routing_min_per_unit'].get(f) or []
     routings[f] = [[op_seq[op], op, op_names[op], m] for op, m in zip(ops, mins) if m and m > 0]
 
+# Reference lot of a made item: its average order quantity, else the demo's MOQ rule on the buffer ADU.
+fg_by_code = {f['code']: f for f in fg_rows}
+def reference_lot(b):
+    avg = (fg_by_code.get(b['item']) or {}).get('avg_order_qty') or 0
+    return avg if avg > 0 else max(10, math.floor(b['adu'] * 1.5 / 10 + 0.5) * 10)
 buffers = [{'item': b['item'], 'lead_time_days': b['lt_days'] if not b.get('component') else None,
-            'kind': 'RM' if b.get('component') else 'FG'} for b in seed['buffers']]
+            'kind': 'RM' if b.get('component') else 'FG',
+            'reference_lot': None if b.get('component') else reference_lot(b)} for b in seed['buffers']]
 buffered = {b['item'] for b in buffers}
 
 production = [{'order_no': o['id'], 'item': o['fg'], 'quantity': o['qty'], 'start_date': iso(o['bsc_start']),
@@ -261,6 +269,9 @@ bundle = {
     'demand': demand,
     'boms': {f: [[c, q, unit(u)] for c, q, u, _ in bom_lines[f]] for f in fgs},
     'resources': resources,
+    # Plant policy of the demo: same-item grouping within 1 day, zones at planned loading (day 7).
+    'planning': {'club_window_days': 1, 'lead_time_basis': 'PLANNED_LOAD', 'profile_day': 7,
+                 'day_weights': [round(w, 4) for w in seed['day_of_month_profile']['weights_pct']]},
     'routings': routings,
     'buffers': buffers,
     'mto': [f for f in fgs if f not in buffered],

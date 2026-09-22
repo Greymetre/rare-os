@@ -424,9 +424,9 @@ test('AV-2 plant model: calendars, resources, BOMs, routings, grouped imports, p
       await upload(
         'resources',
         [
-          'plant,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes,calendar',
-          `${plantOne},${p}R2,Assembly,LINE,1,95,20,${p}NIGHT`,
-          `${plantTwo},${p}X2,Packing,MANUAL,3,100,0,`,
+          'plant,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes,calendar,planned_utilization_pct',
+          `${plantOne},${p}R2,Assembly,LINE,1,95,20,${p}NIGHT,40`,
+          `${plantTwo},${p}X2,Packing,MANUAL,3,100,0,,`,
         ].join('\n'),
         `resources-${suffix}.csv`,
       ),
@@ -599,7 +599,7 @@ test('AV-2 plant model: calendars, resources, BOMs, routings, grouped imports, p
     const denied = await asPlanner(
       'imports/resources',
       'POST',
-      `plant,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes,calendar\n${plantOne},${p}R5,a,MACHINE,1,,,\n${plantTwo},${p}X5,b,MACHINE,1,,,\n`,
+      `plant,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes,calendar,planned_utilization_pct\n${plantOne},${p}R5,a,MACHINE,1,,,,\n${plantTwo},${p}X5,b,MACHINE,1,,,,\n`,
       { 'Content-Type': 'text/csv' },
     );
     expect(denied.status()).toBe(403);
@@ -609,7 +609,7 @@ test('AV-2 plant model: calendars, resources, BOMs, routings, grouped imports, p
         await asPlanner(
           'imports/resources',
           'POST',
-          `plant,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes,calendar\n${plantOne},${p}R5,a,MACHINE,1,,,\n`,
+          `plant,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes,calendar,planned_utilization_pct\n${plantOne},${p}R5,a,MACHINE,1,,,,\n`,
           { 'Content-Type': 'text/csv' },
         )
       ).status(),

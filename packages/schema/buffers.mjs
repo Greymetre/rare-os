@@ -63,6 +63,8 @@ export const BUFFER_SETTING_FIELDS = [
   { name: 'profile', label: 'Buffer profile code', type: 'ref', ref: 'buffer_profiles' },
   { name: 'lead_time_days', label: 'Lead time (days)', type: 'int', min: 0, max: 365 },
   { name: 'adu_override', label: 'ADU override', type: 'decimal', decimals: 6, positive: true },
+  // Made items: the order size behind the dynamic lead time (blank = 1.5 days of usage).
+  { name: 'reference_lot', label: 'Reference lot', type: 'decimal', decimals: 6, positive: true },
 ];
 
 export function validateBufferProfile(raw) {

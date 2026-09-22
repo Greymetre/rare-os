@@ -54,18 +54,28 @@ multiple 50 (bought) / 10 (made) — demo ke planning parameters, master data na
 - Stock record hi nahi to "No stock position" (missing), zero nahi. TOG se upar bhi green (excess nahi).
 - Order: TOG tak; bought = MOQ + multiple; made red/breach = 10 ka multiple, yellow = poore units.
 
-Parity (21-Sep-2026): **86/86 buffers aur 13/13 recommendations** demo se exact (zones, on hand, on
-order, qualified demand, net flow, zone, order qty). Demo ke fixed-lead-time mode se compare hota hai.
+## Scheduler (AV-6)
+
+- Loader plant policy set karta hai: grouping window 1 din, lead time **planned loading**, despatch profile
+  (31 din) aur profile day 7; har machine ka planned utilisation aur har FG ka reference lot (average order qty).
+- Planning **fixed date** par chalti hai (demo ka model day, shifted), chahe aaj kuch bhi ho. UI mein
+  "Simulation: planning date fixed at …" dikhta hai. Dobara load karne par date phir is hafte mein aati hai.
+
+Parity (22-Sep-2026, demo ke default mode, lead time at loading): **86/86 buffers, 13/13 recommendations,
+76 orders ka sequence, 566 operations (machine, start, finish), drum, finish day/slack aur har resource/machine
+ka run + changeover** exact.
 
 ## Screens
 
 - **Stock and demand → Production orders**: order par click → poora BOM: per unit, zaroorat, buffer zone,
   on hand ("not available" agar stock record nahi), on order, net flow, needed by, verdict.
-- **Planning → Buffer board**: detail mein weekly usage, CV, safety, demand ka breakdown aur driving orders.
+- **Planning → Buffer board**: detail mein weekly usage, CV, safety, demand ka breakdown, driving orders aur lead time at loading.
+- **Planning → Scheduler / Gantt / Resource load**, **Setup → Plant planning**.
 - **Buffer profiles**: "Zone method" = Weekly (Nilkamal).
 
 ## Abhi baaki (demo mein hai, yahan nahi)
 
-Scheduler/Gantt aur dynamic lead time (FG zones load ke hisaab se), insert order + split lots, clubbing,
-drag, expedite, customer ko nayi date, MTO size scaling. Yeh scheduling milestones mein aayenge. Approval
+Insert order + split lots, explicit club/declub, drag, expedite, customer ko nayi date, MTO size scaling
+(AV-7/AV-8). Demo ka resource load graph drum ke "nose to tail" model par hai; hamara graph timed schedule se
+asli busy minutes dikhata hai (totals same, din-wise baant alag). Approval
 hamara maker-checker hi rahega (demo ka one-click nahi).

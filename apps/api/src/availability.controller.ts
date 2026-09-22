@@ -96,15 +96,10 @@ export class AvailabilityController {
             (SELECT count(*) FROM suppliers WHERE active)::int AS suppliers,
             (SELECT count(*) FROM customers WHERE active)::int AS customers,
             (SELECT to_char(r.finished_at,'YYYY-MM-DD HH24:MI') FROM planning_state s JOIN planning_runs r ON r.id=s.current_run_id) AS planned_at,
-            (SELECT count(*) FROM purchase_proposals WHERE status='PROPOSED')::int AS pending_proposals`,
+            (SELECT count(*) FROM purchase_proposals WHERE status='PROPOSED')::int AS pending_proposals,
+            (SELECT to_char(max(published_at),'YYYY-MM-DD HH24:MI') FROM schedule_publications) AS published_at`,
         )
       ).rows[0];
-      const upcoming = (key: string, title: string, milestone: string, detail: string) => ({
-        key,
-        title,
-        status: 'upcoming',
-        detail: `${detail} Available in ${milestone}.`,
-      });
       return {
         items: [
           {
@@ -178,12 +173,14 @@ export class AvailabilityController {
               ? `${counts.pending_proposals} proposal(s) waiting for approval. See Planning → Purchase proposals.`
               : 'No purchase proposals waiting for approval.',
           },
-          upcoming(
-            'schedule',
-            'Production schedule',
-            'AV-6',
-            'Capacity load and a forward schedule per plant.',
-          ),
+          {
+            key: 'schedule',
+            title: 'Production schedule',
+            status: 'info',
+            detail: counts.published_at
+              ? `Schedule last published on ${counts.published_at}. See Planning → Scheduler per plant.`
+              : 'Open production orders are scheduled on the plant resources with every recalculation. See Planning → Scheduler.',
+          },
         ],
       };
     });

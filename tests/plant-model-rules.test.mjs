@@ -57,7 +57,21 @@ test('resource: machine count, efficiency and changeover ranges', () => {
       efficiency_pct: '100',
       changeover_minutes: '0',
       calendar: null,
+      planned_utilization_pct: null,
     },
+  );
+  // Planned utilisation drives the dynamic lead time; blank means no queue.
+  assert.match(
+    messages(
+      validateResource({
+        plant: 'P1',
+        code: 'S1',
+        name: 'x',
+        machine_count: '1',
+        planned_utilization_pct: '1200',
+      }),
+    ),
+    /Planned utilisation % must be at most 1000/,
   );
   assert.match(
     messages(

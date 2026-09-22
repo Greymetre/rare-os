@@ -4,6 +4,7 @@ import { effectiveAdu, effectiveSeries, planPlant } from '../engines/ddmrp.mjs';
 import { conversionFactors } from './demand-stock-db.mjs';
 import { itemsByCode, plantsByCode, resolvePlant } from './plant-model-db.mjs';
 import { syncProposals } from './purchase-db.mjs';
+import { loadPlantModel, plantLeadTimes, prunedSchedules, scheduleSites } from './schedule-db.mjs';
 
 const CHUNK = 1000;
 const KEEP_RUNS = 5;
@@ -139,6 +140,7 @@ export function bufferSettingAction(value, old) {
     (old.profile_id ?? null) === (value.profile_id ?? null) &&
     (old.lead_time_days ?? null) === (value.lead_time_days ?? null) &&
     num(old.adu_override) === num(value.adu_override) &&
+    num(old.reference_lot) === num(value.reference_lot) &&
     old.active;
   return same ? 'unchanged' : 'update';
 }
@@ -147,11 +149,11 @@ export async function writeBufferSettings(db, tenantId, values) {
   for (let i = 0; i < values.length; i += CHUNK) {
     const part = values.slice(i, i + CHUNK);
     await db.query(
-      `INSERT INTO item_buffers(id,tenant_id,site_id,item_id,policy,profile_id,lead_time_days,adu_override,active)
-       SELECT gen_random_uuid(),$1,v.site,v.item,v.policy,v.profile,v.lead,v.adu,coalesce(v.active,true)
-       FROM unnest($2::uuid[],$3::uuid[],$4::text[],$5::uuid[],$6::int[],$7::numeric[],$8::boolean[]) AS v(site,item,policy,profile,lead,adu,active)
+      `INSERT INTO item_buffers(id,tenant_id,site_id,item_id,policy,profile_id,lead_time_days,adu_override,active,reference_lot)
+       SELECT gen_random_uuid(),$1,v.site,v.item,v.policy,v.profile,v.lead,v.adu,coalesce(v.active,true),v.lot
+       FROM unnest($2::uuid[],$3::uuid[],$4::text[],$5::uuid[],$6::int[],$7::numeric[],$8::boolean[],$9::numeric[]) AS v(site,item,policy,profile,lead,adu,active,lot)
        ON CONFLICT (tenant_id,site_id,item_id) DO UPDATE SET policy=excluded.policy,profile_id=excluded.profile_id,
-         lead_time_days=excluded.lead_time_days,adu_override=excluded.adu_override,active=excluded.active,
+         lead_time_days=excluded.lead_time_days,adu_override=excluded.adu_override,active=excluded.active,reference_lot=excluded.reference_lot,
          version=item_buffers.version+1,updated_at=now()`,
       [
         tenantId,
@@ -162,6 +164,7 @@ export async function writeBufferSettings(db, tenantId, values) {
         part.map((v) => v.lead_time_days ?? null),
         part.map((v) => v.adu_override ?? null),
         part.map((v) => (v.active === undefined ? true : v.active)),
+        part.map((v) => v.reference_lot ?? null),
       ],
     );
   }
@@ -177,7 +180,7 @@ export async function listBufferSettings(db, siteId, { q = '', cursor = null, li
   params.push(limit + 1);
   const rows = (
     await db.query(
-      `SELECT b.id,i.code AS item,i.name AS item_name,i.make_buy,b.policy,p.code AS profile,b.lead_time_days,b.adu_override,b.active,b.version
+      `SELECT b.id,i.code AS item,i.name AS item_name,i.make_buy,b.policy,p.code AS profile,b.lead_time_days,b.adu_override,b.reference_lot,b.active,b.version
        FROM item_buffers b JOIN items i ON i.id=b.item_id LEFT JOIN buffer_profiles p ON p.id=b.profile_id
        WHERE ${where} ORDER BY lower(i.code),b.id::text LIMIT $${params.length}`,
       params,
@@ -229,7 +232,7 @@ export async function queueRun(db, tenantId, { trigger, actor = null }) {
 async function loadInputs(db, today) {
   const settings = (
     await db.query(
-      `SELECT b.site_id,b.item_id,i.code,i.make_buy,u.decimals,b.policy,b.lead_time_days,b.adu_override,
+      `SELECT b.site_id,b.item_id,i.code,i.make_buy,u.decimals,b.policy,b.lead_time_days,b.adu_override,b.reference_lot,
          p.red_base_pct,p.red_safety_pct,p.green_pct,p.order_cycle_days,p.spike_threshold_pct,p.adu_window_days,
          p.method,p.zone_weeks,p.cv_weeks,p.order_multiple,p.moq_adu_days,
          src.moq,src.lot_multiple,src.purchase_unit_id,pu.code AS purchase_unit,pu.decimals AS purchase_decimals,
@@ -358,12 +361,13 @@ async function loadInputs(db, today) {
   const productionOrders = new Map();
   for (const o of (
     await db.query(
-      `SELECT o.site_id,o.item_id,o.order_no,i.code,to_char(o.due_date,'YYYY-MM-DD') AS due,o.quantity
+      `SELECT o.id,o.site_id,o.item_id,o.order_no,i.code,to_char(o.due_date,'YYYY-MM-DD') AS due,o.quantity
        FROM production_orders o JOIN items i ON i.id=o.item_id WHERE o.status='OPEN'`,
     )
   ).rows) {
     if (!productionOrders.has(o.site_id)) productionOrders.set(o.site_id, []);
     productionOrders.get(o.site_id).push({
+      id: o.id,
       ref: o.order_no,
       itemId: o.item_id,
       code: o.code,
@@ -420,6 +424,7 @@ async function loadInputs(db, today) {
       profile,
       leadTimeDays: s.lead_time_days,
       aduOverride: s.adu_override === null ? null : Number(s.adu_override),
+      referenceLot: s.reference_lot === null ? null : Number(s.reference_lot),
       source:
         s.supplier_id && s.source_lead_time !== null && f
           ? {
@@ -447,7 +452,8 @@ async function loadInputs(db, today) {
   };
 }
 
-export function planSites(inputs, today) {
+// plants (optional): loadPlantModel() output, for made items' lead time at planned loading.
+export function planSites(inputs, today, plants = new Map()) {
   const results = [];
   for (const [siteId, settings] of inputs.sites) {
     const overrides = new Map(
@@ -481,6 +487,7 @@ export function planSites(inputs, today) {
       productionOrders: inputs.productionOrders?.get(siteId) ?? [],
       series,
       stockKnown: inputs.stockKnown?.get(siteId) ?? new Set(),
+      leadTimes: plantLeadTimes(plants.get(siteId), settings, adu),
     });
     for (const s of noProfile)
       rows.push({
@@ -508,11 +515,13 @@ async function saveResults(db, tenantId, runId, results) {
       `INSERT INTO planning_results(tenant_id,run_id,site_id,item_id,policy,status,adu,dlt,top_of_red,top_of_yellow,top_of_green,
          on_hand,open_supply,qualified_demand,spike_demand,outside_horizon,nfp,zone,priority_pct,on_hand_alert,
          recommended_kind,recommended_qty,recommended_purchase_qty,purchase_unit,supplier_id,due_date,messages,
-         zone_adu,zone_days,cv,safety_pct,lead_time_demand,production_demand,planned_make_demand,required_date,drivers)
+         zone_adu,zone_days,cv,safety_pct,lead_time_demand,production_demand,planned_make_demand,required_date,drivers,
+         lead_time_live,lead_time_factor)
        SELECT $1,$2,r.* FROM unnest($3::uuid[],$4::uuid[],$5::text[],$6::text[],$7::numeric[],$8::int[],$9::numeric[],$10::numeric[],
          $11::numeric[],$12::numeric[],$13::numeric[],$14::numeric[],$15::numeric[],$16::numeric[],$17::numeric[],$18::text[],$19::numeric[],
          $20::text[],$21::text[],$22::numeric[],$23::numeric[],$24::text[],$25::uuid[],$26::date[],$27::jsonb[],
-         $28::numeric[],$29::int[],$30::numeric[],$31::numeric[],$32::numeric[],$33::numeric[],$34::numeric[],$35::date[],$36::jsonb[]) AS r`,
+         $28::numeric[],$29::int[],$30::numeric[],$31::numeric[],$32::numeric[],$33::numeric[],$34::numeric[],$35::date[],$36::jsonb[],
+         $37::numeric[],$38::numeric[]) AS r`,
       [
         tenantId,
         runId,
@@ -550,6 +559,8 @@ async function saveResults(db, tenantId, runId, results) {
         col((r) => r.plannedMakeDemand ?? 0),
         col((r) => r.requiredDate ?? null),
         col((r) => JSON.stringify((r.drivers ?? []).map(({ itemId, ...d }) => d))),
+        col((r) => r.leadTimeLive ?? null),
+        col((r) => r.leadTimeFactor ?? null),
       ],
     );
   }
@@ -560,10 +571,19 @@ export async function runPlanning(db, runId) {
   const run = (await db.query('SELECT * FROM planning_runs WHERE id=$1 FOR UPDATE', [runId]))
     .rows[0];
   if (!run || run.status !== 'queued') return null;
-  const today = (await db.query("SELECT to_char(current_date,'YYYY-MM-DD') AS d")).rows[0].d;
-  const results = planSites(await loadInputs(db, today), today);
+  // A fixed planning date (a frozen simulation) replaces today.
+  const today = (
+    await db.query(
+      "SELECT to_char(coalesce((SELECT as_of_date FROM planning_state),current_date),'YYYY-MM-DD') AS d",
+    )
+  ).rows[0].d;
+  const inputs = await loadInputs(db, today);
+  const plants = await loadPlantModel(db, today);
+  const results = planSites(inputs, today, plants);
   await saveResults(db, run.tenant_id, run.id, results);
   const summary = { items: results.length, zones: {} };
+  // AV-6: every plant's open production orders scheduled on its resources, stored with the run.
+  summary.schedule = await scheduleSites(db, run, today, plants, { ...inputs, results });
   for (const r of results) {
     const key = r.status === 'planned' ? r.zone : r.status;
     summary.zones[key] = (summary.zones[key] ?? 0) + 1;
@@ -578,13 +598,19 @@ export async function runPlanning(db, runId) {
     [run.id, promoted ? 'completed' : 'superseded', today, JSON.stringify(summary)],
   );
   // Keep the current run and the most recent ones; older results are derived and recomputable.
-  await db.query(
-    `DELETE FROM planning_results WHERE run_id IN (
-       SELECT id FROM planning_runs WHERE status IN ('completed','superseded')
+  // A published schedule stays with its run.
+  const old = (
+    await db.query(
+      `SELECT id FROM planning_runs WHERE status IN ('completed','superseded')
          AND id <> coalesce((SELECT current_run_id FROM planning_state),'00000000-0000-0000-0000-000000000000')
-       ORDER BY run_no DESC OFFSET $1)`,
-    [KEEP_RUNS],
-  );
+       ORDER BY run_no DESC OFFSET $1`,
+      [KEEP_RUNS],
+    )
+  ).rows.map((r) => r.id);
+  if (old.length) {
+    await db.query('DELETE FROM planning_results WHERE run_id=ANY($1::uuid[])', [old]);
+    await prunedSchedules(db, old);
+  }
   return { promoted, summary };
 }
 
@@ -596,7 +622,9 @@ export async function failRun(db, runId, message) {
 }
 
 export async function planningStatus(db) {
-  const state = (await db.query('SELECT * FROM planning_state')).rows[0] ?? null;
+  const state =
+    (await db.query("SELECT *,to_char(as_of_date,'YYYY-MM-DD') AS fixed_date FROM planning_state"))
+      .rows[0] ?? null;
   const pending = Number(
     (await db.query('SELECT count(*) FROM planning_input_events')).rows[0].count,
   );
@@ -614,7 +642,13 @@ export async function planningStatus(db) {
       )
     ).rows[0];
   const queued = runs.some((r) => r.status === 'queued');
-  return { current, queued, upToDate: !!current && !queued && !pending, runs };
+  return {
+    current,
+    queued,
+    upToDate: !!current && !queued && !pending,
+    runs,
+    fixedDate: state?.fixed_date ?? null,
+  };
 }
 
 const ZONES = ['breach', 'red', 'yellow', 'green', 'excess'];

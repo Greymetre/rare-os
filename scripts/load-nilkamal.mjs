@@ -32,6 +32,12 @@ const b = JSON.parse(fs.readFileSync(file, 'utf8'));
 
 // Tables that belong to a company but not to its identity and access set-up.
 const PLANNING_TABLES = [
+  'schedule_publications',
+  'schedule_operations',
+  'schedule_orders',
+  'schedule_resources',
+  'schedule_plants',
+  'plant_planning',
   'goods_receipt_lines',
   'goods_receipts',
   'purchase_proposals',
@@ -194,8 +200,8 @@ try {
     [T, calendar],
   );
   await q(
-    `INSERT INTO resources(id,tenant_id,site_id,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes)
-     SELECT gen_random_uuid(),$1,$2,r.c,r.n,'MACHINE',r.m,r.e,r.co FROM unnest($3::text[],$4::text[],$5::int[],$6::numeric[],$7::numeric[]) AS r(c,n,m,e,co)`,
+    `INSERT INTO resources(id,tenant_id,site_id,code,name,resource_type,machine_count,efficiency_pct,changeover_minutes,planned_utilization_pct)
+     SELECT gen_random_uuid(),$1,$2,r.c,r.n,'MACHINE',r.m,r.e,r.co,r.u FROM unnest($3::text[],$4::text[],$5::int[],$6::numeric[],$7::numeric[],$8::numeric[]) AS r(c,n,m,e,co,u)`,
     [
       T,
       PLANT_ID,
@@ -204,6 +210,7 @@ try {
       col(b.resources, (r) => r.machines),
       col(b.resources, (r) => r.efficiency),
       col(b.resources, (r) => r.changeover),
+      col(b.resources, (r) => r.planned_utilization ?? null),
     ],
   );
   const resource = new Map(
@@ -340,8 +347,8 @@ try {
     [T],
   );
   await q(
-    `INSERT INTO item_buffers(id,tenant_id,site_id,item_id,policy,profile_id,lead_time_days)
-     SELECT gen_random_uuid(),$1,$2,i.id,'BUFFER',p.id,x.lt FROM unnest($3::text[],$4::text[],$5::int[]) AS x(item,kind,lt)
+    `INSERT INTO item_buffers(id,tenant_id,site_id,item_id,policy,profile_id,lead_time_days,reference_lot)
+     SELECT gen_random_uuid(),$1,$2,i.id,'BUFFER',p.id,x.lt,x.lot FROM unnest($3::text[],$4::text[],$5::int[],$6::numeric[]) AS x(item,kind,lt,lot)
      JOIN items i ON i.tenant_id=$1 AND i.code=x.item JOIN buffer_profiles p ON p.tenant_id=$1 AND p.code='NK-'||x.kind`,
     [
       T,
@@ -349,12 +356,30 @@ try {
       col(b.buffers, (x) => x.item),
       col(b.buffers, (x) => x.kind),
       col(b.buffers, (x) => x.lead_time_days),
+      col(b.buffers, (x) => x.reference_lot ?? null),
     ],
   );
   await q(
     "INSERT INTO item_buffers(id,tenant_id,site_id,item_id,policy) SELECT gen_random_uuid(),$1,$2,i.id,'MTO' FROM items i WHERE i.tenant_id=$1 AND i.code=ANY($3::text[])",
     [T, PLANT_ID, b.mto],
   );
+  // The simulation plans on its (shifted) model day, like the demo, whatever today is.
+  await q(
+    'INSERT INTO planning_state(tenant_id,as_of_date) VALUES($1,$2) ON CONFLICT (tenant_id) DO UPDATE SET as_of_date=excluded.as_of_date',
+    [T, modelDay],
+  );
+  if (b.planning)
+    await q(
+      'INSERT INTO plant_planning(tenant_id,site_id,club_window_days,lead_time_basis,day_weights,profile_day) VALUES($1,$2,$3,$4,$5,$6)',
+      [
+        T,
+        PLANT_ID,
+        b.planning.club_window_days,
+        b.planning.lead_time_basis,
+        b.planning.day_weights,
+        b.planning.profile_day,
+      ],
+    );
   await q(
     "INSERT INTO audit_log(tenant_id,action,entity_type,entity_id,details) VALUES($1::uuid,'demo.seeded','company',$1::text,$2)",
     [
@@ -374,7 +399,7 @@ try {
         ? `Logins left without a company: ${removedUsers.join(', ')}.`
         : 'No logins were left without a company.',
       `Company "${b.meta.company}" loaded with plant ${b.meta.plant.code} (${b.meta.plant.name}): ${b.items.length} items, ${Object.keys(b.boms).length} BOMs (${bomLines} lines), ${Object.keys(b.routings).length} routings, ${b.resources.length} work centres, ${b.stock.length} opening stock rows, ${pos.size} open POs (${b.purchase_orders.length} lines), ${po.length} production orders, ${b.demand.length} demand days, ${b.buffers.length} buffers.`,
-      `Dates moved forward ${shift} days: the demo model day ${b.meta.model_date} is ${modelDay}; demand history ends ${at(b.meta.history_end)}.`,
+      `Dates moved forward ${shift} days: the demo model day ${b.meta.model_date} is ${modelDay}; demand history ends ${at(b.meta.history_end)}. Planning is fixed on ${modelDay}.`,
       `Sign in as ${admin.email}. Buffers recalculate within a few seconds.`,
     ].join('\n'),
   );

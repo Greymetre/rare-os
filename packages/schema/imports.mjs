@@ -167,8 +167,8 @@ IMPORT_KINDS.resources = {
   plantScoped: true,
   columns: RESOURCE_FIELDS.map((f) => f.name),
   example: [
-    ['PLANT-1', 'S1', 'Prep', 'MACHINE', '2', '100', '10', ''],
-    ['PLANT-1', 'S3', 'Assembly', 'LINE', '1', '95', '20', ''],
+    ['PLANT-1', 'S1', 'Prep', 'MACHINE', '2', '100', '10', '', ''],
+    ['PLANT-1', 'S3', 'Assembly', 'LINE', '1', '95', '20', '', '40'],
   ],
   validate: validateResource,
   key: (v) => `${v.plant.toLowerCase()}|${v.code.toLowerCase()}`,
@@ -296,9 +296,9 @@ IMPORT_KINDS.buffer_settings = {
   plantScoped: true,
   columns: BUFFER_SETTING_FIELDS.map((f) => f.name),
   example: [
-    ['PLANT-1', 'RM-STEEL', 'BUFFER', 'BP-RM-SHORT', '', ''],
-    ['PLANT-1', 'FG-PUMP-01', 'BUFFER', 'BP-FG', '4', ''],
-    ['PLANT-1', 'FG-SPECIAL', 'MTO', '', '', ''],
+    ['PLANT-1', 'RM-STEEL', 'BUFFER', 'BP-RM-SHORT', '', '', ''],
+    ['PLANT-1', 'FG-PUMP-01', 'BUFFER', 'BP-FG', '4', '', '120'],
+    ['PLANT-1', 'FG-SPECIAL', 'MTO', '', '', '', ''],
   ],
   validate: validateBufferSetting,
   key: (v) => `${v.plant.toLowerCase()}|${v.item.toLowerCase()}`,

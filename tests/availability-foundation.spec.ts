@@ -102,7 +102,7 @@ test('AV-0 availability foundation: units, staged CSV imports, duplicates, scale
     const before = await (await call('availability/readiness')).json();
     const unitsReady = before.items.find((i: any) => i.key === 'units');
     expect(['ready', 'missing']).toContain(unitsReady.status);
-    expect(before.items.find((i: any) => i.key === 'schedule').status).toBe('upcoming');
+    expect(before.items.find((i: any) => i.key === 'schedule').status).toBe('info');
 
     // Units master through the UI, with duplicate and stale-edit protection.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();

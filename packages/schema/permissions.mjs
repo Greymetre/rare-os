@@ -34,7 +34,7 @@ export const permissions = [
   ['planning.read', 'Availability', 'View buffer board and planning results'],
   ['planning.run', 'Availability', 'Recalculate buffers on demand'],
   ['buffers.manage', 'Availability', 'Maintain buffer profiles and buffer settings'],
-  ['schedule.publish', 'Availability', 'Publish a reviewed schedule'],
+  ['schedule.publish', 'Availability', 'Publish a calculated schedule as the committed plan'],
   ['purchase.read', 'Materials', 'View purchase orders and proposals'],
   ['purchase.create', 'Materials', 'Create, edit and import purchase orders'],
   ['purchase.approve', 'Materials', 'Approve or reject purchase proposals'],
@@ -73,6 +73,7 @@ export const requiredPermissions = {
   'purchase.approve': ['purchase.read'],
   'orders.read': ['masters.read'],
   'planning.read': ['masters.read'],
+  'schedule.publish': ['planning.read'],
   'planning.run': ['planning.read'],
   'buffers.manage': ['planning.read'],
   // Each import type also requires its own maintain permission, checked by the API.
@@ -117,4 +118,5 @@ export const livePermissionCodes = [
   'planning.read',
   'planning.run',
   'buffers.manage',
+  'schedule.publish',
 ];

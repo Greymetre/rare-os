@@ -1,3 +1,4 @@
+import { LeadTimeReality } from './schedule';
 import { useEffect, useState } from 'react';
 import { useApi } from './api-client';
 import { Messages, useList } from './plant-model';
@@ -331,6 +332,7 @@ export function BufferSettings({
       profile: form.policy === 'BUFFER' ? form.profile : '',
       lead_time_days: String(form.lead_time_days ?? ''),
       adu_override: String(form.adu_override ?? ''),
+      reference_lot: String(form.reference_lot ?? ''),
     };
     if (form.id) Object.assign(payload, { active: form.active, version: form.version });
     else payload.item = form.item;
@@ -413,6 +415,15 @@ export function BufferSettings({
                   onChange={(e) => setForm({ ...form, adu_override: e.target.value })}
                 />
               </label>
+              <label>
+                Reference lot (made items)
+                <input
+                  inputMode="decimal"
+                  placeholder="Blank = 1.5 days of usage"
+                  value={form.reference_lot ?? ''}
+                  onChange={(e) => setForm({ ...form, reference_lot: e.target.value })}
+                />
+              </label>
               {form.id && (
                 <label>
                   Status
@@ -461,6 +472,7 @@ export function BufferSettings({
                   profile: activeProfiles[0]?.code ?? '',
                   lead_time_days: '',
                   adu_override: '',
+                  reference_lot: '',
                 })
               }
             >
@@ -532,6 +544,8 @@ export function BufferSettings({
                             lead_time_days: b.lead_time_days ?? '',
                             adu_override:
                               b.adu_override === null ? '' : String(Number(b.adu_override)),
+                            reference_lot:
+                              b.reference_lot === null ? '' : String(Number(b.reference_lot)),
                           })
                         }
                       >
@@ -657,6 +671,11 @@ export function BufferBoard({
                 : current
                   ? `Run #${current.run_no}, calculated ${new Date(current.finished_at).toLocaleString()} for ${current.as_of}.`
                   : 'Not calculated yet.'}{' '}
+              {status?.fixedDate && (
+                <span className="status-pill pending">
+                  Simulation: planning date fixed at {status.fixedDate}
+                </span>
+              )}{' '}
               {status &&
                 (status.upToDate ? (
                   <span className="status-pill ok">Up to date</span>
@@ -824,6 +843,8 @@ export function BufferBoard({
                             <dt>Lead time</dt>
                             <dd>
                               {r.dlt === null ? '—' : r.dlt + ' days'}
+                              {r.lead_time_factor !== null &&
+                                ` · ${num(r.lead_time_live, 2)} days at planned loading (zones × ${num(r.lead_time_factor, 3)})`}
                               {r.cv !== null && r.zone_days
                                 ? ` (zones on ${r.zone_days / 7} week${r.zone_days === 7 ? '' : 's'})`
                                 : ''}
@@ -885,6 +906,9 @@ export function BufferBoard({
                             <dd>{num(r.outside_horizon)} (not counted yet)</dd>
                           </div>
                         </dl>
+                        {r.make_buy === 'MAKE' && r.policy === 'BUFFER' && (
+                          <LeadTimeReality csrf={csrf} plantId={plantId} itemId={r.item_id} />
+                        )}
                         {r.drivers?.length > 0 && (
                           <div className="table-wrap">
                             <table className="compact">

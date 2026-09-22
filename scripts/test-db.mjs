@@ -690,6 +690,77 @@ try {
   console.log(
     'PASS Nilkamal rules: production orders are unique per plant, positive, dated in order, never deleted and planning inputs; net demand may be negative; SAP codes with an inch mark; repeated BOM lines',
   );
+  // AV-6: schedules are derived with their run, publications are a permanent record, plant policy has limits.
+  const scheduleRun = runs[7];
+  await db.query(
+    'INSERT INTO schedule_plants(tenant_id,run_id,site_id,start_date,day_minutes,day_dates) VALUES($1,$2,$3,current_date,480,ARRAY[current_date])',
+    [tenant, scheduleRun, site],
+  );
+  await db.query(
+    "INSERT INTO schedule_orders(tenant_id,run_id,site_id,production_order_id,position,status,promise_date) VALUES($1,$2,$3,gen_random_uuid(),1,'scheduled',current_date)",
+    [tenant, scheduleRun, site],
+  );
+  await db.query(
+    'INSERT INTO schedule_publications(id,tenant_id,site_id,run_id,run_no) VALUES(gen_random_uuid(),$1,$2,$3,900007)',
+    [tenant, site, scheduleRun],
+  );
+  for (const [label, code, sql] of [
+    ['rewrite a scheduled order', '42501', 'UPDATE schedule_orders SET position=2'],
+    ['rewrite a publication', '42501', "UPDATE schedule_publications SET note='x'"],
+    ['delete a publication', '42501', 'DELETE FROM schedule_publications'],
+    [
+      'order status outside the list',
+      '23514',
+      `INSERT INTO schedule_orders(tenant_id,run_id,site_id,production_order_id,position,status,promise_date) VALUES('${tenant}','${scheduleRun}','${site}',gen_random_uuid(),2,'maybe',current_date)`,
+    ],
+    [
+      'grouping window above 30 days',
+      '23514',
+      `INSERT INTO plant_planning(tenant_id,site_id,club_window_days) VALUES('${tenant}','${site}',31)`,
+    ],
+    [
+      'day profile without 31 days',
+      '23514',
+      `INSERT INTO plant_planning(tenant_id,site_id,day_weights) VALUES('${tenant}','${site}',ARRAY[1,2,3]::numeric[])`,
+    ],
+    [
+      'unknown lead time basis',
+      '23514',
+      `INSERT INTO plant_planning(tenant_id,site_id,lead_time_basis) VALUES('${tenant}','${site}','GUESS')`,
+    ],
+    [
+      'publication for another plant',
+      '23503',
+      `INSERT INTO schedule_publications(id,tenant_id,site_id,run_id,run_no) VALUES(gen_random_uuid(),'${tenant}','${hiddenSite}','${scheduleRun}',1)`,
+    ],
+  ])
+    await denied(label, code, sql);
+  const beforePolicy = await markers();
+  await db.query('INSERT INTO plant_planning(tenant_id,site_id,club_window_days) VALUES($1,$2,2)', [
+    tenant,
+    site,
+  ]);
+  assert.ok((await markers()) > beforePolicy, 'plant planning policy is a planning input');
+  await db.query('RESET ROLE');
+  await db.query("SELECT set_config('app.tenant_id','',true)");
+  const otherRun = randomUUID();
+  await db.query(
+    "INSERT INTO planning_runs(id,tenant_id,run_no,trigger,input_version) VALUES($1,$2,1,'auto',0)",
+    [otherRun, other],
+  );
+  await db.query(
+    'INSERT INTO schedule_plants(tenant_id,run_id,site_id,start_date,day_minutes,day_dates) VALUES($1,$2,$3,current_date,480,ARRAY[current_date])',
+    [other, otherRun, hiddenSite],
+  );
+  await db.query('SET LOCAL ROLE rare_app');
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
+  assert.equal(
+    (await db.query('SELECT * FROM schedule_plants WHERE run_id=$1', [otherRun])).rowCount,
+    0,
+  );
+  console.log(
+    'PASS schedule: derived rows not editable, publications permanent and plant-scoped, plant policy limits, policy is a planning input, company isolation',
+  );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);
   const pending = await db.query('SELECT * FROM outbox_pending(500)');

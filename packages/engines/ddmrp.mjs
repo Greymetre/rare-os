@@ -184,7 +184,8 @@ function bomOrder(ids, usage) {
 //   demand: [{ itemId, due, qty }] open customer order lines,
 //   productionOrders?: [{ ref, itemId, code, due, qty }] open production orders,
 //   series?: Map(itemId -> { weeks, blocks }) effective weekly demand for WEEKLY profiles,
-//   stockKnown?: Set(itemId) items with a stock record (WEEKLY: others have no known position)
+//   stockKnown?: Set(itemId) items with a stock record (WEEKLY: others have no known position),
+//   leadTimes?: Map(itemId -> { days, factor, unbounded }) made items' lead time at planned loading
 // }
 export function planPlant(input) {
   const { today, settings, adu, usage, onHand, supply, demand } = input;
@@ -207,6 +208,8 @@ export function planPlant(input) {
       spikeDemand: 0,
       outsideHorizon: 0,
       leadTimeDemand: 0,
+      leadTimeLive: null,
+      leadTimeFactor: null,
       productionDemand: 0,
       plannedMakeDemand: 0,
       zones: null,
@@ -273,6 +276,24 @@ export function planPlant(input) {
       row.zones = bufferZones({ adu: row.adu, dlt, profile: s.profile, moq: moqBase });
       row.zoneAdu = row.adu;
       row.zoneDays = dlt;
+    }
+    // Made items at the plant's planned loading: zones scale with lead time plus queue (AV-6).
+    const live = s.makeBuy === 'MAKE' ? input.leadTimes?.get(s.itemId) : null;
+    row.leadTimeLive = dlt;
+    if (live?.unbounded)
+      row.messages.push(
+        'Lead time is unbounded at the planned loading (a routed resource is at 95% or more): zones stay on the master lead time.',
+      );
+    else if (live?.factor) {
+      const scale = (x) => (weekly(s) ? Math.round(x * live.factor) : round6(x * live.factor));
+      row.zones = {
+        ...row.zones,
+        topOfRed: scale(row.zones.topOfRed),
+        topOfYellow: scale(row.zones.topOfYellow),
+        topOfGreen: scale(row.zones.topOfGreen),
+      };
+      row.leadTimeLive = live.days;
+      row.leadTimeFactor = live.factor;
     }
   }
 
@@ -455,7 +476,7 @@ export function planPlant(input) {
             itemId: row.itemId,
             code: s.code,
             qty: extra,
-            due: addDays(today, Math.max(1, Math.ceil(row.dlt))),
+            due: addDays(today, Math.max(1, Math.ceil(row.leadTimeLive - 1e-9))),
           },
           'plannedMakeDemand',
         );

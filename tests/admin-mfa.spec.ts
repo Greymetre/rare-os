@@ -53,24 +53,33 @@ test('admin MFA is mandatory across companies; recovery login works once; normal
     secret = '',
     previous = '';
   const contexts: any[] = [];
-  const token = (
-    await (
-      await request.post(env.AUTH_URL + '/realms/rare-os/protocol/openid-connect/token', {
-        form: {
-          grant_type: 'client_credentials',
-          client_id: 'rare-os-identity',
-          client_secret: env.IDENTITY_CLIENT_SECRET,
-        },
-      })
-    ).json()
-  ).access_token;
+  const newToken = async () =>
+    (
+      await (
+        await request.post(env.AUTH_URL + '/realms/rare-os/protocol/openid-connect/token', {
+          form: {
+            grant_type: 'client_credentials',
+            client_id: 'rare-os-identity',
+            client_secret: env.IDENTITY_CLIENT_SECRET,
+          },
+        })
+      ).json()
+    ).access_token;
+  let token = await newToken();
+  // The service token is short-lived and this test runs for minutes: renew it once when it expires.
   const kc = async (path: string, method = 'GET', data?: unknown) => {
-    const r = await request.fetch(env.AUTH_URL + '/admin/realms/rare-os' + path, {
-      method,
-      headers: { Authorization: 'Bearer ' + token },
-      data,
-    });
-    expect(r.ok()).toBe(true);
+    const send = () =>
+      request.fetch(env.AUTH_URL + '/admin/realms/rare-os' + path, {
+        method,
+        headers: { Authorization: 'Bearer ' + token },
+        data,
+      });
+    let r = await send();
+    if (r.status() === 401) {
+      token = await newToken();
+      r = await send();
+    }
+    expect(r.ok(), `${method} ${path}: ${r.status()}`).toBe(true);
     return r;
   };
   const fresh = async () => {

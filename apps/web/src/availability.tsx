@@ -1,3 +1,4 @@
+import { Gantt, PlanningSettings, ResourceLoad, Scheduler } from './schedule';
 import { useEffect, useState } from 'react';
 import { download, useApi } from './api-client';
 import { Boms, Calendars, PlantPicker, PlantReadiness, Resources, Routings } from './plant-model';
@@ -1108,6 +1109,10 @@ export function Availability({
     'Demand history',
     'Buffer settings',
     'Buffer board',
+    'Scheduler',
+    'Gantt',
+    'Resource load',
+    'Plant planning',
     'Purchase proposals',
   ];
   const setupTabs = [
@@ -1119,7 +1124,7 @@ export function Availability({
     'BOMs',
     'Routings',
     'Stock locations',
-    ...(has('planning.read') ? ['Buffer profiles', 'Buffer settings'] : []),
+    ...(has('planning.read') ? ['Buffer profiles', 'Buffer settings', 'Plant planning'] : []),
   ] as string[];
   const transactionTabs = [
     ...(has('inventory.read') ? ['Stock'] : []),
@@ -1140,7 +1145,9 @@ export function Availability({
                 [
                   'Planning',
                   [
-                    ...(has('planning.read') ? ['Buffer board'] : []),
+                    ...(has('planning.read')
+                      ? ['Buffer board', 'Scheduler', 'Gantt', 'Resource load']
+                      : []),
                     ...(has('purchase.read') ? ['Purchase proposals'] : []),
                   ],
                 ],
@@ -1256,6 +1263,30 @@ export function Availability({
           csrf={csrf}
           plantId={plantId}
           permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Scheduler' && plantId && (
+        <Scheduler
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Gantt' && plantId && (
+        <Gantt key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {tab === 'Resource load' && plantId && (
+        <ResourceLoad key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {tab === 'Plant planning' && plantId && (
+        <PlanningSettings
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          canManage={has('buffers.manage')}
           refreshKey={refreshKey}
         />
       )}

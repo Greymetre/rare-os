@@ -36,6 +36,14 @@ export const RESOURCE_FIELDS = [
   },
   // Blank calendar means the plant's default calendar.
   { name: 'calendar', label: 'Calendar code', type: 'ref', ref: 'calendars' },
+  // The work centre master's planned utilisation; drives the dynamic lead time of made items.
+  {
+    name: 'planned_utilization_pct',
+    label: 'Planned utilisation %',
+    type: 'decimal',
+    decimals: 6,
+    maxValue: 1000,
+  },
 ];
 
 export const CALENDAR_FIELDS = [
