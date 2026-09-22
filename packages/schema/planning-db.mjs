@@ -4,7 +4,15 @@ import { effectiveAdu, effectiveSeries, planPlant } from '../engines/ddmrp.mjs';
 import { conversionFactors } from './demand-stock-db.mjs';
 import { itemsByCode, plantsByCode, resolvePlant } from './plant-model-db.mjs';
 import { syncProposals } from './purchase-db.mjs';
-import { loadPlantModel, plantLeadTimes, prunedSchedules, scheduleSites } from './schedule-db.mjs';
+import {
+  BOOK_COLUMNS,
+  bookRow,
+  loadBomUsage,
+  loadPlantModel,
+  plantLeadTimes,
+  prunedSchedules,
+  scheduleSites,
+} from './schedule-db.mjs';
 
 const CHUNK = 1000;
 const KEEP_RUNS = 5;
@@ -251,25 +259,7 @@ async function loadInputs(db, today) {
   const factor = await conversionFactors(db, [
     ...new Set(settings.filter((s) => s.purchase_unit_id).map((s) => s.item_id)),
   ]);
-  const bomLines = (
-    await db.query(
-      `SELECT b.item_id AS parent,l.component_item_id,l.quantity,l.unit_id,c.base_unit_id,l.scrap_pct,b.base_quantity
-       FROM boms b JOIN bom_lines l ON l.bom_id=b.id JOIN items c ON c.id=l.component_item_id
-       WHERE b.active AND b.effective_from <= $1::date AND (b.effective_to IS NULL OR b.effective_to >= $1::date)`,
-      [today],
-    )
-  ).rows;
-  const lineFactor = await conversionFactors(db, [
-    ...new Set(bomLines.map((l) => l.component_item_id)),
-  ]);
-  const usage = new Map();
-  for (const l of bomLines) {
-    const f = Number(lineFactor(l.unit_id, l.base_unit_id, l.component_item_id) ?? 1);
-    const qtyPer =
-      (Number(l.quantity) * f) / Number(l.base_quantity) / (1 - Number(l.scrap_pct) / 100);
-    if (!usage.has(l.parent)) usage.set(l.parent, []);
-    usage.get(l.parent).push({ componentId: l.component_item_id, qtyPer });
-  }
+  const usage = await loadBomUsage(db, today);
   const bySite = (rows, value) => {
     const m = new Map();
     for (const r of rows) {
@@ -361,19 +351,11 @@ async function loadInputs(db, today) {
   const productionOrders = new Map();
   for (const o of (
     await db.query(
-      `SELECT o.id,o.site_id,o.item_id,o.order_no,i.code,to_char(o.due_date,'YYYY-MM-DD') AS due,o.quantity
-       FROM production_orders o JOIN items i ON i.id=o.item_id WHERE o.status='OPEN'`,
+      `SELECT ${BOOK_COLUMNS} FROM production_orders o JOIN items i ON i.id=o.item_id WHERE o.status='OPEN'`,
     )
   ).rows) {
     if (!productionOrders.has(o.site_id)) productionOrders.set(o.site_id, []);
-    productionOrders.get(o.site_id).push({
-      id: o.id,
-      ref: o.order_no,
-      itemId: o.item_id,
-      code: o.code,
-      due: o.due,
-      qty: Number(o.quantity),
-    });
+    productionOrders.get(o.site_id).push(bookRow(o));
   }
   const supply = bySite(
     (

@@ -1,4 +1,4 @@
-import { Gantt, PlanningSettings, ResourceLoad, Scheduler } from './schedule';
+import { Gantt, InsertOrder, PlanningSettings, ResourceLoad, Scheduler } from './schedule';
 import { useEffect, useState } from 'react';
 import { download, useApi } from './api-client';
 import { Boms, Calendars, PlantPicker, PlantReadiness, Resources, Routings } from './plant-model';
@@ -1110,6 +1110,7 @@ export function Availability({
     'Buffer settings',
     'Buffer board',
     'Scheduler',
+    'Insert order',
     'Gantt',
     'Resource load',
     'Plant planning',
@@ -1146,7 +1147,7 @@ export function Availability({
                   'Planning',
                   [
                     ...(has('planning.read')
-                      ? ['Buffer board', 'Scheduler', 'Gantt', 'Resource load']
+                      ? ['Buffer board', 'Scheduler', 'Insert order', 'Gantt', 'Resource load']
                       : []),
                     ...(has('purchase.read') ? ['Purchase proposals'] : []),
                   ],
@@ -1268,6 +1269,15 @@ export function Availability({
       )}
       {tab === 'Scheduler' && plantId && (
         <Scheduler
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Insert order' && plantId && (
+        <InsertOrder
           key={plantId}
           csrf={csrf}
           plantId={plantId}

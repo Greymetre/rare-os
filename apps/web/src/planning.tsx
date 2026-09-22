@@ -928,7 +928,9 @@ export function BufferBoard({
                                     <td>
                                       {d.kind === 'production'
                                         ? 'Production order ' + d.ref
-                                        : 'Planned make order'}
+                                        : d.kind === 'order'
+                                          ? 'Inserted order ' + d.ref
+                                          : 'Planned make order'}
                                     </td>
                                     <td>{d.item ?? d.ref}</td>
                                     <td className="num">{num(d.qty)}</td>

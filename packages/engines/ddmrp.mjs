@@ -182,7 +182,8 @@ function bomOrder(ids, usage) {
 //                       makeBuy, source?: { moq, multiple, factor, unit, leadTimeDays, supplierId } }],
 //   adu: Map(itemId -> effective ADU), usage (as above, stops nothing), onHand: Map, supply: Map,
 //   demand: [{ itemId, due, qty }] open customer order lines,
-//   productionOrders?: [{ ref, itemId, code, due, qty }] open production orders,
+//   productionOrders?: [{ ref, itemId, code, due, qty, inserted?, orderRef? }] open production
+//     orders (inserted = committed by the planner: also customer demand on the item's buffer),
 //   series?: Map(itemId -> { weeks, blocks }) effective weekly demand for WEEKLY profiles,
 //   stockKnown?: Set(itemId) items with a stock record (WEEKLY: others have no known position),
 //   leadTimes?: Map(itemId -> { days, factor, unbounded }) made items' lead time at planned loading
@@ -384,6 +385,28 @@ export function planPlant(input) {
   for (const o of productionOrders) {
     scheduled.set(o.itemId, (scheduled.get(o.itemId) ?? 0) + o.qty);
     consume({ ...o, kind: 'production' }, 'productionDemand');
+  }
+  // An order inserted by the planner is also customer demand on its own buffer (Nilkamal handover:
+  // an order created after the extract qualifies at the finished good, whatever its date).
+  for (const o of productionOrders) {
+    if (!o.inserted || !buffered(o.itemId)) continue;
+    const row = rows.get(o.itemId);
+    if (row.status !== 'planned') continue;
+    row.qualifiedDemand += o.qty;
+    let driver = row.drivers.find((x) => x.kind === 'order' && x.ref === (o.orderRef ?? o.ref));
+    if (!driver) {
+      driver = {
+        kind: 'order',
+        ref: o.orderRef ?? o.ref,
+        itemId: o.itemId,
+        item: o.code ?? null,
+        qty: 0,
+        need: o.due,
+        requiredDate: o.due,
+      };
+      row.drivers.push(driver);
+    }
+    driver.qty += o.qty;
   }
   // Standard DDMRP counts open production orders as supply of the item they make. In the WEEKLY
   // method they are netted against the item's recommendation instead (see below).

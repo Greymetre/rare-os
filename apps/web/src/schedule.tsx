@@ -129,10 +129,303 @@ function PublishBar({ data, permissions, csrf, onPublished }: any) {
 // ---------- Scheduler ----------
 
 const MATERIAL: Record<string, [string, string]> = {
-  clear: ['ok', 'Clear'],
-  gated: ['off', 'Gated'],
+  clear: ['ok', 'Clear to commit'],
+  replenish: ['ok', 'Commit + replenish'],
+  expedite: ['off', 'Expedite or quote later'],
   unknown: ['pending', 'Cannot validate'],
+  gated: ['off', 'Gated'],
 };
+const REASONS: Record<string, (r: any) => string> = {
+  cannot_validate: (r) => `Cannot validate stock / BOM / routing for ${r.orders.join(', ')}`,
+  material_short: (r) =>
+    'Material short at the grouped release: ' +
+    r.components.map((c: any) => `${c.component} ${num(c.shortage, 3)}`).join('; '),
+  members_late: (r) => `Members finish after their promise: ${r.orders.join(', ')}`,
+  promises_broken: (r) => `Other promises become late or later: ${r.orders.join(', ')}`,
+  pull_forward: (r) => `Pulls ${num(r.days, 3)} days forward; the limit is ${r.limit} day(s)`,
+  no_saving: () => 'No measured setup saving',
+  material_hurt: (r) => `Takes material from other orders: ${r.orders.join(', ')}`,
+  already_adjacent: () => 'Already adjacent on the same machines: no new saving',
+  separate_better: () => 'Running separately has lower carry / impact',
+};
+const DECISION_KINDS: Record<string, string> = {
+  club: 'Club applied',
+  declub: 'Declub',
+  move: 'Moved by hand',
+  release_manual: 'Released to computed order',
+  insert: 'Order inserted',
+  quote: 'Declined, date quoted',
+};
+const reasonText = (r: any) => (REASONS[r.code] ?? (() => r.code))(r);
+const insertEffect = (x: any) =>
+  x.scenario?.key === 'decline'
+    ? `${num(x.qty, 0)} ${x.item} declined for ${x.needDate}; quoted ${x.quoteDate}`
+    : `${num(x.qty, 0)} ${x.item}: ${x.scenario?.label}; ${(x.lots ?? [])
+        .map((l: any) => `${num(l.qty, 0)} on ${l.date}`)
+        .join(
+          ' + ',
+        )}; finish ${x.finishDate ?? '—'}; ${MATERIAL[x.materials]?.[1] ?? x.materials}; ${x.promisesBroken} promise(s) later`;
+
+// Time-phased material readiness of one order.
+function ReadinessLines({ lines }: { lines: any[] }) {
+  if (!lines?.length)
+    return <p className="cell-sub">No BOM lines: materials cannot be validated.</p>;
+  return (
+    <div className="table-wrap">
+      <table className="compact">
+        <caption>
+          Materials at release: stock on hand plus purchase lines due by the release day, minus what
+          earlier-starting orders take first. Overdue purchase lines need a new date and do not
+          count.
+        </caption>
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th className="num">Required</th>
+            <th>Release</th>
+            <th className="num">Available at release</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l, i) => (
+            <tr key={i}>
+              <td>
+                <strong>{l.component}</strong>
+                {l.zone && <span className={'zone-pill ' + l.zone}>{l.zone}</span>}
+              </td>
+              <td className="num">{num(l.requirement, 3)}</td>
+              <td className="nowrap">{l.release}</td>
+              <td className="num">
+                {l.available === null ? 'not available' : num(l.available, 3)}
+                {l.available !== null && (
+                  <div className="cell-sub">
+                    on hand {num(l.onHand, 3)} + due {num(l.timely, 3)} − earlier {num(l.before, 3)}
+                  </div>
+                )}
+              </td>
+              <td>
+                {l.unknown ? (
+                  <span className="status-pill pending">No stock position</span>
+                ) : l.shortage > 1e-6 ? (
+                  <span className="status-pill off">Short {num(l.shortage, 3)}</span>
+                ) : (
+                  <span className="status-pill ok">
+                    Covered{l.replenish ? '; replenish buffer' : ''}
+                  </span>
+                )}
+                {l.overdue > 0 && (
+                  <div className="cell-sub">Overdue purchase lines: {num(l.overdue, 3)}</div>
+                )}
+                {l.later?.length > 0 && (
+                  <div className="cell-sub">
+                    Later receipts:{' '}
+                    {l.later.map((p: any) => `${num(p.qty, 3)} on ${p.due}`).join(', ')}
+                  </div>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ImpactReport({ impact, title }: { impact: any; title: string }) {
+  if (!impact) return null;
+  return (
+    <div className="impact-report">
+      <strong>{title}</strong>
+      <p className="cell-sub">
+        {impact.changed} order(s) change start or finish;{' '}
+        {impact.broken.length
+          ? `${impact.broken.length} promise(s) become late or later: ${impact.broken
+              .map((b: any) => `${b.order} (promise ${b.promise}, now ${b.now})`)
+              .join('; ')}`
+          : 'no promise becomes late or later'}
+        {impact.recovered?.length ? `; recovered: ${impact.recovered.join(', ')}` : ''}. Drum
+        changeovers {impact.drum.before.changeovers} → {impact.drum.after.changeovers} (
+        {num(impact.drum.delta, 0)} min); all resources {num(impact.changeoverDelta, 0)} min.
+      </p>
+      {impact.rows.length > 0 && (
+        <details>
+          <summary>Every changed order ({impact.rows.length})</summary>
+          <table className="compact">
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th className="num">Finish change (h)</th>
+                <th>Finish day</th>
+                <th>Promise</th>
+                <th className="num">Slack after (h)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {impact.rows.map((r: any) => (
+                <tr key={r.order} className={r.newlyBroken ? 'late' : ''}>
+                  <td>{r.order}</td>
+                  <td className="num">{num((r.finishAfter - r.finishBefore) / 60, 2)}</td>
+                  <td>{r.finishDate}</td>
+                  <td>{r.promise}</td>
+                  <td className="num">
+                    {r.slipDays ? `${r.slipDays} d late` : num(r.slackAfter / 60, 2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// Club / declub options for one item: preview first, apply one scenario.
+function ClubOptions({ csrf, plantId, item, canPlan, onApplied, onClose }: any) {
+  const call = useApi(csrf);
+  const [data, setData] = useState<any>(null),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    call(`plants/${plantId}/decisions/club-preview`, 'POST', { item })
+      .then((d) => live && setData(d))
+      .catch((e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [item]);
+  function apply(s: any) {
+    setBusy(true);
+    setError('');
+    call(`plants/${plantId}/decisions/club`, 'POST', {
+      item,
+      key: s.key,
+      orders: s.orders,
+      runNo: data.runNo,
+      version: data.version,
+    })
+      .then((d) => onApplied(d))
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  }
+  return (
+    <section className="panel club-options" aria-label={`Club options for ${item}`}>
+      <div className="panel-heading">
+        <div>
+          <h2>Club options for {item}</h2>
+          <p className="panel-sub">
+            Preview only: nothing changes until you apply a scenario. Same-item orders can run
+            together when no other promise gets later, no member finishes late, materials are
+            covered at the grouped release, the pull-forward stays within{' '}
+            {data?.clubWindowDays ?? '…'} day(s) and a setup is really saved (all resources).
+          </p>
+        </div>
+        <button className="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <Messages error={error} notice="" />
+      {!data && !error && <p role="status">Evaluating every member set, release day and slot…</p>}
+      {data && (
+        <div className="scenario-grid">
+          {data.scenarios.map((s: any) => (
+            <article
+              key={s.key}
+              className={'scenario-card' + (s.key === data.recommended ? ' recommended' : '')}
+            >
+              <h3>
+                {s.label}
+                {s.key === data.recommended && <span className="chip">recommended</span>}
+              </h3>
+              <p>
+                <strong>{s.orders.join(' + ')}</strong>
+                {s.day && (
+                  <span className="cell-sub">
+                    {' '}
+                    — released from {s.day}
+                    {s.beforeId ? `, before ${s.beforeId}` : ', at the end'}
+                  </span>
+                )}
+              </p>
+              <dl className="facts">
+                <div>
+                  <dt>Setup saved (all resources)</dt>
+                  <dd>{num(s.savedMin, 0)} min</dd>
+                </div>
+                <div>
+                  <dt>Extra carry (pulled forward)</dt>
+                  <dd>{num(s.carryUnits, 6)} unit-days</dd>
+                </div>
+                <div>
+                  <dt>Finished stock waiting (total)</dt>
+                  <dd>{num(s.fgCarryUnits, 6)} unit-days</dd>
+                </div>
+                <div>
+                  <dt>Other orders</dt>
+                  <dd>
+                    {s.impact.changed} shift, {s.impact.broken.length} newly late
+                  </dd>
+                </div>
+              </dl>
+              <table className="compact">
+                <thead>
+                  <tr>
+                    <th>Order</th>
+                    <th className="num">Qty</th>
+                    <th>Promise</th>
+                    <th>Finish</th>
+                    <th>Materials</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {s.members.map((m: any) => (
+                    <tr key={m.order}>
+                      <td>{m.order}</td>
+                      <td className="num">{num(m.qty)}</td>
+                      <td>{m.promise}</td>
+                      <td>{m.finishDate}</td>
+                      <td>{MATERIAL[m.materials]?.[1] ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {s.reasons.length > 0 && (
+                <ul className="messages">
+                  {s.reasons.map((r: any, i: number) => (
+                    <li key={i}>{reasonText(r)}</li>
+                  ))}
+                </ul>
+              )}
+              {s.excluded.length > 0 && (
+                <p className="cell-sub">
+                  Not included:{' '}
+                  {s.excluded
+                    .map((e: any) => `${e.order} (${e.reasons.map(reasonText).join('; ')})`)
+                    .join(' · ')}
+                </p>
+              )}
+              {canPlan && s.normal && (
+                <button
+                  className={'button' + (s.key === data.recommended ? ' primary' : '')}
+                  disabled={busy}
+                  onClick={() => apply(s)}
+                >
+                  {s.kind === 'declub' ? 'Apply declub' : 'Apply club'}
+                </button>
+              )}
+              {s.conditional && (
+                <p className="cell-sub">Needs an expedite before it can be applied (AV-8).</p>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 
 export function Scheduler({
   csrf,
@@ -154,7 +447,42 @@ export function Scheduler({
     [data, setData] = useState<any>(null),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
-    [tick, setTick] = useState(0);
+    [tick, setTick] = useState(0),
+    [open, setOpen] = useState<string | null>(null),
+    [club, setClub] = useState<string | null>(null),
+    [plan, setPlan] = useState<any>(null),
+    [report, setReport] = useState<any>(null),
+    [dragging, setDragging] = useState<string | null>(null),
+    [busy, setBusy] = useState(false);
+  const canPlan = permissions.includes('schedule.plan') && view === 'current';
+  useEffect(() => {
+    let live = true;
+    call(`plants/${plantId}/decisions`)
+      .then((d) => live && setPlan(d))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [plantId, tick, refreshKey]);
+  // A decision: the planning run it was judged on and the plant's decision version.
+  function decide(path: string, payload: any) {
+    setBusy(true);
+    setError('');
+    call(`plants/${plantId}/decisions/${path}`, 'POST', {
+      ...payload,
+      runNo: data?.header?.run_no,
+      version: plan?.version ?? 0,
+    })
+      .then((d) => {
+        setNotice(d.message);
+        setReport(d.impact);
+        setTick((x) => x + 1);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  }
+  const move = (order: string, target: string, position: 'before' | 'after') =>
+    decide('move', { order, target, position });
   useEffect(() => {
     let live = true;
     call(qs(`plants/${plantId}/schedule`, { view, filter, q, cursor: cursors[cursors.length - 1] }))
@@ -254,7 +582,45 @@ export function Scheduler({
             }}
           />
         )}
+        {plan?.manual && view === 'current' && (
+          <div className="publish-bar">
+            <p className="panel-sub">
+              <span className="status-pill pending">Manual order of work</span> A planner set the
+              sequence; new orders are placed by due date among them. Pinned clubs:{' '}
+              {plan.groups.length}.
+            </p>
+            {canPlan && (
+              <button
+                className="button"
+                disabled={busy}
+                onClick={() => decide('release-manual', {})}
+              >
+                Release to computed order
+              </button>
+            )}
+          </div>
+        )}
       </section>
+      {report && (
+        <section className="panel">
+          <ImpactReport impact={report} title="Impact of the last decision" />
+        </section>
+      )}
+      {club && (
+        <ClubOptions
+          csrf={csrf}
+          plantId={plantId}
+          item={club}
+          canPlan={canPlan}
+          onClose={() => setClub(null)}
+          onApplied={(d: any) => {
+            setClub(null);
+            setNotice(d.message);
+            setReport(d.impact);
+            setTick((x) => x + 1);
+          }}
+        />
+      )}
       <section className="panel">
         <div className="toolbar panel-toolbar">
           <form
@@ -302,19 +668,60 @@ export function Scheduler({
                 <th className="num">Slack (days)</th>
                 <th>Status</th>
                 <th>Materials</th>
+                {canPlan && <th className="actions">Plan</th>}
               </tr>
             </thead>
             <tbody>
-              {(data?.items ?? []).map((o: any) => {
+              {(data?.items ?? []).map((o: any, i: number, list: any[]) => {
                 const m = MATERIAL[o.material_check];
-                return (
-                  <tr key={o.id} className={o.late_days > 0 ? 'late' : ''}>
-                    <td className="num">{o.position}</td>
+                const scheduled = o.status === 'scheduled';
+                const prev = list[i - 1]?.status === 'scheduled' ? list[i - 1] : null;
+                const next = list[i + 1]?.status === 'scheduled' ? list[i + 1] : null;
+                return [
+                  <tr
+                    key={o.id}
+                    className={
+                      (o.late_days > 0 ? 'late ' : '') +
+                      (dragging && scheduled ? 'drop-target' : '')
+                    }
+                    draggable={canPlan && scheduled && !filter && !q}
+                    onDragStart={(e) => {
+                      setDragging(o.order_no);
+                      e.dataTransfer.setData('text/plain', o.order_no);
+                    }}
+                    onDragEnd={() => setDragging(null)}
+                    onDragOver={(e) => dragging && scheduled && e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const from = e.dataTransfer.getData('text/plain');
+                      setDragging(null);
+                      if (!from || from === o.order_no) return;
+                      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      move(from, o.order_no, e.clientY < r.top + r.height / 2 ? 'before' : 'after');
+                    }}
+                  >
+                    <td className="num">
+                      {canPlan && scheduled && !filter && !q && (
+                        <span className="grip" aria-hidden="true">
+                          ⋮⋮
+                        </span>
+                      )}
+                      {o.position}
+                    </td>
                     <td>
-                      <strong>{o.order_no}</strong>
-                      {o.grouped_with && (
+                      <button
+                        className="text-button cell-link"
+                        aria-expanded={open === o.id}
+                        aria-label={`Materials for ${o.order_no}`}
+                        onClick={() => setOpen(open === o.id ? null : o.id)}
+                      >
+                        <strong>{o.order_no}</strong>
+                      </button>
+                      {o.plan_group && <div className="cell-sub pinned">Pinned club</div>}
+                      {!o.plan_group && o.grouped_with && (
                         <div className="cell-sub">Grouped after {o.grouped_with}</div>
                       )}
+                      {o.manual_placed && <div className="cell-sub">Placed by planner</div>}
                     </td>
                     <td>
                       {o.item}
@@ -343,14 +750,50 @@ export function Scheduler({
                     </td>
                     <td>
                       {m ? <span className={'status-pill ' + m[0]}>{m[1]}</span> : '—'}
-                      {o.material_check !== 'clear' &&
-                        o.messages?.[0] &&
-                        o.status !== 'unscheduled' && (
-                          <div className="cell-sub">{o.messages[0]}</div>
-                        )}
+                      {o.messages?.[0] && scheduled && (
+                        <div className="cell-sub">{o.messages[0]}</div>
+                      )}
                     </td>
-                  </tr>
-                );
+                    {canPlan && (
+                      <td className="actions nowrap">
+                        {scheduled && (
+                          <>
+                            <button
+                              className="text-button"
+                              aria-label={`Move ${o.order_no} up`}
+                              disabled={busy || !prev || !!filter || !!q}
+                              onClick={() => move(o.order_no, prev.order_no, 'before')}
+                            >
+                              ↑
+                            </button>
+                            <button
+                              className="text-button"
+                              aria-label={`Move ${o.order_no} down`}
+                              disabled={busy || !next || !!filter || !!q}
+                              onClick={() => move(o.order_no, next.order_no, 'after')}
+                            >
+                              ↓
+                            </button>
+                            <button
+                              className="text-button"
+                              aria-label={`Club options for ${o.item}`}
+                              onClick={() => setClub(o.item)}
+                            >
+                              Club
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    )}
+                  </tr>,
+                  open === o.id && (
+                    <tr key={o.id + '-lines'} className="detail-row">
+                      <td colSpan={canPlan ? 11 : 10}>
+                        <ReadinessLines lines={o.material_lines} />
+                      </td>
+                    </tr>
+                  ),
+                ];
               })}
             </tbody>
           </table>
@@ -372,6 +815,53 @@ export function Scheduler({
           </button>
         </div>
       </section>
+      {plan?.items?.length > 0 && (
+        <section className="panel">
+          <h2>Planning decisions</h2>
+          <div className="table-wrap">
+            <table className="compact">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Decision</th>
+                  <th>Orders</th>
+                  <th>Run</th>
+                  <th>By</th>
+                  <th>When</th>
+                  <th>Effect</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.items.map((d: any) => (
+                  <tr key={d.decision_no}>
+                    <td>{d.decision_no}</td>
+                    <td>{DECISION_KINDS[d.kind] ?? d.kind}</td>
+                    <td>{d.orders.join(', ') || '—'}</td>
+                    <td>#{d.run_no}</td>
+                    <td>{d.decided_by ?? '—'}</td>
+                    <td>{new Date(d.decided_at).toLocaleString()}</td>
+                    <td className="cell-sub">
+                      {d.kind === 'insert' || d.kind === 'quote' ? (
+                        insertEffect(d.details)
+                      ) : (
+                        <>
+                          {d.details?.scenario
+                            ? `${num(d.details.scenario.savedMin, 0)} min saved; `
+                            : d.kind === 'move'
+                              ? `#${d.details.from} → #${d.details.to}; `
+                              : ''}
+                          {d.details?.impact?.changed ?? 0} changed,{' '}
+                          {d.details?.impact?.broken?.length ?? 0} newly late
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </>
   );
 }
@@ -734,6 +1224,7 @@ export function PlanningSettings({
           setForm({
             ...d,
             day_weights: d.day_weights ? d.day_weights.join(', ') : '',
+            area_operations: (d.area_operations ?? []).join(', '),
           }),
       )
       .catch((e) => live && setError(e.message));
@@ -766,6 +1257,7 @@ export function PlanningSettings({
               lead_time_basis: form.lead_time_basis,
               profile_day: String(form.profile_day),
               day_weights: form.day_weights,
+              area_operations: form.area_operations,
               version: Number(form.version),
             })
               .then((d) => {
@@ -811,6 +1303,14 @@ export function PlanningSettings({
                 rows={3}
                 value={form.day_weights}
                 onChange={(e) => setForm({ ...form, day_weights: e.target.value })}
+              />
+            </label>
+            <label>
+              Area operations: operation codes whose minutes scale with the area of an odd size
+              <input
+                value={form.area_operations}
+                placeholder="e.g. QU02, CU02"
+                onChange={(e) => setForm({ ...form, area_operations: e.target.value })}
               />
             </label>
             <p className="cell-sub">
@@ -890,5 +1390,389 @@ export function LeadTimeReality({
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ---------- Insert order (AV-7) ----------
+// Reference: Nilkamal simulation handover, the Insert screen. A catalogue item or an odd size,
+// a quantity and a need-by date (or the earliest date): the ways of saying yes, each checked on the
+// drum, the full forward route and time-phased materials. Nothing changes until one is committed.
+
+const INSERT_REASONS: Record<string, (r: any) => string> = {
+  no_window: (r) =>
+    `Needs ${num(r.need, 0)} drum minutes in one window; the largest free window is ${num(r.largest, 0)} min${r.date ? ' on ' + r.date : ''}.`,
+  third_lot: (r) =>
+    `Only ${num(r.placed, 0)} of ${num(r.qty, 0)} fit in two lots; the rest would need a third lot or a later date.`,
+};
+
+function InsertScenario({ s, recommended, canInsert, busy, onCommit, rush }: any) {
+  const gate = s.meetsNeedBy === false || s.broken.length > 0;
+  const m = s.materials;
+  return (
+    <article
+      className={'scenario-card' + (recommended ? ' recommended' : '')}
+      data-scenario={s.key}
+    >
+      <h3>
+        {s.label}
+        {recommended && <span className="chip">recommended</span>}
+      </h3>
+      <p>
+        <strong>
+          {s.lots.length
+            ? s.lots.map((l: any) => `${num(l.qty, 0)} on ${l.date}`).join(' + ')
+            : 'Not placed'}
+        </strong>
+        {s.front && <span className="cell-sub"> — ahead of every promise</span>}
+        {rush && (
+          <span className="cell-sub">
+            {' '}
+            — {s.rushBefore ? `before ${s.rushBefore}` : 'at the end of the book'}
+          </span>
+        )}
+      </p>
+      <dl className="facts">
+        <div>
+          <dt>{s.key === 'decline' || rush ? 'Quote' : 'Full-route finish'}</dt>
+          <dd>{s.quoteDate ?? s.finishDate ?? '—'}</dd>
+        </div>
+        <div>
+          <dt>Materials</dt>
+          <dd>
+            <span className={'status ' + (MATERIAL[m.status]?.[0] ?? 'pending')}>
+              {MATERIAL[m.status]?.[1] ?? m.status}
+            </span>
+          </dd>
+        </div>
+        <div>
+          <dt>Changeover (measured)</dt>
+          <dd>{num(s.forwardChangeoverMin, 0)} min</dd>
+        </div>
+        <div>
+          <dt>Finished stock waiting</dt>
+          <dd>{num(s.forwardCarry, 1)} unit-days</dd>
+        </div>
+        <div>
+          <dt>Other orders</dt>
+          <dd>
+            {s.forwardShifted} shift, {s.broken.length} later than promised
+          </dd>
+        </div>
+        <div>
+          <dt>Drum placement</dt>
+          <dd>
+            +{num(s.changeoverMin, 0)} min, {num(s.carryUnits, 0)} unit-days
+          </dd>
+        </div>
+      </dl>
+      {s.reasons.length > 0 && (
+        <ul className="messages">
+          {s.reasons.map((r: any, i: number) => (
+            <li key={i}>{(INSERT_REASONS[r.code] ?? (() => r.code))(r)}</li>
+          ))}
+        </ul>
+      )}
+      {gate && (
+        <p className="cell-sub warning-text">
+          {s.meetsNeedBy === false ? 'Full-route delivery is after the need-by date. ' : ''}
+          {s.broken.length > 0
+            ? 'Later than promised: ' +
+              s.broken
+                .slice(0, 8)
+                .map((b: any) => `${b.order} ${b.was} → ${b.now}`)
+                .join('; ') +
+              (s.broken.length > 8 ? ` and ${s.broken.length - 8} more` : '')
+            : ''}
+        </p>
+      )}
+      {(m.gaps.length > 0 || m.unknown.length > 0 || m.missingBom) && (
+        <details>
+          <summary>
+            {m.gaps.length} material gap(s)
+            {m.unknown.length ? `, ${m.unknown.length} component(s) without stock evidence` : ''}
+          </summary>
+          <table className="compact">
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Release</th>
+                <th className="num">Needed</th>
+                <th className="num">Available</th>
+                <th className="num">Short</th>
+                <th>Later receipts</th>
+              </tr>
+            </thead>
+            <tbody>
+              {m.gaps.map((g: any, i: number) => (
+                <tr key={i}>
+                  <td>{g.component}</td>
+                  <td>{g.release}</td>
+                  <td className="num">{num(g.requirement, 3)}</td>
+                  <td className="num">{num(g.available, 3)}</td>
+                  <td className="num">{num(g.shortage, 3)}</td>
+                  <td>
+                    {g.later.map((p: any) => `${num(p.qty, 0)} on ${p.due}`).join(', ') || '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {m.unknown.length > 0 && (
+            <p className="cell-sub">No stock record: {m.unknown.join(', ')}</p>
+          )}
+          {m.missingBom && <p className="cell-sub">No BOM: materials cannot be checked.</p>}
+        </details>
+      )}
+      {canInsert && s.feasible && (
+        <button
+          className={'button' + (recommended ? ' primary' : '')}
+          disabled={busy}
+          onClick={() => onCommit(s)}
+        >
+          {s.key === 'decline'
+            ? 'Decline and log the quote'
+            : m.gated
+              ? 'Commit with material gate'
+              : gate
+                ? 'Commit with capacity warning'
+                : 'Commit'}
+        </button>
+      )}
+    </article>
+  );
+}
+
+export function InsertOrder({
+  csrf,
+  plantId,
+  permissions,
+  refreshKey,
+}: {
+  csrf: string;
+  plantId: string;
+  permissions: string[];
+  refreshKey: number;
+}) {
+  const call = useApi(csrf);
+  const canInsert = permissions.includes('schedule.insert');
+  const [opts, setOpts] = useState<any>(null),
+    [form, setForm] = useState<any>({
+      mode: 'catalogue',
+      item: '',
+      family: '',
+      length: '',
+      width: '',
+      thickness: '',
+      qty: '',
+      needDate: '',
+      intent: 'dated',
+      customer: '',
+    }),
+    [data, setData] = useState<any>(null),
+    [asked, setAsked] = useState<any>(null),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(''),
+    [notice, setNotice] = useState('');
+  useEffect(() => {
+    let live = true;
+    call(`plants/${plantId}/insert/options`)
+      .then((d) => live && setOpts(d))
+      .catch((e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [plantId, refreshKey]);
+  const request = () => ({
+    mode: form.mode,
+    qty: Number(form.qty),
+    intent: form.intent,
+    ...(form.intent === 'dated' ? { needDate: form.needDate } : {}),
+    ...(form.mode === 'catalogue'
+      ? { item: form.item.trim() }
+      : {
+          family: form.family,
+          length: Number(form.length),
+          width: Number(form.width),
+          thickness: Number(form.thickness),
+        }),
+  });
+  function preview(e?: any) {
+    e?.preventDefault();
+    const req = request();
+    setBusy(true);
+    setError('');
+    setNotice('');
+    setData(null);
+    call(`plants/${plantId}/insert/preview`, 'POST', req)
+      .then((d) => {
+        setData(d);
+        setAsked(req);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setBusy(false));
+  }
+  function commit(s: any) {
+    setBusy(true);
+    setError('');
+    call(`plants/${plantId}/insert/commit`, 'POST', {
+      ...asked,
+      customer: form.customer.trim(),
+      key: s.key,
+      lots: s.lots,
+      runNo: data.runNo,
+      version: data.version,
+    })
+      .then((d) => {
+        setNotice(d.message);
+        setData(null);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setBusy(false));
+  }
+  const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value });
+  const t = data?.target;
+  const families = (opts?.families ?? []).filter((f: any) => f.standards > 0);
+  return (
+    <>
+      <Messages error={error} notice={notice} />
+      <section className="panel company-form">
+        <h2>Insert an order</h2>
+        <p className="panel-sub">
+          Planning date {opts?.today ?? '…'}; constraint {opts?.drum ?? '…'}. The options are
+          simulated on the current schedule: nothing changes until you commit one.
+        </p>
+        <form onSubmit={preview}>
+          <fieldset disabled={busy}>
+            <div className="form-grid">
+              <label>
+                Item
+                <select value={form.mode} onChange={set('mode')}>
+                  <option value="catalogue">Catalogue item</option>
+                  <option value="oddsize">Odd size, made to order</option>
+                </select>
+              </label>
+              {form.mode === 'catalogue' ? (
+                <label>
+                  Item code
+                  <input value={form.item} onChange={set('item')} required />
+                </label>
+              ) : (
+                <>
+                  <label>
+                    Family
+                    <select value={form.family} onChange={set('family')} required>
+                      <option value="">Choose…</option>
+                      {families.map((f: any) => (
+                        <option key={f.code} value={f.code}>
+                          {f.name} ({f.code}, {f.standards} standards)
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Length (in)
+                    <input
+                      inputMode="decimal"
+                      value={form.length}
+                      onChange={set('length')}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Width (in)
+                    <input
+                      inputMode="decimal"
+                      value={form.width}
+                      onChange={set('width')}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Thickness (in)
+                    <input
+                      inputMode="decimal"
+                      value={form.thickness}
+                      onChange={set('thickness')}
+                      required
+                    />
+                  </label>
+                </>
+              )}
+              <label>
+                Quantity
+                <input inputMode="numeric" value={form.qty} onChange={set('qty')} required />
+              </label>
+              <label>
+                Date
+                <select value={form.intent} onChange={set('intent')}>
+                  <option value="dated">Customer needs it by…</option>
+                  <option value="rush">Earliest possible (rush quote)</option>
+                </select>
+              </label>
+              {form.intent === 'dated' && (
+                <label>
+                  Need-by date
+                  <input type="date" value={form.needDate} onChange={set('needDate')} required />
+                </label>
+              )}
+              <label>
+                Customer (optional)
+                <input value={form.customer} onChange={set('customer')} maxLength={120} />
+              </label>
+            </div>
+            <div className="form-actions">
+              <button className="button primary">Show options</button>
+            </div>
+          </fieldset>
+        </form>
+      </section>
+      {busy && !data && <p role="status">Simulating the options…</p>}
+      {t && (
+        <section className="panel" aria-label="Insert options">
+          <div className="panel-heading">
+            <div>
+              <h2>
+                Options for {num(asked.qty, 0)} {t.code}
+                {asked.needDate ? ` by ${asked.needDate}` : ', earliest date'}
+              </h2>
+              <p className="panel-sub">
+                {t.refused
+                  ? t.refused
+                  : t.class === 'oddsize'
+                    ? `Odd size, made to order: not buffered. Timed from ${t.source} (${t.sourceSize.join('x')}), the nearest standard of ${t.family.name}${t.exactThickness ? '' : ' (no exact thickness; nearest taken)'}, area × ${num(t.scale, 4)} on ${t.areaOperations.join(', ') || 'no operations'}; ${t.bomLines} BOM lines inherited (metres by area, pieces as they are, the rest by volume). Marked estimated.`
+                    : t.class === 'buffered'
+                      ? `Buffered item: this order consumes the buffer — net flow ${num(t.buffer.nfp, 1)} (${t.buffer.zone}) falls to ${num(t.buffer.after.nfp, 1)} (${t.buffer.after.zone}). ${t.operations} operations, ${num(t.drumMinPerUnit, 3)} min per unit on ${t.drum}.`
+                      : `Standard item, not buffered: it needs its own slot. ${t.operations} operations, ${num(t.drumMinPerUnit, 3)} min per unit on ${t.drum}.`}
+              </p>
+              {data.intent === 'rush' && (
+                <p className="cell-sub">
+                  {data.evaluated} insertion positions × supply dates evaluated; distinct trade-offs
+                  shown.
+                </p>
+              )}
+              {data.intent === 'dated' && !data.supported && data.scenarios.length > 0 && (
+                <p className="cell-sub warning-text">
+                  No unconditional commitment is supported: the recommended option keeps the drum
+                  placement; check its material and capacity warnings.
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="scenario-grid">
+            {data.scenarios.map((s: any) => (
+              <InsertScenario
+                key={s.key}
+                s={s}
+                recommended={s.key === data.recommended}
+                canInsert={canInsert}
+                busy={busy}
+                onCommit={commit}
+                rush={data.intent === 'rush'}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+    </>
   );
 }

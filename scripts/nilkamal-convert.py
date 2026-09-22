@@ -271,7 +271,11 @@ bundle = {
     'resources': resources,
     # Plant policy of the demo: same-item grouping within 1 day, zones at planned loading (day 7).
     'planning': {'club_window_days': 1, 'lead_time_basis': 'PLANNED_LOAD', 'profile_day': 7,
-                 'day_weights': [round(w, 4) for w in seed['day_of_month_profile']['weights_pct']]},
+                 'day_weights': [round(w, 4) for w in seed['day_of_month_profile']['weights_pct']],
+                 # Odd sizes: operations whose minutes scale with the area (seed area_ops).
+                 'area_operations': seed.get('area_ops') or []},
+    # Odd-size families of the Insert screen: code stem and trade name (seed mto_family_index).
+    'odd_size_families': sorted([k, text(v.get('name') or k, 60)] for k, v in (seed.get('mto_family_index') or {}).items()),
     'routings': routings,
     'buffers': buffers,
     'mto': [f for f in fgs if f not in buffered],

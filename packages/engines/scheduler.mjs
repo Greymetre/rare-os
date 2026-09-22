@@ -20,6 +20,8 @@ const EPS = 1e-6;
 const round4 = (n) => Math.round(n * 1e4) / 1e4;
 const byDue = (a, b) =>
   a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : a.ref.localeCompare(b.ref);
+// Lots of one order share its order id; a unit without lots is its own order.
+export const oidOf = (u) => u.oid ?? u.id;
 const daysBetween = (a, b) =>
   Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
 
@@ -57,7 +59,7 @@ export function allocate(resource, sequence, routings) {
           k = j;
         }
       }
-      if (previous && previous.itemId === order.itemId && previous.id !== order.id)
+      if (previous && previous.itemId === order.itemId && oidOf(previous) !== oidOf(order))
         k = previousMachine;
       previous = order;
       previousMachine = k;
@@ -85,6 +87,67 @@ export function allocate(resource, sequence, routings) {
   };
 }
 
+// Earliest start of a unit: a planner release day, or the day of a planned lot (a lot is not made
+// before its day unless it goes to the front or the planner placed it by hand). Days are 1-based
+// working-day indexes of the axis (1 = the first schedule day).
+export function releaseMinute(u, dayMinutes) {
+  return Math.max(
+    u.planRelease ? (u.planRelease - 1) * dayMinutes : 0,
+    !u.front && u.lotDay != null && !u.manualPlaced ? Math.max(0, (u.lotDay - 1) * dayMinutes) : 0,
+    u.release ?? 0,
+  );
+}
+
+// The planner's order of work: listed orders in their listed order (lots by lot number), others
+// inserted before the first listed unit with a later sequence date.
+export function manualSequence(units, manualOrder) {
+  const pos = new Map(manualOrder.map((id, i) => [id, i]));
+  const key = (u) => u.dueDate;
+  const listed = units
+    .filter((u) => pos.has(oidOf(u)))
+    .sort(
+      (a, b) =>
+        pos.get(oidOf(a)) - pos.get(oidOf(b)) ||
+        (a.lot ?? 1) - (b.lot ?? 1) ||
+        a.id.localeCompare(b.id),
+    );
+  const rest = units.filter((u) => !pos.has(oidOf(u))).sort(byDue);
+  const out = listed.map((u) => ({ ...u, manualPlaced: true }));
+  for (const u of rest) {
+    let at = out.findIndex((x) => x.manualPlaced && key(x) > key(u));
+    if (at < 0) at = out.length;
+    out.splice(at, 0, u);
+  }
+  return out;
+}
+
+// Places a planner's group: its members (order ids) run together before `beforeId` (an order id;
+// null = at the end), released no earlier than `day`.
+export function placeGroup(seq, ids, day, beforeId, groupId) {
+  const set = new Set(ids);
+  const members = seq
+    .filter((u) => set.has(oidOf(u)))
+    .sort((a, b) => ids.indexOf(oidOf(a)) - ids.indexOf(oidOf(b)) || (a.lot ?? 1) - (b.lot ?? 1));
+  const out = seq.filter((u) => !set.has(oidOf(u)));
+  let at =
+    beforeId === null || beforeId === undefined
+      ? out.length
+      : out.findIndex((u) => oidOf(u) === beforeId);
+  if (at < 0) at = out.length;
+  out.splice(
+    at,
+    0,
+    ...members.map((u) => ({
+      ...u,
+      planGroup: groupId ?? null,
+      planRelease: Math.max(day || 1, u.planRelease || 0, u.front ? 1 : u.lotDay || 0),
+    })),
+  );
+  return out;
+}
+export const placeGroups = (seq, groups) =>
+  groups.reduce((out, g) => placeGroup(out, g.ids, g.day, g.beforeId, g.id), seq);
+
 // Times every operation. Returns per-order operations and finish, and per-machine blocks.
 export function forwardPass({ sequence, routings, resources, dayMinutes }) {
   const allocations = new Map(
@@ -102,7 +165,7 @@ export function forwardPass({ sequence, routings, resources, dayMinutes }) {
       const key = op.resourceId + '|' + a.machine;
       const chg = a.changeover / eff,
         run = op.work / eff;
-      const start = Math.max(ready, (free.get(key) ?? 0) + chg, order.release ?? 0);
+      const start = Math.max(ready, (free.get(key) ?? 0) + chg, releaseMinute(order, dayMinutes));
       const finish = start + run;
       free.set(key, finish);
       ops.push({
@@ -125,8 +188,8 @@ export function forwardPass({ sequence, routings, resources, dayMinutes }) {
       start: ops.length ? ops[0].start : 0,
       finish,
       shipDay,
-      slack: order.dueDay * dayMinutes - finish,
-      late: shipDay > order.dueDay,
+      slack: (order.orderDueDay ?? order.dueDay) * dayMinutes - finish,
+      late: shipDay > (order.orderDueDay ?? order.dueDay),
     });
   }
   return { allocations, orders };
@@ -142,8 +205,19 @@ export function groupedSequence({
   dayMinutes,
   clubWindowDays,
   maxChecks,
+  cohorts = null,
 }) {
   let seq = orders.slice().sort(byDue);
+  // With cohorts (lists of order ids), only orders of one cohort are pulled together.
+  const cohortOf = cohorts ? new Map(cohorts.flatMap((ids, i) => ids.map((id) => [id, i]))) : null;
+  // A committed rush order runs before the order it was quoted against (null = at the end). Rush
+  // and inserted orders keep the placement the planner committed: they are never clubbed here.
+  for (const u of seq.filter((x) => x.rushBefore !== undefined)) {
+    seq = seq.filter((x) => x.id !== u.id);
+    let at = u.rushBefore === null ? seq.length : seq.findIndex((x) => oidOf(x) === u.rushBefore);
+    if (at < 0) at = seq.length;
+    seq.splice(at, 0, u);
+  }
   const opCount = orders.reduce((n, o) => n + operationsOf(o, routings).length, 0);
   const budget = maxChecks ?? Math.max(10, Math.min(400, Math.floor(3e6 / Math.max(1, opCount))));
   let before = null;
@@ -154,10 +228,19 @@ export function groupedSequence({
   if (clubWindowDays > 0)
     for (let i = 0; i < seq.length; i++) {
       const a = seq[i];
+      if (a.rushBefore !== undefined || a.noAutoGroup) continue;
       let end = i + 1;
       for (let j = end; j < seq.length; j++) {
         const p = seq[j];
-        if (p.itemId !== a.itemId || p.id === a.id) continue;
+        if (
+          p.itemId !== a.itemId ||
+          oidOf(p) === oidOf(a) ||
+          p.rushBefore !== undefined ||
+          p.noAutoGroup
+        )
+          continue;
+        if (cohortOf && (!cohortOf.has(a.id) || cohortOf.get(a.id) !== cohortOf.get(p.id)))
+          continue;
         if (Math.abs(daysBetween(a.dueDate, p.dueDate)) > clubWindowDays) continue;
         if (j !== end) {
           if (checks >= budget) {
@@ -210,19 +293,54 @@ export function schedulePlant({
   dayMinutes,
   clubWindowDays = 1,
   maxChecks,
+  plan: decisions = null,
 }) {
   const routed = orders.filter((o) =>
     operationsOf(o, routings).some((op) => resources.has(op.resourceId)),
   );
   const unrouted = orders.filter((o) => !routed.includes(o));
-  const plan = groupedSequence({
-    orders: routed,
-    routings,
-    resources,
-    dayMinutes,
-    clubWindowDays,
-    maxChecks,
-  });
+  // Inserted and rush orders do not start new clubs: the book keeps the clubs it would have without
+  // them (Nilkamal handover: the landed placement's cohorts), each still checked against promises.
+  const landedCohorts = () => {
+    const own = routed.filter((o) => !o.noAutoGroup && o.rushBefore === undefined);
+    if (own.length === routed.length) return null;
+    return groupedSequence({
+      orders: own,
+      routings,
+      resources,
+      dayMinutes,
+      clubWindowDays,
+      maxChecks,
+    }).groups.map((g) => g.members);
+  };
+  // The planner's decisions (AV-7): a manual order of work replaces the computed one; release days
+  // and pinned groups apply on top of either.
+  const plan = decisions?.manualOrder?.length
+    ? {
+        sequence: manualSequence(routed, decisions.manualOrder),
+        groups: [],
+        refused: [],
+        checks: 0,
+        exhausted: false,
+      }
+    : groupedSequence({
+        orders: routed,
+        routings,
+        resources,
+        dayMinutes,
+        clubWindowDays,
+        maxChecks,
+        cohorts: landedCohorts(),
+      });
+  if (decisions) {
+    const releases = decisions.releases ?? new Map();
+    plan.sequence = placeGroups(
+      plan.sequence.map((u) =>
+        releases.has(u.id) ? { ...u, planRelease: releases.get(u.id) } : u,
+      ),
+      decisions.groups ?? [],
+    );
+  }
   const pass = forwardPass({ sequence: plan.sequence, routings, resources, dayMinutes });
   // Busy plant minutes per machine and day, from the timed blocks (changeover precedes its run).
   const busy = new Map();
@@ -243,7 +361,7 @@ export function schedulePlant({
   let makespan = 0;
   for (const o of pass.orders.values()) makespan = Math.max(makespan, o.finish);
   const horizonDays = Math.max(1, Math.ceil(makespan / dayMinutes - 1e-9));
-  const lastDue = routed.reduce((m, o) => Math.max(m, o.dueDay), 1);
+  const lastDue = routed.reduce((m, o) => Math.max(m, o.orderDueDay ?? o.dueDay), 1);
   // Utilisation over the book's own window: tomorrow through the latest promise, or longer if needed.
   const span = Math.max(horizonDays, lastDue);
   const resourceRows = [...resources.values()].map((r) => {
@@ -302,6 +420,7 @@ export function schedulePlant({
   for (const g of plan.groups) for (const m of g.members.slice(1)) groupOf.set(m, g.anchor);
   return {
     sequence: plan.sequence.map((o) => o.id),
+    units: plan.sequence,
     orders: plan.sequence.map((o, i) => ({
       ...pass.orders.get(o.id),
       position: i + 1,

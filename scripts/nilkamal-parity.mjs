@@ -64,6 +64,9 @@ try {
         zone: b.zone,
       })),
       orders: proposedOrders().map((r) => ({ part: r.part, qty: r.qty })),
+      readiness: Object.fromEntries(
+        Object.entries(decisionLive().materials).map(([id, r]) => [id, r.status]),
+      ),
     };
   });
 } finally {
@@ -226,8 +229,22 @@ else {
         `${a.op} load: RARE OS ${r?.slice(1, 4).join('/')}, demo ${a.run}/${a.chg}/${a.n}`,
       );
   }
+  const LABELS = {
+    expedite: 'Expedite or quote later',
+    unknown: 'Cannot validate materials',
+    replenish: 'Commit + replenish',
+    clear: 'Clear to commit',
+  };
+  const ready = new Map(
+    psql(
+      `SELECT o.order_no,s.material_check FROM schedule_orders s JOIN production_orders o ON o.id=s.production_order_id WHERE s.run_id=${run}`,
+    ),
+  );
+  for (const [id, status] of Object.entries(demo.readiness))
+    if (LABELS[ready.get(id)] !== status)
+      problems.push(`${id} materials: RARE OS ${ready.get(id)}, demo ${status}`);
   console.log(
-    `${seq.length} scheduled orders and ${demo.ops.length} operations compared with the demo.`,
+    `${seq.length} scheduled orders, ${demo.ops.length} operations and ${Object.keys(demo.readiness).length} material readiness results compared with the demo.`,
   );
 }
 if (recommended.length !== demo.orders.length)

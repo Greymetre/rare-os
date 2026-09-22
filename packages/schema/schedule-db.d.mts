@@ -54,3 +54,36 @@ export function savePlantPlanning(
   value: any,
 ): Promise<void>;
 export function scheduleReadiness(db: Db, siteId: string, today: string): Promise<any>;
+export function loadBomUsage(db: Db, today: string): Promise<Map<string, any[]>>;
+export function planningDate(db: Db): Promise<string>;
+export function decisionContext(db: Db, siteId: string): Promise<any | null>;
+export function scheduleWith(dc: any, plan: any): any;
+export function savePlan(db: Db, tenantId: string, siteId: string, value: any): Promise<void>;
+export function planFromScenario(dc: any, compare: any, scenario: any, decisionNo: number): any;
+export function describeImpact(dc: any, imp: any): any;
+export function describeScenario(dc: any, s: any): any;
+export function recordDecision(
+  db: Db,
+  actor: any,
+  siteId: string,
+  runNo: number,
+  kind: string,
+  orders: string[],
+  details: any,
+): Promise<{ id: string; no: number }>;
+export function listDecisions(db: Db, siteId: string, limit?: number): Promise<any[]>;
+export const BOOK_COLUMNS: string;
+export function bookRow(row: any): any;
+export function insertItem(db: Db, dc: any, code: unknown): Promise<any>;
+export function oddSizeFamilies(db: Db, dc: any): Promise<any[]>;
+export function oddSizeItem(db: Db, dc: any, familyCode: unknown, dims: number[]): Promise<any>;
+export function simulateInsertOrder(dc: any, target: any, line: any, intent: string): any;
+export function describeInsert(dc: any, res: any): any;
+export function createOddSizeItem(db: Db, actor: any, dc: any, target: any): Promise<string>;
+export function nextInsertRef(db: Db): Promise<string>;
+export function writeInsertedOrder(
+  db: Db,
+  tenantId: string,
+  siteId: string,
+  order: any,
+): Promise<string>;

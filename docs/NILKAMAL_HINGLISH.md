@@ -65,17 +65,29 @@ Parity (22-Sep-2026, demo ke default mode, lead time at loading): **86/86 buffer
 76 orders ka sequence, 566 operations (machine, start, finish), drum, finish day/slack aur har resource/machine
 ka run + changeover** exact.
 
+## Order decisions (AV-7)
+
+- Loader odd-size families (24, demo ka `mto_family_index`) aur area operations (QU02, CU02, TE02, QP02, PP02)
+  bhi load karta hai. Decision aur INS numbering har load par #1 se.
+- Insert kiya order production-order **lots** banta hai (same order_ref, due = need-by, lot date = drum slot).
+  Naye (inserted/rush) orders naye club nahi banate: book wahi clubs rakhta hai jo unke bina banta (demo ke
+  landed cohorts), promise check ke saath.
+- Parity (22-Sep-2026, demo v13): club (MFRCFSSFBND78605, 4 orders, 225 min) aur move after apply ka poora
+  schedule; readiness 76 orders har line; insert catalogue / odd size / rush ke saare scenarios (lots, finish,
+  materials, broken promises, measured changeover); split commit ke baad sequence, readiness aur **86/86
+  buffers** exact. Rush mein demo "kal" ki date do baar ginta hai (539 vs hamare 462 candidates) — result same.
+
 ## Screens
 
 - **Stock and demand → Production orders**: order par click → poora BOM: per unit, zaroorat, buffer zone,
   on hand ("not available" agar stock record nahi), on order, net flow, needed by, verdict.
 - **Planning → Buffer board**: detail mein weekly usage, CV, safety, demand ka breakdown, driving orders aur lead time at loading.
-- **Planning → Scheduler / Gantt / Resource load**, **Setup → Plant planning**.
+- **Planning → Scheduler / Insert order / Gantt / Resource load**, **Setup → Plant planning**.
 - **Buffer profiles**: "Zone method" = Weekly (Nilkamal).
 
 ## Abhi baaki (demo mein hai, yahan nahi)
 
-Insert order + split lots, explicit club/declub, drag, expedite, customer ko nayi date, MTO size scaling
-(AV-7/AV-8). Demo ka resource load graph drum ke "nose to tail" model par hai; hamara graph timed schedule se
+Expedite existing PO, quote-later pending line aur customer ko nayi date (AV-8); SAP ZMTO lines ka import
+(abhi odd size screen par family + size se aata hai). Demo ka resource load graph drum ke "nose to tail" model par hai; hamara graph timed schedule se
 asli busy minutes dikhata hai (totals same, din-wise baant alag). Approval
 hamara maker-checker hi rahega (demo ka one-click nahi).

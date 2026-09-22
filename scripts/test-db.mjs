@@ -761,6 +761,83 @@ try {
   console.log(
     'PASS schedule: derived rows not editable, publications permanent and plant-scoped, plant policy limits, policy is a planning input, company isolation',
   );
+  // AV-7: planner decisions are a permanent record; inserted orders are dated lots; odd sizes keep
+  // their estimate; the plan of work is a planning input.
+  const beforeSeq = await markers();
+  await db.query(
+    "INSERT INTO plant_sequence(tenant_id,site_id,manual_order,groups,releases) VALUES($1,$2,ARRAY['WO-15625002'],'[]','{}')",
+    [tenant, site],
+  );
+  assert.ok((await markers()) > beforeSeq, 'the plan of work is a planning input');
+  await db.query(
+    "INSERT INTO planning_decisions(id,tenant_id,site_id,decision_no,kind,orders,run_no,details) VALUES(gen_random_uuid(),$1,$2,1,'insert',ARRAY['INS-1'],1,'{}')",
+    [tenant, site],
+  );
+  const lot = (extra) =>
+    `INSERT INTO production_orders(id,tenant_id,site_id,order_no,item_id,quantity,due_date,source,order_ref,lot_no,lot_count,lot_date,rush,rush_before) VALUES(gen_random_uuid(),'${tenant}','${site}',${extra})`;
+  await db.query(
+    lot(`'INS-1-1','${itemId}',5,current_date+3,'INSERTED','INS-1',1,2,current_date+1,false,null`),
+  );
+  for (const [label, code, sql] of [
+    ['rewrite a decision', '42501', "UPDATE planning_decisions SET kind='move'"],
+    ['delete a decision', '42501', 'DELETE FROM planning_decisions'],
+    [
+      'decision kind outside the list',
+      '23514',
+      `INSERT INTO planning_decisions(id,tenant_id,site_id,decision_no,kind,run_no) VALUES(gen_random_uuid(),'${tenant}','${site}',2,'guess',1)`,
+    ],
+    [
+      'same decision number twice',
+      '23505',
+      `INSERT INTO planning_decisions(id,tenant_id,site_id,decision_no,kind,run_no) VALUES(gen_random_uuid(),'${tenant}','${site}',1,'move',1)`,
+    ],
+    [
+      'inserted lot without a lot date',
+      '23514',
+      lot(`'INS-1-2','${itemId}',5,current_date+3,'INSERTED','INS-1',2,2,null,false,null`),
+    ],
+    [
+      'lot number above the lot count',
+      '23514',
+      lot(`'INS-1-3','${itemId}',5,current_date+3,'INSERTED','INS-1',3,2,current_date,false,null`),
+    ],
+    [
+      'rush position without rush',
+      '23514',
+      lot(`'INS-2','${itemId}',5,current_date+3,'INSERTED','INS-2',1,1,current_date,false,'WO-1'`),
+    ],
+    ['rewrite an estimate', '42501', 'UPDATE estimated_items SET area_ratio=2'],
+    ['delete an estimate', '42501', 'DELETE FROM estimated_items'],
+  ])
+    await denied(label, code, sql);
+  await db.query(
+    "INSERT INTO estimated_items(tenant_id,item_id,site_id,family,source_item_id,dimensions,source_dimensions,area_ratio,volume_ratio,exact_thickness) VALUES($1,$2,$3,'FAM',$4,ARRAY[75,30,4],ARRAY[72,30,4],1.0416,1.0416,true)",
+    [tenant, parent, site, itemId],
+  );
+  await denied(
+    'estimate with two dimensions',
+    '23514',
+    `INSERT INTO estimated_items(tenant_id,item_id,site_id,family,source_item_id,dimensions,source_dimensions,area_ratio,volume_ratio,exact_thickness) VALUES('${tenant}','${quoted}','${site}','FAM','${itemId}',ARRAY[75,30],ARRAY[72,30,4],1,1,true)`,
+  );
+  await db.query(
+    "INSERT INTO odd_size_families(tenant_id,code,name) VALUES($1,'MFRTDZ','TRENDZZZ')",
+    [tenant],
+  );
+  await db.query('RESET ROLE');
+  await db.query("SELECT set_config('app.tenant_id','',true)");
+  await db.query(
+    "INSERT INTO odd_size_families(tenant_id,code,name) VALUES($1,'HIDDEN','Other company')",
+    [other],
+  );
+  await db.query('SET LOCAL ROLE rare_app');
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
+  assert.deepEqual(
+    (await db.query('SELECT code FROM odd_size_families ORDER BY code')).rows.map((r) => r.code),
+    ['MFRTDZ'],
+  );
+  console.log(
+    'PASS decisions and inserts: decisions append-only with unique numbers, inserted lots dated and consistent, estimates permanent with 3 dimensions, plan of work is a planning input, company isolation',
+  );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);
   const pending = await db.query('SELECT * FROM outbox_pending(500)');

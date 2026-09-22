@@ -32,6 +32,10 @@ const b = JSON.parse(fs.readFileSync(file, 'utf8'));
 
 // Tables that belong to a company but not to its identity and access set-up.
 const PLANNING_TABLES = [
+  'estimated_items',
+  'odd_size_families',
+  'planning_decisions',
+  'plant_sequence',
   'schedule_publications',
   'schedule_operations',
   'schedule_orders',
@@ -118,6 +122,11 @@ try {
     deleted += (await q(`DELETE FROM ${t} WHERE tenant_id=$1`, [WORKSPACE])).rowCount;
   await q(
     "DELETE FROM outbox_events WHERE tenant_id=$1 AND (kind LIKE 'planning.%' OR kind LIKE 'import.%')",
+    [WORKSPACE],
+  );
+  // Planning decisions and inserted orders start again from #1.
+  await q(
+    "DELETE FROM number_series WHERE tenant_id=$1 AND series IN ('planning_decision','inserted_order')",
     [WORKSPACE],
   );
   await q('DELETE FROM tenants WHERE id=ANY($1::uuid[])', [others.map((x) => x.id)]);
@@ -370,7 +379,7 @@ try {
   );
   if (b.planning)
     await q(
-      'INSERT INTO plant_planning(tenant_id,site_id,club_window_days,lead_time_basis,day_weights,profile_day) VALUES($1,$2,$3,$4,$5,$6)',
+      'INSERT INTO plant_planning(tenant_id,site_id,club_window_days,lead_time_basis,day_weights,profile_day,area_operations) VALUES($1,$2,$3,$4,$5,$6,$7)',
       [
         T,
         PLANT_ID,
@@ -378,7 +387,14 @@ try {
         b.planning.lead_time_basis,
         b.planning.day_weights,
         b.planning.profile_day,
+        b.planning.area_operations ?? [],
       ],
+    );
+  // Odd-size families (code stem and trade name) for the Insert screen.
+  if (b.odd_size_families?.length)
+    await q(
+      'INSERT INTO odd_size_families(tenant_id,code,name) SELECT $1,f.c,f.n FROM unnest($2::text[],$3::text[]) AS f(c,n)',
+      [T, col(b.odd_size_families, (f) => f[0]), col(b.odd_size_families, (f) => f[1])],
     );
   await q(
     "INSERT INTO audit_log(tenant_id,action,entity_type,entity_id,details) VALUES($1::uuid,'demo.seeded','company',$1::text,$2)",

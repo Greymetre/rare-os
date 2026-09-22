@@ -405,3 +405,63 @@ Nilkamal (Barjora) par: 76 orders, drum **QU02 Quilting**, 0 late. Header mein "
 - **View buffers, schedules and planning results**: saari screens dekhne ke liye.
 - **Publish a calculated schedule as the committed plan**: Publish button ke liye.
 - **Maintain buffer profiles and buffer settings**: Plant planning badalne ke liye.
+
+## AV-7 — Order decisions (club, move, insert order)
+
+**Yeh kya karta hai:** planner ab schedule par khud faisle le sakta hai. Har faisla pehle **preview** hota hai
+(kuch save nahi hota), phir **apply/commit** par ek numbered decision banta hai (audit mein bhi). Preview ke
+baad agar calculation badal gayi ho (naya run, ya kisi aur ne faisla save kiya) to commit **409** deta hai:
+"Review again".
+
+**Material readiness (har order):** har lot apna poora BOM apne start par leta hai. Available = on hand +
+release tak aane wali PO lines − pehle shuru hone wale orders ne jo liya. Status: **Expedite or quote later**
+(kami) → **Cannot validate** (stock record nahi) → **Commit + replenish** (buffer green nahi) → **Clear**.
+
+### 1. Club / declub (Scheduler)
+
+1. **Planning → Scheduler** → kisi order ki row mein **Club** button. Cards dikhenge: Recommended club, Partial,
+   Larger with expedite, Declub. Har card: bacha setup (min), carry (unit-days), members ki finish, materials.
+2. **Apply club** → decision #N. Recalculation ke baad members saath chalte hain (Grouped).
+3. **Declub** → orders apni promise-date jagah par wapas.
+
+### 2. Haath se sequence (drag / ↑↓)
+
+1. Row ko drag karo ya ↑/↓ dabao → order doosre order ke pehle/baad. Upar banner: "Manual sequence".
+2. Impact report: kitne orders shift hue, kaunse promise late hue, drum changeover.
+3. **Release to computed order** → wapas computed sequence (pinned clubs rehte hain).
+4. Neeche **Decisions** table: har faisla, run #, kisne, kab, asar.
+
+### 3. Insert order
+
+**Planning → Insert order**:
+
+1. **Catalogue item**: item code, quantity, need-by date → **Show options**.
+   - Buffered item: "net flow 421 (green) falls to −579 (breach)" jaisa sentence.
+   - 4 cards: **Take it whole, now** (sabse aage), **Split across available drum slots** (need-by se peeche
+     chal kar drum ke khaali minutes, max 2 lots), **Whole, latest feasible slot**, **Decline, quote a later date**.
+   - Har card: lots aur dates, full-route finish (saare operations), materials, measured changeover, carry,
+     kitne orders shift / late. Recommended = sasta option jo capacity aur materials dono support karein;
+     koi na kare to drum wala option warning ke saath.
+2. **Commit** (ya "Commit with material gate" / "with capacity warning") → order **INS-n** (split ho to
+   INS-n-1, INS-n-2) Production orders aur Scheduler mein. Lots apni date se pehle shuru nahi hote
+   (sirf "whole, now" sabse aage). FG buffer ki qualified demand bhi order qty se badhti hai.
+3. **Decline** → sirf quote decision log hota hai, schedule mein kuch nahi.
+4. **Odd size, made to order**: family + L × W × H (inch). Family ka sabse paas wala standard (pehle same
+   thickness, phir area) — routing ke **area operations** (Setup → Plant planning) area ratio se scale, BOM:
+   metre area se, pieces same, baaki volume se. Commit par naya item (**FAMILY-75X30X4**, "estimated"), BOM
+   aur routing (revision EST1) bante hain.
+5. **Earliest possible (rush)**: har position × har supply date try hoti hai; "Earliest supported promise"
+   aur "Earliest capacity / impact trade-off" jaise cards, quote = forward finish. Commit par rush order
+   usi order ke pehle chalta hai jiske against quote hua.
+
+Nilkamal par check (planning date 21-Sep): **MFROBNWHTGRN75606 × 1000, need-by 27-Sep** → recommended **split**
+417 on 26-Sep + 583 on 27-Sep, finish 13-Oct, "Expedite or quote later". Commit ke baad **201423**: qualified
+demand 2067.816, net flow 1474.835, red. **Odd size TRENDZZZ 75×30×4 × 100 by 25-Sep** → from
+MFRTDZREDSSQ72304, area × 1.0417, recommended whole-late 25-Sep, "Cannot validate". **Rush
+MFRCFSSFBND78725 × 160** → quote 03-Oct (before 15627039, Commit + replenish) aur 26-Sep trade-off.
+
+### 4. Permissions
+
+- **View buffers, schedules and planning results**: saare previews.
+- **Change the schedule: move, club and declub orders**: club/declub/move/release.
+- **Insert customer orders into the schedule and quote dates**: Insert order commit aur decline quote.

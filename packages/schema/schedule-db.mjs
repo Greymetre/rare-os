@@ -3,12 +3,25 @@
 // company-scoped (RLS) transaction.
 import { calendarDayMinutes, shiftSpan } from '../engines/plant-model.mjs';
 import {
+  allocate,
   dayFactor,
   dueDayIndex,
   dynamicLeadTime,
+  forwardPass,
+  oidOf,
+  releaseMinute,
   schedulePlant,
   workingDates,
 } from '../engines/scheduler.mjs';
+import { materialReadiness, orderTimes } from '../engines/decisions.mjs';
+import {
+  drumBook,
+  inheritBom,
+  matchOddSize,
+  rushInsert,
+  simulateInsert,
+} from '../engines/insert.mjs';
+import { conversionFactors } from './demand-stock-db.mjs';
 
 const CHUNK = 1000;
 const AXIS_DAYS = 1500;
@@ -24,6 +37,7 @@ export const PLANT_PLANNING_DEFAULTS = {
   lead_time_basis: 'FIXED',
   day_weights: null,
   profile_day: 7,
+  area_operations: [],
 };
 
 // Calendars, resources, active routings and planning policy of every active plant.
@@ -47,6 +61,7 @@ export async function loadPlantModel(db, today) {
         lead_time_basis: s.lead_time_basis,
         day_weights: s.day_weights?.map(Number) ?? null,
         profile_day: s.profile_day,
+        area_operations: s.area_operations ?? [],
         version: s.version,
       };
   for (const c of (
@@ -154,11 +169,217 @@ function shiftBlocks(shifts) {
     });
 }
 
+// BOM usage of every item with an active BOM today: [{ componentId, qtyPer }] per parent, in the
+// component's base unit per base unit of the parent, in BOM line order (repeated lines kept).
+export async function loadBomUsage(db, today) {
+  const bomLines = (
+    await db.query(
+      `SELECT b.item_id AS parent,l.component_item_id,l.quantity,l.unit_id,c.base_unit_id,l.scrap_pct,b.base_quantity
+       FROM boms b JOIN bom_lines l ON l.bom_id=b.id JOIN items c ON c.id=l.component_item_id
+       WHERE b.active AND b.effective_from <= $1::date AND (b.effective_to IS NULL OR b.effective_to >= $1::date)
+       ORDER BY b.item_id,l.line_no`,
+      [today],
+    )
+  ).rows;
+  const lineFactor = await conversionFactors(db, [
+    ...new Set(bomLines.map((l) => l.component_item_id)),
+  ]);
+  const usage = new Map();
+  for (const l of bomLines) {
+    const f = Number(lineFactor(l.unit_id, l.base_unit_id, l.component_item_id) ?? 1);
+    const qtyPer =
+      (Number(l.quantity) * f) / Number(l.base_quantity) / (1 - Number(l.scrap_pct) / 100);
+    if (!usage.has(l.parent)) usage.set(l.parent, []);
+    usage.get(l.parent).push({ componentId: l.component_item_id, qtyPer });
+  }
+  return usage;
+}
+
+// Open purchase order lines per plant and item: [{ qty (base unit), due }].
+async function loadSupplyLines(db, siteId = null) {
+  const out = new Map();
+  for (const r of (
+    await db.query(
+      `SELECT o.site_id,l.item_id,(l.quantity-l.received_quantity)*l.unit_factor AS qty,to_char(l.due_date,'YYYY-MM-DD') AS due
+       FROM purchase_order_lines l JOIN purchase_orders o ON o.id=l.po_id
+       WHERE o.status='OPEN' AND l.status='OPEN' AND l.received_quantity < l.quantity AND ($1::uuid IS NULL OR o.site_id=$1)`,
+      [siteId],
+    )
+  ).rows) {
+    if (!out.has(r.site_id)) out.set(r.site_id, new Map());
+    const m = out.get(r.site_id);
+    if (!m.has(r.item_id)) m.set(r.item_id, []);
+    m.get(r.item_id).push({ qty: Number(r.qty), due: r.due });
+  }
+  return out;
+}
+
+async function loadSequences(db, siteId = null) {
+  return new Map(
+    (
+      await db.query('SELECT * FROM plant_sequence WHERE $1::uuid IS NULL OR site_id=$1', [siteId])
+    ).rows.map((r) => [r.site_id, r]),
+  );
+}
+
+const axisDates = (plant, today) =>
+  workingDates(addDays(today, 1), AXIS_DAYS, plant.calendar.workingDays, plant.calendar.holidays);
+
+// Open production orders (the book) with their lot fields. due = the order's promise (need-by).
+export const BOOK_COLUMNS = `o.id,o.site_id,o.order_no,o.item_id,i.code,to_char(o.due_date,'YYYY-MM-DD') AS due,o.quantity,
+  o.source,o.order_ref,o.lot_no,o.lot_count,to_char(o.lot_date,'YYYY-MM-DD') AS lot_date,o.front,o.rush,o.rush_before`;
+export const bookRow = (o) => ({
+  id: o.id,
+  ref: o.order_no,
+  itemId: o.item_id,
+  code: o.code,
+  due: o.due,
+  qty: Number(o.quantity),
+  ...(o.source === 'INSERTED'
+    ? {
+        inserted: true,
+        orderRef: o.order_ref,
+        lotNo: o.lot_no,
+        lotCount: o.lot_count,
+        lotDate: o.lot_date,
+        front: o.front,
+        rush: o.rush,
+        rushBefore: o.rush_before,
+      }
+    : {}),
+});
+
+// Production orders as schedule units. The order number identifies an imported order; lots of an
+// inserted order share its order reference, run no earlier than their lot date (unless the order
+// went to the front) and are sequenced on that date.
+const unitsOf = (book, dates, today) =>
+  book.map((o) => {
+    const day = dueDayIndex(o.due, dates);
+    if (!o.lotDate)
+      return {
+        id: o.id,
+        oid: o.ref,
+        ref: o.ref,
+        itemId: o.itemId,
+        code: o.code,
+        qty: o.qty,
+        dueDate: o.due,
+        dueDay: day,
+        orderDueDay: day,
+      };
+    const lotDay = Math.max(1, dueDayIndex(o.lotDate, dates));
+    return {
+      id: o.id,
+      oid: o.orderRef,
+      ref: o.ref,
+      itemId: o.itemId,
+      code: o.code,
+      qty: o.qty,
+      dueDate: o.front ? today : o.lotDate,
+      dueDay: o.front ? 0 : lotDay,
+      orderDueDay: day,
+      lot: o.lotNo,
+      lots: o.lotCount,
+      lotDay,
+      front: o.front,
+      noAutoGroup: true,
+      ...(o.rush ? { rushBefore: o.rushBefore ?? null } : {}),
+    };
+  });
+
+// The planner's decisions on the schedule axis: dates become working-day indexes.
+function planOf(row, dates) {
+  if (!row) return null;
+  const idx = (d) => Math.max(1, dueDayIndex(d, dates));
+  return {
+    manualOrder: row.manual_order ?? null,
+    groups: (row.groups ?? []).map((g) => ({ ...g, day: idx(g.day) })),
+    releases: new Map(Object.entries(row.releases ?? {}).map(([id, d]) => [id, idx(d)])),
+  };
+}
+
+// Readiness inputs of one plant: stock of items with any stock record, open supply lines, zones.
+function readinessInputs({ usage, onHand, stockKnown, supply, zones, today, dates, dayMinutes }) {
+  const known = new Map();
+  for (const id of stockKnown ?? []) known.set(id, onHand?.get(id) ?? 0);
+  // The engine reads the quantity per unit of the parent as `qty`.
+  const boms = new Map(
+    [...usage].map(([id, lines]) => [
+      id,
+      lines.map((l) => ({ componentId: l.componentId, qty: l.qtyPer })),
+    ]),
+  );
+  return {
+    boms,
+    onHand: known,
+    supply: supply ?? new Map(),
+    asOf: today,
+    dates,
+    dayMinutes,
+    zones,
+  };
+}
+
+const zonesOf = (results, siteId) =>
+  new Map(
+    results
+      .filter((r) => r.siteId === siteId && r.policy === 'BUFFER' && r.status === 'planned')
+      .map((r) => [r.itemId, r.zone]),
+  );
+
+// Readiness of an order as stored with the schedule (component codes, dates, quantities).
+function readinessLines(r, codes, units) {
+  const refOf = new Map(units.map((u) => [u.id, u.ref]));
+  return (r?.lines ?? []).map((l) => ({
+    component: codes.get(l.componentId) ?? l.componentId,
+    lot: refOf.get(l.lotId) ?? l.lotId,
+    release: l.release,
+    requirement: l.requirement,
+    onHand: l.onHand,
+    timely: l.timely,
+    before: l.committedBefore,
+    available: l.available,
+    shortage: l.shortage,
+    unknown: l.unknown,
+    replenish: l.replenish,
+    zone: l.zone,
+    overdue: l.overdueSupply,
+    later: l.laterSupply.map((p) => ({ due: p.due, qty: p.qty })),
+  }));
+}
+function readinessMessages(r, codes) {
+  if (!r) return [];
+  const list = (lines) => [...new Set(lines.map((l) => codes.get(l.componentId) ?? l.componentId))];
+  const short = list(r.gaps),
+    unknown = list(r.unknown);
+  const text = (label, ids) =>
+    label + ids.slice(0, 5).join(', ') + (ids.length > 5 ? ` and ${ids.length - 5} more` : '');
+  return [
+    ...(short.length ? [text('Short at release: ', short)] : []),
+    ...(unknown.length ? [text('No stock position: ', unknown)] : []),
+    ...(r.missingBom ? ['No active BOM: materials cannot be validated.'] : []),
+  ];
+}
+
 // Schedules every plant's open production orders for a run and stores the result.
 // results: this run's buffer results ([{ siteId, itemId, status, zone }]); usage: BOM usage.
-export async function scheduleSites(db, run, today, plants, { usage, productionOrders, results }) {
+export async function scheduleSites(
+  db,
+  run,
+  today,
+  plants,
+  { usage, productionOrders, results, onHand, stockKnown },
+) {
   const summary = {};
-  const status = new Map(results.map((r) => [r.siteId + '|' + r.itemId, r]));
+  const supplyBySite = await loadSupplyLines(db);
+  const sequences = await loadSequences(db);
+  const codes = new Map(
+    (
+      await db.query('SELECT id,code FROM items WHERE id=ANY($1::uuid[])', [
+        [...new Set([...usage.values()].flat().map((l) => l.componentId))],
+      ])
+    ).rows.map((r) => [r.id, r.code]),
+  );
   for (const [siteId, plant] of plants) {
     const book = productionOrders.get(siteId) ?? [];
     if (!book.length) continue;
@@ -176,76 +397,48 @@ export async function scheduleSites(db, run, today, plants, { usage, productionO
       continue;
     }
     const D = plant.calendar.dayMinutes;
-    const dates = workingDates(
-      addDays(today, 1),
-      AXIS_DAYS,
-      plant.calendar.workingDays,
-      plant.calendar.holidays,
-    );
-    const orders = book.map((o) => ({
-      id: o.id,
-      ref: o.ref,
-      itemId: o.itemId,
-      code: o.code,
-      qty: o.qty,
-      dueDate: o.due,
-      dueDay: dueDayIndex(o.due, dates),
-    }));
+    const dates = axisDates(plant, today);
+    const orders = unitsOf(book, dates, today);
     const s = schedulePlant({
       orders,
       routings: plant.routings,
       resources: plant.resources,
       dayMinutes: D,
       clubWindowDays: plant.settings.club_window_days,
+      plan: planOf(sequences.get(siteId), dates),
     });
     if (s.groupingExhausted)
       messages.push(
         `Same-item grouping stopped after ${s.groupingChecks} checks to keep the calculation fast; later orders stay in due-date order.`,
       );
+    if (sequences.get(siteId)?.manual_order?.length)
+      messages.push(
+        'The order of work was set by a planner; new orders are placed by due date among them.',
+      );
     const horizon = Math.min(
       dates.length,
-      Math.max(s.horizonDays, ...orders.map((o) => o.dueDay)) + 1,
+      Math.max(s.horizonDays, ...orders.map((o) => o.orderDueDay)) + 1,
     );
     if (s.horizonDays >= dates.length)
       messages.push('The schedule runs past the planning horizon of the calendar.');
     const dateAt = (minute) =>
       dates[Math.min(dates.length - 1, Math.max(0, Math.floor(minute / D + 1e-9)))];
-    // Material check from this run's buffers: a buffered component in breach gates the order;
-    // one without a stock position cannot be validated.
-    const check = (itemId) => {
-      const gated = [],
-        unknown = [];
-      for (const l of usage.get(itemId) ?? []) {
-        const r = status.get(siteId + '|' + l.componentId);
-        if (!r || r.policy !== 'BUFFER') continue;
-        if (r.status === 'missing') unknown.push(l.componentId);
-        else if (r.zone === 'breach') gated.push(l.componentId);
-      }
-      return gated.length
-        ? { v: 'gated', ids: gated }
-        : unknown.length
-          ? { v: 'unknown', ids: unknown }
-          : { v: 'clear', ids: [] };
-    };
-    const codes = new Map(
-      (
-        await db.query('SELECT id,code FROM items WHERE id=ANY($1::uuid[])', [
-          [...new Set([...usage.values()].flat().map((l) => l.componentId))],
-        ])
-      ).rows.map((r) => [r.id, r.code]),
+    // AV-7: time-phased material readiness per order (stock and dated supply, in start order).
+    const readiness = materialReadiness(
+      { orders: new Map(s.orders.map((o) => [o.order.id, o])) },
+      readinessInputs({
+        usage,
+        onHand: onHand?.get(siteId),
+        stockKnown: stockKnown?.get(siteId),
+        supply: supplyBySite.get(siteId),
+        zones: zonesOf(results, siteId),
+        today,
+        dates,
+        dayMinutes: D,
+      }),
     );
     const rows = s.orders.map((o) => {
-      const m = check(o.order.itemId);
-      const msg = m.ids.length
-        ? [
-            (m.v === 'gated' ? 'Component in breach: ' : 'No stock position: ') +
-              m.ids
-                .slice(0, 5)
-                .map((id) => codes.get(id) ?? id)
-                .join(', ') +
-              (m.ids.length > 5 ? ` and ${m.ids.length - 5} more` : ''),
-          ]
-        : [];
+      const r = readiness.get(oidOf(o.order));
       return {
         id: o.order.id,
         position: o.position,
@@ -256,10 +449,14 @@ export async function scheduleSites(db, run, today, plants, { usage, productionO
         finishDate: dates[Math.min(dates.length - 1, o.shipDay - 1)],
         promise: o.order.dueDate,
         slack: o.slack,
-        lateDays: o.late ? o.shipDay - o.order.dueDay : 0,
+        lateDays: o.late ? o.shipDay - (o.order.orderDueDay ?? o.order.dueDay) : 0,
         groupedWith: o.groupedWith,
-        material: m.v,
-        messages: msg,
+        material: r?.status ?? null,
+        messages: readinessMessages(r, codes),
+        lines: readinessLines(r, codes, s.units),
+        planGroup: o.order.planGroup ?? null,
+        manualPlaced: !!o.order.manualPlaced,
+        releaseMin: releaseMinute(o.order, D) || null,
       };
     });
     for (const [i, o] of s.unrouted.entries())
@@ -274,8 +471,8 @@ export async function scheduleSites(db, run, today, plants, { usage, productionO
       const p = rows.slice(i, i + CHUNK);
       const c = (f) => p.map(f);
       await db.query(
-        `INSERT INTO schedule_orders(tenant_id,run_id,site_id,production_order_id,position,status,start_min,finish_min,release_date,finish_date,promise_date,slack_min,late_days,grouped_with,material_check,messages)
-         SELECT $1,$2,$3,r.* FROM unnest($4::uuid[],$5::int[],$6::text[],$7::numeric[],$8::numeric[],$9::date[],$10::date[],$11::date[],$12::numeric[],$13::int[],$14::uuid[],$15::text[],$16::jsonb[]) AS r`,
+        `INSERT INTO schedule_orders(tenant_id,run_id,site_id,production_order_id,position,status,start_min,finish_min,release_date,finish_date,promise_date,slack_min,late_days,grouped_with,material_check,messages,material_lines,plan_group,manual_placed,release_min)
+         SELECT $1,$2,$3,r.* FROM unnest($4::uuid[],$5::int[],$6::text[],$7::numeric[],$8::numeric[],$9::date[],$10::date[],$11::date[],$12::numeric[],$13::int[],$14::uuid[],$15::text[],$16::jsonb[],$17::jsonb[],$18::text[],$19::boolean[],$20::numeric[]) AS r`,
         [
           run.tenant_id,
           run.id,
@@ -293,6 +490,10 @@ export async function scheduleSites(db, run, today, plants, { usage, productionO
           c((r) => r.groupedWith ?? null),
           c((r) => r.material ?? null),
           c((r) => JSON.stringify(r.messages ?? [])),
+          c((r) => JSON.stringify(r.lines ?? [])),
+          c((r) => r.planGroup ?? null),
+          c((r) => r.manualPlaced ?? false),
+          c((r) => r.releaseMin ?? null),
         ],
       );
     }
@@ -444,7 +645,8 @@ export async function listSchedule(
     await db.query(
       `SELECT s.position,s.status,s.start_min,s.finish_min,to_char(s.release_date,'YYYY-MM-DD') AS release_date,
          to_char(s.finish_date,'YYYY-MM-DD') AS finish_date,to_char(s.promise_date,'YYYY-MM-DD') AS promise_date,
-         s.slack_min,s.late_days,s.material_check,s.messages,o.id,o.order_no,o.quantity,i.code AS item,i.name AS item_name,
+         s.slack_min,s.late_days,s.material_check,s.messages,s.material_lines,s.plan_group,s.manual_placed,
+         o.id,o.order_no,o.quantity,i.code AS item,i.name AS item_name,
          u.code AS unit,g.order_no AS grouped_with
        FROM schedule_orders s JOIN production_orders o ON o.id=s.production_order_id JOIN items i ON i.id=o.item_id
        JOIN units u ON u.id=i.base_unit_id LEFT JOIN production_orders g ON g.id=s.grouped_with
@@ -567,10 +769,11 @@ export async function plantPlanning(db, siteId) {
 
 export async function savePlantPlanning(db, tenantId, siteId, value) {
   await db.query(
-    `INSERT INTO plant_planning(tenant_id,site_id,club_window_days,lead_time_basis,day_weights,profile_day)
-     VALUES($1,$2,$3,$4,$5,$6)
+    `INSERT INTO plant_planning(tenant_id,site_id,club_window_days,lead_time_basis,day_weights,profile_day,area_operations)
+     VALUES($1,$2,$3,$4,$5,$6,$7)
      ON CONFLICT (tenant_id,site_id) DO UPDATE SET club_window_days=excluded.club_window_days,lead_time_basis=excluded.lead_time_basis,
-       day_weights=excluded.day_weights,profile_day=excluded.profile_day,version=plant_planning.version+1,updated_at=now()`,
+       day_weights=excluded.day_weights,profile_day=excluded.profile_day,area_operations=excluded.area_operations,
+       version=plant_planning.version+1,updated_at=now()`,
     [
       tenantId,
       siteId,
@@ -578,6 +781,7 @@ export async function savePlantPlanning(db, tenantId, siteId, value) {
       value.lead_time_basis,
       value.day_weights,
       value.profile_day,
+      value.area_operations ?? [],
     ],
   );
 }
@@ -605,4 +809,644 @@ export async function scheduleReadiness(db, siteId, today) {
           ? `${c.orders} open production order(s); ${c.unrouted} have no routing and cannot be scheduled.`
           : `${c.orders} open production order(s) scheduled on the plant resources every recalculation.`,
   };
+}
+
+// ---------- Planning decisions (AV-7) ----------
+
+// The planning date: a fixed simulation date, or today.
+export async function planningDate(db) {
+  return (
+    await db.query(
+      "SELECT to_char(coalesce((SELECT as_of_date FROM planning_state),current_date),'YYYY-MM-DD') AS d",
+    )
+  ).rows[0].d;
+}
+
+// Everything a decision on one plant is judged on, loaded from the current data: the schedule
+// with the planner's decisions applied and the time-phased readiness context.
+export async function decisionContext(db, siteId) {
+  const today = await planningDate(db);
+  const plant = (await loadPlantModel(db, today)).get(siteId);
+  if (!plant?.calendar?.dayMinutes) return null;
+  const usage = await loadBomUsage(db, today);
+  const book = (
+    await db.query(
+      `SELECT ${BOOK_COLUMNS} FROM production_orders o JOIN items i ON i.id=o.item_id
+       WHERE o.site_id=$1 AND o.status='OPEN'`,
+      [siteId],
+    )
+  ).rows.map(bookRow);
+  const stock = (
+    await db.query(
+      `SELECT b.item_id,sum(b.quantity) FILTER (WHERE l.nettable) AS qty FROM stock_balances b
+       JOIN stock_locations l ON l.id=b.location_id WHERE b.site_id=$1 GROUP BY b.item_id`,
+      [siteId],
+    )
+  ).rows;
+  const onHand = new Map(stock.map((r) => [r.item_id, Number(r.qty ?? 0)]));
+  const zones = new Map(
+    (
+      await db.query(
+        `SELECT r.item_id,r.zone FROM planning_results r JOIN planning_state s ON s.current_run_id=r.run_id
+         WHERE r.site_id=$1 AND r.policy='BUFFER' AND r.status='planned'`,
+        [siteId],
+      )
+    ).rows.map((r) => [r.item_id, r.zone]),
+  );
+  const row = (await loadSequences(db, siteId)).get(siteId) ?? null;
+  const dates = axisDates(plant, today);
+  const D = plant.calendar.dayMinutes;
+  const plan = planOf(row, dates);
+  const base = {
+    orders: unitsOf(book, dates, today),
+    routings: plant.routings,
+    resources: plant.resources,
+    dayMinutes: D,
+    clubWindowDays: plant.settings.club_window_days,
+  };
+  const schedule = schedulePlant({ ...base, plan });
+  const ctx = {
+    ...readinessInputs({
+      usage,
+      onHand,
+      stockKnown: onHand.keys(),
+      supply: (await loadSupplyLines(db, siteId)).get(siteId),
+      zones,
+      today,
+      dates,
+      dayMinutes: D,
+    }),
+    routings: plant.routings,
+    resources: plant.resources,
+    drumId: schedule.drumId,
+    clubWindowDays: plant.settings.club_window_days,
+  };
+  const codes = new Map(
+    (
+      await db.query('SELECT id,code FROM items WHERE id=ANY($1::uuid[])', [
+        [
+          ...new Set([
+            ...book.map((b) => b.itemId),
+            ...[...usage.values()].flat().map((l) => l.componentId),
+          ]),
+        ],
+      ])
+    ).rows.map((r) => [r.id, r.code]),
+  );
+  return {
+    siteId,
+    today,
+    plant,
+    dates,
+    base,
+    plan,
+    row,
+    schedule,
+    units: schedule.units,
+    ctx,
+    codes,
+    book,
+  };
+}
+
+// Re-schedules with a changed plan (for a move's before / after).
+export function scheduleWith(dc, plan) {
+  return schedulePlant({ ...dc.base, plan });
+}
+
+const planRow = (row) => ({
+  manual_order: row?.manual_order ?? null,
+  groups: row?.groups ?? [],
+  releases: row?.releases ?? {},
+});
+
+export async function savePlan(db, tenantId, siteId, value) {
+  await db.query(
+    `INSERT INTO plant_sequence(tenant_id,site_id,manual_order,groups,releases) VALUES($1,$2,$3,$4,$5)
+     ON CONFLICT (tenant_id,site_id) DO UPDATE SET manual_order=excluded.manual_order,groups=excluded.groups,
+       releases=excluded.releases,version=plant_sequence.version+1,updated_at=now()`,
+    [
+      tenantId,
+      siteId,
+      value.manual_order,
+      JSON.stringify(value.groups),
+      JSON.stringify(value.releases),
+    ],
+  );
+}
+
+// A decision's plan from a club / declub scenario (the planner's order of work becomes the
+// scenario's sequence; the members' group is pinned with its release day).
+export function planFromScenario(dc, compare, scenario, decisionNo) {
+  const old = planRow(dc.row);
+  const affected = new Set(compare.ids);
+  const groups = old.groups.filter((g) => !g.ids.some((id) => affected.has(id)));
+  for (const g of scenario.groups.filter((g) => g.ids.some((id) => scenario.ids.includes(id))))
+    groups.push({
+      id: g.id,
+      ids: g.ids,
+      item: dc.codes.get(g.fg) ?? g.fg,
+      day: dc.dates[Math.max(0, g.day - 1)],
+      beforeId: g.beforeId ?? null,
+      savedMin: scenario.savedMin,
+      carryUnits: g.ids.reduce((n, id) => n + (scenario.carryBy[id] || 0), 0),
+      decisionNo,
+    });
+  const releases = {};
+  for (const u of scenario.seq) {
+    const day = Math.max(u.planRelease || 0, (!u.manualPlaced && !u.front && u.lotDay) || 0);
+    if (day > 0) releases[u.id] = dc.dates[day - 1];
+  }
+  return { manual_order: [...new Set(scenario.seq.map(oidOf))], groups, releases };
+}
+
+// Compact, display-ready summaries (order numbers, dates, component codes).
+export function describeImpact(dc, imp) {
+  const date = (day) => dc.dates[Math.min(dc.dates.length - 1, Math.max(0, day - 1))];
+  return {
+    changed: imp.rows.length,
+    broken: imp.broken.map((r) => ({
+      order: r.id,
+      promise: date(r.prom),
+      was: date(r.shipBefore),
+      now: date(r.shipAfter),
+    })),
+    recovered: imp.recovered,
+    rows: imp.rows.slice(0, 200).map((r) => ({
+      order: r.id,
+      startBefore: r.startBefore,
+      startAfter: r.startAfter,
+      finishBefore: r.finishBefore,
+      finishAfter: r.finishAfter,
+      promise: date(r.prom),
+      finishDate: date(r.shipAfter),
+      slipDays: r.slipDays,
+      newlyBroken: r.newlyBroken,
+      slackAfter: r.slackAfter,
+      slackConsumed: r.slackConsumed,
+    })),
+    materials: imp.materials,
+    drum: imp.drum,
+    changeoverDelta: imp.changeoverDelta,
+  };
+}
+
+export function describeScenario(dc, s) {
+  const code = (id) => dc.codes.get(id) ?? id;
+  const reasons = s.reasons.map((r) => ({
+    ...r,
+    ...(r.components
+      ? {
+          components: r.components.map((c) => ({
+            component: code(c.componentId),
+            shortage: c.shortage,
+          })),
+        }
+      : {}),
+  }));
+  const members = s.ids.map((id) => {
+    const t = s.after.times.get(id);
+    return {
+      order: id,
+      qty: t?.qty ?? null,
+      promise: t ? dc.dates[Math.max(0, t.prom - 1)] : null,
+      start: t?.start ?? null,
+      finish: t?.finish ?? null,
+      finishDate: t ? dc.dates[Math.max(0, t.ship - 1)] : null,
+      pullDays: s.pullBy[id] ?? 0,
+      carryUnits: s.carryBy[id] ?? 0,
+      materials: s.after.materials.get(id)?.status ?? null,
+    };
+  });
+  return {
+    key: s.key,
+    label: s.label,
+    kind: s.kind,
+    orders: s.ids,
+    members,
+    day: s.day ? dc.dates[s.day - 1] : null,
+    beforeId: s.beforeId ?? null,
+    savedMin: s.savedMin,
+    carryUnits: s.carryUnits,
+    fgCarryUnits: s.fgCarryUnits,
+    pullDays: s.pull,
+    normal: s.normal,
+    conditional: s.conditional,
+    reasons,
+    excluded: (s.excluded ?? []).map((e) => ({ order: e.id, reasons: e.reasons })),
+    impact: describeImpact(dc, s.impact),
+  };
+}
+
+export async function recordDecision(db, actor, siteId, runNo, kind, orders, details) {
+  const no = (await db.query("SELECT next_number('planning_decision') AS n")).rows[0].n;
+  const id = (
+    await db.query(
+      `INSERT INTO planning_decisions(id,tenant_id,site_id,decision_no,kind,orders,run_no,details,decided_by,decided_by_subject)
+       VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [
+        actor.tenant_id,
+        siteId,
+        no,
+        kind,
+        orders,
+        runNo,
+        JSON.stringify(details),
+        actor.id,
+        actor.actor_subject,
+      ],
+    )
+  ).rows[0].id;
+  return { id, no: Number(no) };
+}
+
+export async function listDecisions(db, siteId, limit = 30) {
+  return (
+    await db.query(
+      `SELECT d.decision_no,d.kind,d.orders,d.run_no,d.details,d.decided_at,coalesce(u.name,d.decided_by_subject) AS decided_by
+       FROM planning_decisions d LEFT JOIN app_users u ON u.id=d.decided_by
+       WHERE d.site_id=$1 ORDER BY d.decision_no DESC LIMIT $2`,
+      [siteId, limit],
+    )
+  ).rows;
+}
+
+// ---------- Insert order (AV-7) ----------
+// Reference: Nilkamal simulation handover (21-Sep-2026), the Insert screen: a catalogue item or an
+// odd size (family + L x W x H), a quantity and a need-by date (or a rush quote); four ways of
+// saying yes checked on the drum, the full forward route and time-phased materials.
+
+const ZONE_AT = (r, nfp) =>
+  nfp <= 0
+    ? 'breach'
+    : nfp <= Number(r.top_of_red)
+      ? 'red'
+      : nfp <= Number(r.top_of_yellow)
+        ? 'yellow'
+        : 'green';
+
+// A catalogue item of the plant: routed at the plant, with a BOM. Buffered when the current run
+// planned a buffer for it: the order consumes it (net flow before and after).
+export async function insertItem(db, dc, code) {
+  const it = (
+    await db.query('SELECT id,code,name FROM items WHERE lower(code)=lower($1)', [
+      String(code ?? ''),
+    ])
+  ).rows[0];
+  if (!it) return { refused: `Item ${code} is not in the item master.` };
+  const ops = (dc.base.routings.get(it.id) ?? []).filter((op) =>
+    dc.base.resources.has(op.resourceId),
+  );
+  if (!ops.length)
+    return {
+      item: it,
+      refused: `${it.code} has no routing at this plant: it cannot be timed. No average or sibling routing is substituted.`,
+    };
+  if (!(dc.ctx.boms.get(it.id) ?? []).length)
+    return { item: it, refused: `${it.code} has no BOM: its materials cannot be checked.` };
+  const b = (
+    await db.query(
+      `SELECT r.nfp,r.zone,r.top_of_red,r.top_of_yellow,r.top_of_green,r.on_hand,r.open_supply,r.qualified_demand,r.adu
+       FROM planning_results r JOIN planning_state s ON s.current_run_id=r.run_id
+       WHERE r.site_id=$1 AND r.item_id=$2 AND r.policy='BUFFER' AND r.status='planned'`,
+      [dc.siteId, it.id],
+    )
+  ).rows[0];
+  const drumMin = ops
+    .filter((op) => op.resourceId === dc.ctx.drumId)
+    .reduce((n, op) => n + op.perUnit, 0);
+  return {
+    item: it,
+    itemId: it.id,
+    class: b ? 'buffered' : 'standard',
+    operations: ops.length,
+    drumMinPerUnit: drumMin,
+    buffer: b
+      ? {
+          nfp: Number(b.nfp),
+          zone: b.zone,
+          topOfRed: Number(b.top_of_red),
+          topOfYellow: Number(b.top_of_yellow),
+          topOfGreen: Number(b.top_of_green),
+          onHand: Number(b.on_hand),
+          onOrder: Number(b.open_supply),
+          qualifiedDemand: Number(b.qualified_demand),
+          adu: Number(b.adu),
+          after: (qty) => ({ nfp: Number(b.nfp) - qty, zone: ZONE_AT(b, Number(b.nfp) - qty) }),
+        }
+      : null,
+  };
+}
+
+// Families an odd size can be estimated in: a standard of the family is routed here, has a BOM
+// and carries its size in its code.
+export async function oddSizeFamilies(db, dc) {
+  const fams = (await db.query('SELECT code,name FROM odd_size_families ORDER BY name,code')).rows;
+  const routed = (
+    await db.query('SELECT id,code FROM items WHERE item_type=$1', ['FG'])
+  ).rows.filter(
+    (i) => dc.base.routings.has(i.id) && dc.ctx.boms.has(i.id) && /\d\d\d\d\d$/.test(i.code),
+  );
+  return fams.map((f) => ({
+    code: f.code,
+    name: f.name,
+    standards: routed.filter((i) => i.code.startsWith(f.code)).length,
+  }));
+}
+
+const dimText = (dims) => dims.map((x) => String(+x)).join('X');
+
+// An odd size: the nearest standard of the family (same thickness first, then closest area); its
+// routing with area operations scaled, its BOM with metres by area, pieces as they are, the rest
+// by volume. Nothing is written until the planner commits.
+export async function oddSizeItem(db, dc, familyCode, dims) {
+  const fam = (
+    await db.query('SELECT code,name FROM odd_size_families WHERE lower(code)=lower($1)', [
+      String(familyCode ?? ''),
+    ])
+  ).rows[0];
+  if (!fam) return { refused: `Family ${familyCode} is not an odd-size family of this company.` };
+  const settings = dc.plant.settings;
+  const areaOps = settings.area_operations ?? [];
+  const cands = (
+    await db.query("SELECT id,code FROM items WHERE item_type='FG' AND code LIKE $1", [
+      fam.code + '%',
+    ])
+  ).rows
+    .filter((i) => dc.base.routings.has(i.id) && dc.ctx.boms.has(i.id))
+    .map((i) => ({ itemId: i.id, code: i.code }));
+  const m = matchOddSize(fam.code, dims, cands, dc.base.routings, areaOps);
+  if (!m.ok)
+    return {
+      family: fam,
+      refused: `No routed ${fam.name} standard with a BOM and a size in its code at this plant: this size cannot be timed.`,
+    };
+  const src = (
+    await db.query(
+      `SELECT l.component_item_id,l.quantity,l.unit_id,u.code AS unit,l.scrap_pct,l.line_no
+       FROM boms b JOIN bom_lines l ON l.bom_id=b.id JOIN units u ON u.id=l.unit_id
+       WHERE b.item_id=$1 AND b.active AND b.effective_from <= $2::date AND (b.effective_to IS NULL OR b.effective_to >= $2::date)
+       ORDER BY l.line_no`,
+      [m.source.itemId, dc.today],
+    )
+  ).rows;
+  const ib = inheritBom(
+    src.map((l) => ({ componentId: l.component_item_id, qty: Number(l.quantity), unit: l.unit })),
+    m.sourceSize,
+    dims,
+  );
+  if (!ib.ok)
+    return {
+      family: fam,
+      refused: `Materials cannot be inherited from ${m.source.code}: unit ${ib.line.unit} is not a length, area, weight, volume or piece.`,
+    };
+  const code = `${fam.code}-${dimText(dims)}`;
+  const existing = (
+    await db.query('SELECT id,code,name FROM items WHERE lower(code)=lower($1)', [code])
+  ).rows[0];
+  // The simulation's view: the source usage per line, scaled by the line's factor.
+  const usage = dc.ctx.boms.get(m.source.itemId);
+  return {
+    family: fam,
+    class: 'oddsize',
+    code,
+    existing: existing ?? null,
+    itemId: existing?.id ?? 'new:' + code,
+    source: m.source,
+    sourceSize: m.sourceSize,
+    dims,
+    scale: m.scale,
+    exactThickness: m.exactThickness,
+    candidates: m.candidates,
+    areaOps,
+    ops: m.ops,
+    bomLines: src.map((l, i) => ({ ...l, qty: ib.lines[i].qty, factor: ib.lines[i].factor })),
+    usage: usage.map((u, i) => ({ componentId: u.componentId, qty: u.qty * ib.lines[i].factor })),
+    area: ib.area,
+    volume: ib.volume,
+    drumMinPerUnit: m.ops
+      .filter((op) => op.resourceId === dc.ctx.drumId)
+      .reduce((n, op) => n + op.perUnit, 0),
+  };
+}
+
+// The scenarios of an insert. line: { itemId, qty, needDay } (needDay null for a rush quote).
+export function simulateInsertOrder(dc, target, line, intent) {
+  const routings = new Map(dc.base.routings),
+    boms = new Map(dc.ctx.boms);
+  if (target.class === 'oddsize' && !target.existing) {
+    routings.set(target.itemId, target.ops);
+    boms.set(target.itemId, target.usage);
+  }
+  const book = { ...dc.base, routings, plan: dc.plan };
+  const rctx = { ...dc.ctx, boms, routings };
+  const drumRes = dc.plant.resources.get(dc.ctx.drumId);
+  const env = {
+    today: dc.today,
+    dates: dc.dates,
+    current: dc.units,
+    baseTimes: orderTimes(forwardPass({ ...book, sequence: dc.units }), dc.base.dayMinutes),
+    baseDrum: drumRes ? allocate(drumRes, dc.units, routings).changeover : 0,
+    drum: drumBook(dc.units, rctx),
+  };
+  const id = 'NEW';
+  return intent === 'rush'
+    ? rushInsert({ itemId: line.itemId, qty: line.qty }, id, book, rctx, env)
+    : simulateInsert([line], id, book, rctx, env);
+}
+
+// Display-ready scenarios: dates, order numbers and component codes.
+export function describeInsert(dc, res) {
+  const date = (d) => dc.dates[Math.min(dc.dates.length - 1, Math.max(0, d - 1))];
+  const code = (id) => dc.codes.get(id) ?? id;
+  const D = dc.base.dayMinutes;
+  return {
+    intent: res.intent,
+    recommended: res.rec,
+    supported: res.supported,
+    evaluated: res.evaluated ?? null,
+    scenarios: res.order.map((k) => {
+      const s = res.scenarios[k];
+      const reports = s.materials?.reports ?? [];
+      const lines = reports.flatMap((r) => r.lines ?? []);
+      return {
+        key: k,
+        label: s.label,
+        feasible: s.feasible !== false && !s.unplaced,
+        reasons: (s.reasons ?? []).map((r) => ({ ...r, ...(r.day ? { date: date(r.day) } : {}) })),
+        lots: s.lines.flatMap((l) => l.lots.map((x) => ({ qty: x.qty, date: date(x.day) }))),
+        front: k === 'whole_now',
+        changeoverMin: s.chgMinAdded ?? 0,
+        carryUnits: s.carryUnits ?? 0,
+        ordersSlipped: s.ordersSlipped ?? 0,
+        promisesBroken: s.promisesBroken ?? 0,
+        materials: {
+          status: s.materials?.status ?? 'unknown',
+          gated: !!s.materials?.gated,
+          gaps: lines
+            .filter((l) => l.shortage > 1e-6)
+            .slice(0, 50)
+            .map((l) => ({
+              component: code(l.componentId),
+              release: l.release,
+              requirement: l.requirement,
+              available: l.available,
+              shortage: l.shortage,
+              later: (l.laterSupply ?? []).map((p) => ({ qty: p.qty, due: p.due })),
+            })),
+          unknown: [...new Set(lines.filter((l) => l.unknown).map((l) => code(l.componentId)))],
+          missingBom: reports.some((r) => r.missingBom),
+          replenish: [...new Set(reports.flatMap((r) => r.replenishComponents ?? []))].map(code),
+        },
+        production: (s.production ?? []).map((p) => ({
+          qty: p.qty,
+          start: p.start,
+          finish: p.finish,
+          startDate: date(1 + Math.floor(p.start / D + 1e-9)),
+          finishDate: date(Math.max(1, Math.ceil(p.finish / D - 1e-9))),
+        })),
+        finishDate: s.fullRouteFinish ? date(s.fullRouteFinish) : null,
+        meetsNeedBy: s.capacityMeetsPromise ?? null,
+        broken: (s.capacityBroken ?? s.broken ?? []).map((b) => ({
+          order: b.id,
+          promise: date(b.prom),
+          was: date(b.was),
+          now: date(b.ship),
+        })),
+        forwardChangeoverMin: s.forwardChgDelta ?? s.chgMinAdded ?? 0,
+        forwardCarry: s.forwardCarry ?? s.carryUnits ?? 0,
+        forwardShifted: s.forwardShifted ?? s.ordersSlipped ?? 0,
+        quoteDate:
+          k === 'decline' ? date(s.lines[0].quoteDay) : s.quoteDay ? date(s.quoteDay) : null,
+        rushBefore: s.rushBefore === undefined ? undefined : s.rushBefore,
+      };
+    }),
+  };
+}
+
+// Writes an odd size the planner committed: item, estimated BOM and routing, provenance.
+export async function createOddSizeItem(db, actor, dc, t) {
+  const src = (
+    await db.query('SELECT base_unit_id,family FROM items WHERE id=$1', [t.source.itemId])
+  ).rows[0];
+  const itemId = (
+    await db.query(
+      `INSERT INTO items(id,tenant_id,code,name,item_type,make_buy,base_unit_id,family,demand_class)
+       VALUES(gen_random_uuid(),$1,$2,$3,'FG','MAKE',$4,$5,'stranger') RETURNING id`,
+      [
+        actor.tenant_id,
+        t.code,
+        `${t.family.name} ${t.dims.map((x) => +x).join('x')} odd size (estimated)`.slice(0, 120),
+        src.base_unit_id,
+        src.family,
+      ],
+    )
+  ).rows[0].id;
+  const bom = (
+    await db.query(
+      `INSERT INTO boms(id,tenant_id,item_id,revision,effective_from) VALUES(gen_random_uuid(),$1,$2,'EST1',$3) RETURNING id`,
+      [actor.tenant_id, itemId, dc.today],
+    )
+  ).rows[0].id;
+  await db.query(
+    `INSERT INTO bom_lines(id,tenant_id,bom_id,line_no,component_item_id,quantity,unit_id,scrap_pct)
+     SELECT gen_random_uuid(),$1,$2,x.n,x.c,x.q,x.u,x.s FROM unnest($3::int[],$4::uuid[],$5::numeric[],$6::uuid[],$7::numeric[]) AS x(n,c,q,u,s)`,
+    [
+      actor.tenant_id,
+      bom,
+      t.bomLines.map((l) => l.line_no),
+      t.bomLines.map((l) => l.component_item_id),
+      t.bomLines.map((l) => l.qty),
+      t.bomLines.map((l) => l.unit_id),
+      t.bomLines.map((l) => l.scrap_pct),
+    ],
+  );
+  const srcOps = (
+    await db.query(
+      `SELECT o.sequence,o.operation_code,o.description,o.resource_id,o.setup_minutes
+       FROM routings r JOIN routing_operations o ON o.routing_id=r.id
+       WHERE r.site_id=$1 AND r.item_id=$2 AND r.active AND r.effective_from <= $3::date AND (r.effective_to IS NULL OR r.effective_to >= $3::date)
+       ORDER BY o.sequence`,
+      [dc.siteId, t.source.itemId, dc.today],
+    )
+  ).rows;
+  const perUnit = new Map(t.ops.map((op) => [op.sequence, op.perUnit]));
+  const routing = (
+    await db.query(
+      `INSERT INTO routings(id,tenant_id,site_id,item_id,revision,effective_from) VALUES(gen_random_uuid(),$1,$2,$3,'EST1',$4) RETURNING id`,
+      [actor.tenant_id, dc.siteId, itemId, dc.today],
+    )
+  ).rows[0].id;
+  const ops = srcOps.filter((o) => perUnit.get(o.sequence) > 0);
+  await db.query(
+    `INSERT INTO routing_operations(id,tenant_id,routing_id,sequence,operation_code,description,resource_id,setup_minutes,run_minutes_per_unit)
+     SELECT gen_random_uuid(),$1,$2,x.s,x.c,x.d,x.r,x.m,x.p FROM unnest($3::int[],$4::text[],$5::text[],$6::uuid[],$7::numeric[],$8::numeric[]) AS x(s,c,d,r,m,p)`,
+    [
+      actor.tenant_id,
+      routing,
+      ops.map((o) => o.sequence),
+      ops.map((o) => o.operation_code),
+      ops.map((o) =>
+        (t.areaOps.includes(o.operation_code)
+          ? `${o.description} (area x${t.scale.toFixed(4)})`
+          : o.description
+        ).slice(0, 120),
+      ),
+      ops.map((o) => o.resource_id),
+      ops.map((o) => o.setup_minutes),
+      ops.map((o) => perUnit.get(o.sequence)),
+    ],
+  );
+  await db.query(
+    `INSERT INTO estimated_items(tenant_id,item_id,site_id,family,source_item_id,dimensions,source_dimensions,area_ratio,volume_ratio,exact_thickness,area_operations,created_by)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [
+      actor.tenant_id,
+      itemId,
+      dc.siteId,
+      t.family.code,
+      t.source.itemId,
+      t.dims,
+      t.sourceSize,
+      t.area,
+      t.volume,
+      t.exactThickness,
+      t.areaOps,
+      actor.id,
+    ],
+  );
+  return itemId;
+}
+
+// Writes a committed order as production-order lots sharing one order reference.
+export const nextInsertRef = async (db) =>
+  'INS-' + (await db.query("SELECT next_number('inserted_order') AS n")).rows[0].n;
+
+export async function writeInsertedOrder(db, tenantId, siteId, o) {
+  const ref = o.ref;
+  const many = o.lots.length > 1;
+  for (const [i, lot] of o.lots.entries())
+    await db.query(
+      `INSERT INTO production_orders(id,tenant_id,site_id,order_no,item_id,quantity,due_date,order_type,reference,
+         source,order_ref,lot_no,lot_count,lot_date,front,rush,rush_before,customer,decision_no)
+       VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,'INSERT',$7,'INSERTED',$8,$9,$10,$11,$12,$13,$14,$7,$15)`,
+      [
+        tenantId,
+        siteId,
+        many ? `${ref}-${i + 1}` : ref,
+        o.itemId,
+        lot.qty,
+        o.needDate,
+        o.customer,
+        ref,
+        i + 1,
+        o.lots.length,
+        lot.date,
+        !!o.front,
+        !!o.rush,
+        o.rush ? (o.rushBefore ?? null) : null,
+        o.decisionNo,
+      ],
+    );
+  return ref;
 }

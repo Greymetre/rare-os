@@ -1924,3 +1924,57 @@ table.load-table tr.drum td:first-child {
   margin: 0;
   flex: 0 0 auto;
 }
+/* ---------- AV-7 decisions ---------- */
+.grip {
+  cursor: grab;
+  color: #9aa1ae;
+  margin-right: 6px;
+  letter-spacing: -2px;
+}
+tr[draggable='true'] {
+  cursor: grab;
+}
+tr.drop-target td {
+  border-top: 1px dashed var(--accent);
+}
+.cell-sub.pinned {
+  color: #33599e;
+  font-weight: 600;
+}
+.impact-report {
+  padding: 16px 20px;
+}
+.club-options .scenario-grid,
+section[aria-label='Insert options'] .scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  padding: 0 20px 20px;
+}
+.scenario-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #fff;
+}
+.scenario-card.recommended {
+  border-color: var(--accent);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+.scenario-card h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.warning-text {
+  color: #a3341f;
+}
+.scenario-card details {
+  margin: 8px 0;
+}
+.scenario-card .compact {
+  width: 100%;
+}
