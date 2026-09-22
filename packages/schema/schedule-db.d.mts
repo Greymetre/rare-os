@@ -87,3 +87,45 @@ export function writeInsertedOrder(
   siteId: string,
   order: any,
 ): Promise<string>;
+export const NOT_PENDING: string;
+export function loadExpediteActions(db: Db, siteId?: string | null): Promise<Map<string, any[]>>;
+export function loadOrderPlans(
+  db: Db,
+  siteId?: string | null,
+): Promise<Map<string, Map<string, any>>>;
+export function materialsContext(db: Db, dc: any): Promise<any>;
+export function orderUnits(
+  db: Db,
+  dc: any,
+  ref: string,
+): Promise<{ units: any[]; scheduled: boolean }>;
+export function describeActions(dc: any, rows: any[]): any[];
+export function expeditePreview(db: Db, dc: any, ref: string): Promise<any>;
+export function writeExpediteBundle(
+  db: Db,
+  actor: any,
+  dc: any,
+  ids: string[],
+  rows: any[],
+  decisionNo: number,
+): Promise<{ bundleId: string; bundleNo: number; actions: string[] }>;
+export function refreshBundles(db: Db, siteId: string): Promise<void>;
+export function listExpedites(db: Db, dc: any): Promise<any>;
+export function laterPreview(
+  db: Db,
+  dc: any,
+  ref: string,
+  candidateDate?: string | null,
+): Promise<any>;
+export function describeLater(dc: any, res: any): any[];
+export function applyLater(
+  db: Db,
+  actor: any,
+  dc: any,
+  ref: string,
+  res: any,
+  s: any,
+  mode: string,
+  decisionNo: number,
+): Promise<any>;
+export function listPending(db: Db, siteId: string): Promise<any[]>;

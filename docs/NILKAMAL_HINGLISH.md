@@ -77,17 +77,25 @@ ka run + changeover** exact.
   materials, broken promises, measured changeover); split commit ke baad sequence, readiness aur **86/86
   buffers** exact. Rush mein demo "kal" ki date do baar ginta hai (539 vs hamare 462 candidates) — result same.
 
+## Materials decisions (AV-8)
+
+- Walkthrough §4 ki parity (22-Sep-2026, demo v13):
+  - **Expedite:** row (PO 4502939453/60, 10 NOS), approve, late (03-Aug) aur timely (28-Jul) confirmation ke baad status aur order state.
+  - **Quote later:** auto, 12-Aug candidate aur pending review ke scenarios.
+  - **Propose ke baad aur confirm ke baad:** dono par **86/86 buffers** exact.
+  - **Seed order pending:** 15625229 ke scenarios aur 86/86 buffers exact. Pending imported order apne FG ki demand se ghat jaata hai, demo jaisa.
+- Hamara farq: expedite approval **maker-checker** hai (demo me requester khud approve kar sakta hai).
+
 ## Screens
 
 - **Stock and demand → Production orders**: order par click → poora BOM: per unit, zaroorat, buffer zone,
   on hand ("not available" agar stock record nahi), on order, net flow, needed by, verdict.
 - **Planning → Buffer board**: detail mein weekly usage, CV, safety, demand ka breakdown, driving orders aur lead time at loading.
-- **Planning → Scheduler / Insert order / Gantt / Resource load**, **Setup → Plant planning**.
+- **Planning → Scheduler / Insert order / Pending orders / Expedites / Gantt / Resource load**, **Setup → Plant planning**.
 - **Buffer profiles**: "Zone method" = Weekly (Nilkamal).
 
 ## Abhi baaki (demo mein hai, yahan nahi)
 
-Expedite existing PO, quote-later pending line aur customer ko nayi date (AV-8); SAP ZMTO lines ka import
-(abhi odd size screen par family + size se aata hai). Demo ka resource load graph drum ke "nose to tail" model par hai; hamara graph timed schedule se
+SAP ZMTO lines ka import (abhi odd size screen par family + size se aata hai); make order release (AV-9). Demo ka resource load graph drum ke "nose to tail" model par hai; hamara graph timed schedule se
 asli busy minutes dikhata hai (totals same, din-wise baant alag). Approval
 hamara maker-checker hi rahega (demo ka one-click nahi).

@@ -1,5 +1,6 @@
 import { planningStatus } from '../../../packages/schema/planning-db.mjs';
 import { compareClub, impact, snapshot } from '../../../packages/engines/decisions.mjs';
+import { expediteRows } from '../../../packages/engines/materials-decisions.mjs';
 import {
   decisionContext,
   describeImpact,
@@ -10,6 +11,8 @@ import {
   recordDecision,
   savePlan,
   scheduleWith,
+  materialsContext,
+  writeExpediteBundle,
   createOddSizeItem,
   describeInsert,
   insertItem,
@@ -64,7 +67,7 @@ async function runFor(db: PoolClient, siteId: string, view: string) {
 
 // The planner acts on the calculation they reviewed: the planning run must be current and up to
 // date, and the plant's decisions unchanged since the preview.
-async function freshContext(db: PoolClient, siteId: string, raw: any) {
+export async function freshContext(db: PoolClient, siteId: string, raw: any) {
   const status = await planningStatus(db);
   if (!status.upToDate)
     fail(
@@ -383,14 +386,8 @@ export class ScheduleController {
           'PLANNING_STALE',
           'The scenario changed since the preview. Review the options again.',
         );
-      if (!s.normal)
-        fail(
-          409,
-          'NEEDS_EXPEDITE',
-          s.conditional
-            ? 'This club needs material that is not yet available at its release. Request an expedite first (coming in AV-8) or apply a scenario without a gap.'
-            : 'This scenario cannot be applied: see its reasons.',
-        );
+      if (!s.normal && !s.conditional)
+        fail(409, 'NOT_FEASIBLE', 'This scenario cannot be applied: see its reasons.');
       const kind = s.kind === 'declub' ? 'declub' : 'club';
       const summary = describeScenario(dc, s);
       const d = await recordDecision(db, actor, plant.id, runNo, kind, s.ids, {
@@ -399,6 +396,13 @@ export class ScheduleController {
         impact: summary.impact,
       });
       await savePlan(db, actor.tenant_id, plant.id, planFromScenario(dc, c, s, d.no));
+      // AV-8: a club that needs material is applied with a linked expedite request.
+      let bundle: any = null;
+      if (s.conditional && !s.normal) {
+        await materialsContext(db, dc);
+        const rows = expediteRows(s.after, s.ids, dc.ctx.supply, dc.today);
+        bundle = await writeExpediteBundle(db, actor, dc, s.ids, rows, d.no);
+      }
       await audit(db, actor, 'schedule.' + kind, 'planning_decision', d.id, null, {
         plant: plant.code,
         item: dc.codes.get(itemId),
@@ -411,7 +415,7 @@ export class ScheduleController {
         message:
           kind === 'declub'
             ? `Decision #${d.no}: ${s.ids.length} order(s) of ${dc.codes.get(itemId)} back on their promise dates. The schedule recalculates in a few seconds.`
-            : `Decision #${d.no}: ${s.ids.join(', ')} run together from ${summary.day}; ${Math.round(s.savedMin)} min of changeover saved. The schedule recalculates in a few seconds.`,
+            : `Decision #${d.no}: ${s.ids.join(', ')} run together from ${summary.day}; ${Math.round(s.savedMin)} min of changeover saved.${bundle ? ` Material expedite EXP-${bundle.bundleNo} requested: the club stays conditional until the supplier confirms.` : ''} The schedule recalculates in a few seconds.`,
         impact: summary.impact,
       };
     });

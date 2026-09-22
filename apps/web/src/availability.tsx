@@ -1,4 +1,12 @@
-import { Gantt, InsertOrder, PlanningSettings, ResourceLoad, Scheduler } from './schedule';
+import {
+  Expedites,
+  Gantt,
+  InsertOrder,
+  PendingOrders,
+  PlanningSettings,
+  ResourceLoad,
+  Scheduler,
+} from './schedule';
 import { useEffect, useState } from 'react';
 import { download, useApi } from './api-client';
 import { Boms, Calendars, PlantPicker, PlantReadiness, Resources, Routings } from './plant-model';
@@ -1111,6 +1119,8 @@ export function Availability({
     'Buffer board',
     'Scheduler',
     'Insert order',
+    'Pending orders',
+    'Expedites',
     'Gantt',
     'Resource load',
     'Plant planning',
@@ -1147,7 +1157,15 @@ export function Availability({
                   'Planning',
                   [
                     ...(has('planning.read')
-                      ? ['Buffer board', 'Scheduler', 'Insert order', 'Gantt', 'Resource load']
+                      ? [
+                          'Buffer board',
+                          'Scheduler',
+                          'Insert order',
+                          'Pending orders',
+                          'Expedites',
+                          'Gantt',
+                          'Resource load',
+                        ]
                       : []),
                     ...(has('purchase.read') ? ['Purchase proposals'] : []),
                   ],
@@ -1278,6 +1296,24 @@ export function Availability({
       )}
       {tab === 'Insert order' && plantId && (
         <InsertOrder
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Pending orders' && plantId && (
+        <PendingOrders
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Expedites' && plantId && (
+        <Expedites
           key={plantId}
           csrf={csrf}
           plantId={plantId}

@@ -838,6 +838,105 @@ try {
   console.log(
     'PASS decisions and inserts: decisions append-only with unique numbers, inserted lots dated and consistent, estimates permanent with 3 dimensions, plan of work is a planning input, company isolation',
   );
+  // AV-8: expedite requests are approved by someone else, only a full supplier confirmation is
+  // supply, nothing is deleted; order plans are planning inputs.
+  const poLine = randomUUID();
+  await db.query(
+    'INSERT INTO purchase_order_lines(id,tenant_id,po_id,line_no,item_id,unit_id,unit_factor,quantity,due_date) VALUES($1,$2,$3,60,$4,$5,1,90,current_date+6)',
+    [poLine, tenant, po, itemId, isoUnit],
+  );
+  const bundle = randomUUID(),
+    requester = randomUUID();
+  await db.query(
+    "INSERT INTO expedite_bundles(id,tenant_id,site_id,bundle_no,orders,order_key,requested_by) VALUES($1,$2,$3,1,ARRAY['WO-15625002'],'WO-15625002',$4)",
+    [bundle, tenant, site, requester],
+  );
+  const beforeExpedite = await markers();
+  const expedite = (no, extra) =>
+    `INSERT INTO expedite_actions(id,tenant_id,site_id,action_no,action_key,kind,component_item_id,quantity,required_date,po_line_id,state,requested_by,approved_by,confirmed_date,confirmed_qty,confirmation_ref)
+     VALUES(gen_random_uuid(),'${tenant}','${site}',${no},'k${no}',${extra})`;
+  await db.query(
+    expedite(
+      1,
+      `'EXPEDITE_PO','${itemId}',10,current_date,'${poLine}','approved','${requester}',gen_random_uuid(),null,null,null`,
+    ),
+  );
+  assert.ok((await markers()) > beforeExpedite, 'expedite actions are planning inputs');
+  await db.query(
+    "INSERT INTO order_plans(tenant_id,site_id,order_ref,state,original_date,proposed_date) VALUES($1,$2,'WO-15625002','awaiting_confirmation',current_date,current_date+5)",
+    [tenant, site],
+  );
+  for (const [label, code, sql] of [
+    [
+      'approved by the requester',
+      '23514',
+      expedite(
+        2,
+        `'EXPEDITE_PO','${itemId}',10,current_date,'${poLine}','approved','${requester}','${requester}',null,null,null`,
+      ),
+    ],
+    [
+      'expedite of an existing PO without its line',
+      '23514',
+      expedite(
+        3,
+        `'EXPEDITE_PO','${itemId}',10,current_date,null,'requested',null,null,null,null,null`,
+      ),
+    ],
+    [
+      'cannot-validate row with a quantity',
+      '23514',
+      expedite(
+        4,
+        `'CANNOT_VALIDATE','${itemId}',10,null,null,'cannot_validate',null,null,null,null,null`,
+      ),
+    ],
+    [
+      'confirmation without a supplier reference',
+      '23514',
+      expedite(
+        5,
+        `'NEW_PO','${itemId}',10,current_date,null,'confirmed',null,null,current_date,10,null`,
+      ),
+    ],
+    [
+      'confirmation above the request',
+      '23514',
+      expedite(
+        6,
+        `'NEW_PO','${itemId}',10,current_date,null,'confirmed',null,null,current_date,11,'SUP-1'`,
+      ),
+    ],
+    [
+      'unknown action state',
+      '23514',
+      expedite(7, `'NEW_PO','${itemId}',10,current_date,null,'maybe',null,null,null,null,null`),
+    ],
+    [
+      'pending order without a proposed date',
+      '23514',
+      `INSERT INTO order_plans(tenant_id,site_id,order_ref,state) VALUES('${tenant}','${site}','WO-X','awaiting_confirmation')`,
+    ],
+    ['delete an expedite action', '42501', 'DELETE FROM expedite_actions'],
+    ['delete an expedite bundle', '42501', 'DELETE FROM expedite_bundles'],
+    ['delete an order plan', '42501', 'DELETE FROM order_plans'],
+  ])
+    await denied(label, code, sql);
+  await db.query('RESET ROLE');
+  await db.query("SELECT set_config('app.tenant_id','',true)");
+  await db.query(
+    "INSERT INTO order_plans(tenant_id,site_id,order_ref,state,proposed_date) VALUES($1,$2,'HIDDEN-1','awaiting_confirmation',current_date)",
+    [other, hiddenSite],
+  );
+  await db.query('SET LOCAL ROLE rare_app');
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
+  assert.deepEqual(
+    (await db.query('SELECT order_ref FROM order_plans')).rows.map((r) => r.order_ref),
+    ['WO-15625002'],
+  );
+  console.log(
+    'PASS materials decisions: approval by someone else, only a full supplier confirmation within the request, pending orders dated, nothing deleted, planning inputs, company isolation',
+  );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);
   const pending = await db.query('SELECT * FROM outbox_pending(500)');

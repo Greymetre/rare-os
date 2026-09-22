@@ -187,6 +187,7 @@ function bomOrder(ids, usage) {
 //   series?: Map(itemId -> { weeks, blocks }) effective weekly demand for WEEKLY profiles,
 //   stockKnown?: Set(itemId) items with a stock record (WEEKLY: others have no known position),
 //   leadTimes?: Map(itemId -> { days, factor, unbounded }) made items' lead time at planned loading
+//   pendingDemand?: Map(itemId -> qty) imported orders awaiting a customer date (off the item's demand)
 // }
 export function planPlant(input) {
   const { today, settings, adu, usage, onHand, supply, demand } = input;
@@ -421,6 +422,9 @@ export function planPlant(input) {
     if (row.status !== 'planned') continue;
     const s = byItem.get(row.itemId);
     const isWeekly = weekly(s);
+    // Orders awaiting the customer's new date are not demand on their finished good now.
+    const pending = input.pendingDemand?.get(row.itemId) ?? 0;
+    if (pending > 0) row.qualifiedDemand = Math.max(0, row.qualifiedDemand - pending);
     row.qualifiedDemand = round6(row.qualifiedDemand);
     row.spikeDemand = round6(row.spikeDemand);
     row.outsideHorizon = round6(row.outsideHorizon);

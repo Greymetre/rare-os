@@ -7,6 +7,7 @@ import { syncProposals } from './purchase-db.mjs';
 import {
   BOOK_COLUMNS,
   bookRow,
+  NOT_PENDING,
   loadBomUsage,
   loadPlantModel,
   plantLeadTimes,
@@ -351,11 +352,22 @@ async function loadInputs(db, today) {
   const productionOrders = new Map();
   for (const o of (
     await db.query(
-      `SELECT ${BOOK_COLUMNS} FROM production_orders o JOIN items i ON i.id=o.item_id WHERE o.status='OPEN'`,
+      `SELECT ${BOOK_COLUMNS} FROM production_orders o JOIN items i ON i.id=o.item_id WHERE o.status='OPEN' AND ${NOT_PENDING}`,
     )
   ).rows) {
     if (!productionOrders.has(o.site_id)) productionOrders.set(o.site_id, []);
     productionOrders.get(o.site_id).push(bookRow(o));
+  }
+  // AV-8: imported orders awaiting the customer's new date leave their finished good's demand.
+  const pendingDemand = new Map();
+  for (const r of (
+    await db.query(
+      `SELECT o.site_id,o.item_id,sum(o.quantity) AS qty FROM production_orders o
+       WHERE o.status='OPEN' AND o.source='IMPORT' AND NOT ${NOT_PENDING} GROUP BY o.site_id,o.item_id`,
+    )
+  ).rows) {
+    if (!pendingDemand.has(r.site_id)) pendingDemand.set(r.site_id, new Map());
+    pendingDemand.get(r.site_id).set(r.item_id, Number(r.qty));
   }
   const supply = bySite(
     (
@@ -431,6 +443,7 @@ async function loadInputs(db, today) {
     weeklySeries,
     stockKnown,
     productionOrders,
+    pendingDemand,
   };
 }
 
@@ -467,6 +480,7 @@ export function planSites(inputs, today, plants = new Map()) {
       supply: inputs.supply.get(siteId) ?? new Map(),
       demand: inputs.demand.get(siteId) ?? [],
       productionOrders: inputs.productionOrders?.get(siteId) ?? [],
+      pendingDemand: inputs.pendingDemand?.get(siteId) ?? new Map(),
       series,
       stockKnown: inputs.stockKnown?.get(siteId) ?? new Set(),
       leadTimes: plantLeadTimes(plants.get(siteId), settings, adu),

@@ -465,3 +465,57 @@ MFRCFSSFBND78725 × 160** → quote 03-Oct (before 15627039, Commit + replenish)
 - **View buffers, schedules and planning results**: saare previews.
 - **Change the schedule: move, club and declub orders**: club/declub/move/release.
 - **Insert customer orders into the schedule and quote dates**: Insert order commit aur decline quote.
+
+## AV-8 — Materials decisions (expedite, later date, pending orders)
+
+**Yeh kya karta hai:** jab kisi order ka material uske release par kam ho ("Expedite or quote later"), planner ke paas do raaste hain:
+
+1. **Request material expedite**: kaunsa existing PO line pehle aana chahiye (ya naya PO), kitna, kab tak.
+   - **Approve** sirf irada hai, supply nahi. Aur **maker-checker**: jisne request ki, woh khud approve nahi kar sakta.
+   - **Supplier ki confirmation** (date, quantity, reference) hi supply ko move karti hai. Confirm ki gayi quantity us date par aati hai, baaki PO apni due date par rehta hai.
+   - Supplier ki date zaroorat ke baad ho → **late** → order "Decision required" par wapas.
+2. **Explore / quote later date**: order ko book se nikaal kar har release day × har position try hota hai. Sabse pehli date jo materials aur poora route support karein, bina kisi aur order ka promise ya material bigade.
+   - **Propose date to customer** → order **Pending orders** me. Dikhta hai, lekin capacity aur material nahi leta. Original promise same rehta hai.
+   - **Date confirmation received** → "Ready to reschedule".
+   - **Confirm and reschedule** → nayi date promise ban jaati hai aur order schedule me wapas aata hai.
+   - **Move down queue** → order aage jaata hai, promise wahi rehta hai.
+
+**Order ke states** (Scheduler ke Materials column me):
+
+- Decision required: expedite or quote later
+- Scheduled: expedite pending
+- Scheduled: conditional on confirmed expedite
+- Scheduled: material clear
+- Awaiting customer date confirmation
+- Ready to reschedule
+
+### 1. Expedite
+
+1. **Planning → Scheduler** → "Expedite or quote later" wali row → **Expedite**. Table me action type, component, quantity, needed by, on hand / timely supply, existing PO / due, aur orders dikhte hain. **Create linked expedite bundle** dabao.
+2. **Planning → Expedites**: row "Requested". Jisne request kiya woh approve nahi kar sakta; doosra user (permission _Approve expedite requests and record supplier confirmations_) **Approve request** dabaye.
+3. Supplier ka jawab: date, quantity (request se zyada nahi), reference → **Record confirmed receipt**. Needed-by ke baad ki date → "Confirmed late"; time par → "Confirmed by supplier", aur order "conditional on confirmed expedite" ho jaata hai.
+4. **Reject / cannot arrive** (reason ke saath) → confirmation hat jaati hai, order phir "Decision required".
+
+### 2. Later date aur pending
+
+1. Row → **Later date**. Cards dikhenge: proposed delivery, production release, full-route finish, materials, position, aur kitne orders shift hote hain.
+2. Upar **Planner-entered delivery date** daal kar **Preview date** dabao; customer ki date se pehle finish na ho to card "Conditional" dikhayega.
+3. **Propose date to customer** → **Planning → Pending orders** me row aayegi (original, proposed, gating materials). Schedule me ye order nahi dikhega.
+4. **Date confirmation received** → **Review / confirm and schedule** → **Confirm and reschedule**. Production order ki due date nayi date ban jaati hai.
+
+**Nilkamal par check** (walkthrough §4, planning date 21-Sep). Pehle Insert order: `MFRCFSSFBND78725` × 160, need-by 05-Oct, **Take it whole, now** → INS-1.
+
+- **Expedite:**
+  - INS-1 → Expedite: `FMRF70DS787275`, 10 NOS, needed by 22-Sep, PO **4502939453 / 60**, due 28-Sep.
+  - Doosre user se approve karao.
+  - Confirm 28-Sep → late. Confirm 22-Sep → "Commit + replenish / conditional on confirmed expedite".
+- **Later date** (dobara load karke, phir se INS-1 insert karo):
+  - INS-1 → Later date: release 29-Sep, finish 03-Oct.
+  - Date 07-Oct → Propose → Pending orders me (original 05-Oct).
+  - Ready → Review → Confirm: promise 07-Oct, lot 29-Sep.
+
+### 3. Permissions
+
+- **Change the schedule** (schedule.plan): expedite request, later date, pending actions.
+- **Approve expedite requests and record supplier confirmations** (purchase.expedite): approve, confirm, reject. Requester khud approve nahi kar sakta.
+- **View** (planning.read): saare previews aur lists.

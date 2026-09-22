@@ -155,6 +155,39 @@ const DECISION_KINDS: Record<string, string> = {
   release_manual: 'Released to computed order',
   insert: 'Order inserted',
   quote: 'Declined, date quoted',
+  expedite_request: 'Expedite requested',
+  expedite_approve: 'Expedite approved',
+  expedite_reject: 'Expedite rejected',
+  expedite_confirm: 'Supplier confirmation recorded',
+  later_propose: 'Later date proposed',
+  later_confirm: 'Confirmed and rescheduled',
+  later_move: 'Moved down the queue',
+  pending_ready: 'Customer date received',
+  pending_cancel: 'Pending order cancelled',
+};
+// AV-8: an order's decision state (see packages/engines/materials-decisions.mjs).
+const ORDER_STATES: Record<string, string> = {
+  decision_required: 'Decision required: expedite or quote later',
+  expedite_pending: 'Scheduled: expedite pending',
+  conditional_expedite: 'Scheduled: conditional on confirmed expedite',
+  material_clear: 'Scheduled: material clear',
+  awaiting_confirmation: 'Awaiting customer date confirmation',
+  ready_to_reschedule: 'Ready to reschedule',
+  cancelled: 'Cancelled',
+};
+const ACTION_TYPES: Record<string, string> = {
+  EXPEDITE_PO: 'Expedite existing PO',
+  NEW_PO: 'Create expedited PO',
+  CANNOT_VALIDATE: 'Cannot validate',
+};
+const ACTION_STATES: Record<string, [string, string]> = {
+  requested: ['pending', 'Requested'],
+  approved: ['pending', 'Approved: confirmation pending'],
+  confirmed: ['ok', 'Confirmed by supplier'],
+  late: ['off', 'Confirmed late'],
+  rejected: ['off', 'Rejected'],
+  superseded: ['pending', 'Superseded'],
+  cannot_validate: ['off', 'Cannot validate'],
 };
 const reasonText = (r: any) => (REASONS[r.code] ?? (() => r.code))(r);
 const insertEffect = (x: any) =>
@@ -427,6 +460,635 @@ function ClubOptions({ csrf, plantId, item, canPlan, onApplied, onClose }: any) 
   );
 }
 
+// ---------- AV-8: expedite and later date ----------
+// Reference: Nilkamal simulation handover, Request material expedite / Explore or quote later date.
+
+function ActionRows({ actions }: { actions: any[] }) {
+  return (
+    <table className="compact">
+      <thead>
+        <tr>
+          <th>Action / component</th>
+          <th className="num">Quantity</th>
+          <th>Needed by</th>
+          <th className="num">On hand / timely</th>
+          <th>Existing PO / due</th>
+          <th>Orders</th>
+        </tr>
+      </thead>
+      <tbody>
+        {actions.map((a: any) => (
+          <tr key={a.key} data-action={a.key}>
+            <td>
+              <strong>{ACTION_TYPES[a.type] ?? a.type}</strong>
+              <div className="cell-sub">{a.component ?? 'Missing BOM / routing'}</div>
+            </td>
+            <td className="num">{a.qty === null ? '—' : num(a.qty, 3)}</td>
+            <td>{a.required ?? '—'}</td>
+            <td className="num">
+              {num(a.onHand, 3)} / {num(a.timely, 3)}
+            </td>
+            <td>
+              {a.po ? `${a.po} / ${a.line}` : 'No adequate existing PO'}
+              <div className="cell-sub">{a.currentDue ?? ''}</div>
+            </td>
+            <td>{(a.members ?? []).join(', ')}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ExpediteOptions({ csrf, plantId, order, canPlan, onDone, onClose }: any) {
+  const call = useApi(csrf);
+  const [data, setData] = useState<any>(null),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    call(`plants/${plantId}/expedite/preview`, 'POST', { order })
+      .then((d) => live && setData(d))
+      .catch((e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [order]);
+  const requestable = data?.actions.some((a: any) => a.type !== 'CANNOT_VALIDATE');
+  return (
+    <section className="panel club-options" aria-label={`Expedite for ${order}`}>
+      <div className="panel-heading">
+        <div>
+          <h2>Request material expedite: {data?.orders.join(' + ') ?? order}</h2>
+          <p className="panel-sub">
+            Preview only. A request (and its approval) is not supply: the order stays conditional
+            until the supplier's confirmed date and quantity cover every release.
+          </p>
+        </div>
+        <button className="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <Messages error={error} notice="" />
+      {!data && !error && <p role="status">Checking materials at release…</p>}
+      {data && (
+        <div className="panel-body">
+          {data.finish.map((f: any) => (
+            <p key={f.order} className="cell-sub">
+              {f.order}: forward finish {f.finishDate} · promise {f.promise} ·{' '}
+              {MATERIAL[f.materials]?.[1] ?? f.materials}
+            </p>
+          ))}
+          {data.actions.length ? (
+            <ActionRows actions={data.actions} />
+          ) : (
+            <p>Materials already cover this order at its release.</p>
+          )}
+          {canPlan && requestable && (
+            <div className="form-actions">
+              <button
+                className="button primary"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  setError('');
+                  call(`plants/${plantId}/expedite/request`, 'POST', {
+                    order,
+                    runNo: data.runNo,
+                    version: data.version,
+                  })
+                    .then(onDone)
+                    .catch((e) => setError(e.message))
+                    .finally(() => setBusy(false));
+                }}
+              >
+                Create linked expedite bundle
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function LaterOptions({
+  csrf,
+  plantId,
+  order,
+  canPlan,
+  onDone,
+  onClose,
+  candidate: initial,
+}: any) {
+  const call = useApi(csrf);
+  const [data, setData] = useState<any>(null),
+    [candidate, setCandidate] = useState(initial ?? ''),
+    [asked, setAsked] = useState(initial ?? ''),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    setError('');
+    call(`plants/${plantId}/later/preview`, 'POST', {
+      order,
+      ...(asked ? { candidateDate: asked } : {}),
+    })
+      .then((d) => live && setData(d))
+      .catch((e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [order, asked]);
+  function apply(s: any, mode: string) {
+    setBusy(true);
+    setError('');
+    call(`plants/${plantId}/later/apply`, 'POST', {
+      order,
+      ...(asked ? { candidateDate: asked } : {}),
+      key: s.key,
+      mode,
+      release: s.release,
+      promise: s.promise,
+      runNo: data.runNo,
+      version: data.version,
+    })
+      .then(onDone)
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  }
+  return (
+    <section className="panel club-options" aria-label={`Later date for ${order}`}>
+      <div className="panel-heading">
+        <div>
+          <h2>Explore / quote a later date: {order}</h2>
+          <p className="panel-sub">
+            Preview only. A proposed date is a commercial alternative until the customer accepts it:
+            the order then waits in Pending Orders, holding no capacity or material. Move down the
+            queue keeps the original promise.
+          </p>
+        </div>
+        <button className="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <Messages error={error} notice="" />
+      <form
+        className="toolbar"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setAsked(candidate);
+        }}
+      >
+        <label>
+          Planner-entered delivery date
+          <input type="date" value={candidate} onChange={(e) => setCandidate(e.target.value)} />
+        </label>
+        <button className="button">Preview date</button>
+      </form>
+      {!data && !error && <p role="status">Trying release days and positions…</p>}
+      {data && (
+        <div className="scenario-grid">
+          {data.scenarios.length === 0 && <p>No routed placement is available for this order.</p>}
+          {data.scenarios.map((s: any, i: number) => (
+            <article
+              key={s.key}
+              className={'scenario-card' + (i === 0 && s.normal ? ' recommended' : '')}
+              data-later={s.key}
+            >
+              <h3>
+                {s.label}
+                <span className={'chip ' + (s.normal ? '' : 'warning')}>
+                  {s.normal ? 'Supported' : 'Conditional'}
+                </span>
+              </h3>
+              <dl className="facts">
+                <div>
+                  <dt>Proposed delivery</dt>
+                  <dd>{s.promise}</dd>
+                </div>
+                <div>
+                  <dt>Production release</dt>
+                  <dd>{s.productionRelease}</dd>
+                </div>
+                <div>
+                  <dt>Full-route finish</dt>
+                  <dd>{s.finishDate}</dd>
+                </div>
+                <div>
+                  <dt>Materials</dt>
+                  <dd>{MATERIAL[s.status]?.[1] ?? s.status}</dd>
+                </div>
+                <div>
+                  <dt>Position</dt>
+                  <dd>{s.beforeId ? `before ${s.beforeId}` : 'at the end'}</dd>
+                </div>
+                <div>
+                  <dt>Other orders</dt>
+                  <dd>
+                    {s.impact.changed} shift, {s.broken.length} later than promised
+                  </dd>
+                </div>
+              </dl>
+              <p className="cell-sub">
+                Move down the queue keeps {s.originalPromise}:{' '}
+                {s.moveSlip ? `${s.moveSlip} day(s) late` : `${num(s.moveSlackHours, 2)} h slack`}.
+              </p>
+              {(s.late ||
+                s.broken.length > 0 ||
+                s.materialHurt.length > 0 ||
+                s.gaps.length > 0 ||
+                s.unknown.length > 0) && (
+                <ul className="messages">
+                  {s.late && <li>Entered date is before the full-route finish {s.finishDate}.</li>}
+                  {s.broken.length > 0 && (
+                    <li>Existing promises worsened: {s.broken.join(', ')}</li>
+                  )}
+                  {s.materialHurt.length > 0 && (
+                    <li>Would take material from: {s.materialHurt.join(', ')}</li>
+                  )}
+                  {s.gaps.map((g: any) => (
+                    <li key={g.component}>
+                      {g.component} short {num(g.shortage, 3)} at {g.release}
+                    </li>
+                  ))}
+                  {s.unknown.length > 0 && <li>No stock record: {s.unknown.join(', ')}</li>}
+                </ul>
+              )}
+              {canPlan && s.capacityOK && (
+                <div className="form-actions">
+                  <button className="button" disabled={busy} onClick={() => apply(s, 'propose')}>
+                    Propose date to customer
+                  </button>
+                  <button
+                    className="button primary"
+                    disabled={busy}
+                    onClick={() => apply(s, 'confirm')}
+                  >
+                    Confirm and reschedule
+                  </button>
+                  {data.scheduled && (
+                    <button className="button" disabled={busy} onClick={() => apply(s, 'move')}>
+                      Move down queue
+                    </button>
+                  )}
+                </div>
+              )}
+              {!s.capacityOK && (
+                <p className="cell-sub warning-text">
+                  Full-route capacity does not support this date: it cannot be proposed or
+                  scheduled.
+                </p>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Planning → Expedites: every request with its approval and supplier confirmation.
+export function Expedites({
+  csrf,
+  plantId,
+  permissions,
+  refreshKey,
+}: {
+  csrf: string;
+  plantId: string;
+  permissions: string[];
+  refreshKey: number;
+}) {
+  const call = useApi(csrf);
+  const canAct = permissions.includes('purchase.expedite');
+  const [data, setData] = useState<any>(null),
+    [error, setError] = useState(''),
+    [notice, setNotice] = useState(''),
+    [busy, setBusy] = useState(false),
+    [tick, setTick] = useState(0),
+    [form, setForm] = useState<Record<string, any>>({});
+  useEffect(() => {
+    let live = true;
+    call(`plants/${plantId}/expedites`)
+      .then((d) => live && setData(d))
+      .catch((e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [plantId, refreshKey, tick]);
+  function act(a: any, what: string, payload: any = {}) {
+    setBusy(true);
+    setError('');
+    call(`expedite-actions/${a.id}/${what}`, 'POST', { version: a.version, ...payload })
+      .then((d) => {
+        setNotice(d.message);
+        setTick((x) => x + 1);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  }
+  const f = (id: string) => form[id] ?? {};
+  const set = (id: string, k: string, v: string) =>
+    setForm({ ...form, [id]: { ...f(id), [k]: v } });
+  return (
+    <>
+      <Messages error={error} notice={notice} />
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Material expedites</h2>
+            <p className="panel-sub">
+              Approval records intent only (and not by the person who requested it). Only a recorded
+              supplier confirmation — date, quantity, reference — moves supply; a date after the
+              need leaves the order for a new decision.
+            </p>
+          </div>
+        </div>
+        {data && data.actions.length === 0 && (
+          <p className="panel-body">No expedite requests yet.</p>
+        )}
+        {data && data.actions.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Action</th>
+                  <th>Component</th>
+                  <th className="num">Quantity</th>
+                  <th>Needed by</th>
+                  <th>Existing PO / due</th>
+                  <th>Orders</th>
+                  <th>State</th>
+                  <th className="actions">Decision</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.actions.map((a: any) => {
+                  const st = ACTION_STATES[a.state] ?? ['pending', a.state];
+                  const mine = a.requestedById === data.me;
+                  return (
+                    <tr key={a.id} data-expedite={`EA-${a.no}`}>
+                      <td>
+                        <strong>EA-{a.no}</strong>
+                        <div className="cell-sub">
+                          {ACTION_TYPES[a.type] ?? a.type} · EXP-{a.bundles.join(', EXP-')}
+                        </div>
+                      </td>
+                      <td>{a.component ?? '—'}</td>
+                      <td className="num">{a.qty === null ? '—' : num(a.qty, 3)}</td>
+                      <td>{a.required ?? '—'}</td>
+                      <td>
+                        {a.po ? `${a.po} / ${a.line}` : 'New purchase'}
+                        <div className="cell-sub">{a.currentDue ?? ''}</div>
+                      </td>
+                      <td>{a.members.join(', ')}</td>
+                      <td>
+                        <span className={'status-pill ' + st[0]}>{st[1]}</span>
+                        {a.confirmation && (
+                          <div className="cell-sub">
+                            {num(a.confirmation.qty, 3)} on {a.confirmation.date} ·{' '}
+                            {a.confirmation.reference}
+                          </div>
+                        )}
+                        {a.reason && <div className="cell-sub">{a.reason}</div>}
+                        <div className="cell-sub">
+                          Requested by {a.requestedBy ?? '—'}
+                          {a.approvedBy ? ` · approved by ${a.approvedBy}` : ''}
+                        </div>
+                      </td>
+                      <td className="actions">
+                        {canAct && a.state === 'requested' && (
+                          <button
+                            className="button"
+                            disabled={busy || mine}
+                            title={mine ? 'You requested it: another person must approve.' : ''}
+                            onClick={() => act(a, 'approve')}
+                          >
+                            Approve request
+                          </button>
+                        )}
+                        {canAct && ['approved', 'late', 'confirmed'].includes(a.state) && (
+                          <div className="confirm-form">
+                            <label>
+                              Confirmed receipt date
+                              <input
+                                type="date"
+                                value={f(a.id).date ?? a.confirmation?.date ?? ''}
+                                onChange={(e) => set(a.id, 'date', e.target.value)}
+                              />
+                            </label>
+                            <label>
+                              Confirmed quantity
+                              <input
+                                inputMode="decimal"
+                                value={f(a.id).qty ?? a.confirmation?.qty ?? a.qty}
+                                onChange={(e) => set(a.id, 'qty', e.target.value)}
+                              />
+                            </label>
+                            <label>
+                              Supplier reference
+                              <input
+                                value={f(a.id).reference ?? a.confirmation?.reference ?? ''}
+                                onChange={(e) => set(a.id, 'reference', e.target.value)}
+                              />
+                            </label>
+                            <button
+                              className="button"
+                              disabled={busy}
+                              onClick={() =>
+                                act(a, 'confirm', {
+                                  date: f(a.id).date ?? a.confirmation?.date,
+                                  qty: Number(f(a.id).qty ?? a.confirmation?.qty ?? a.qty),
+                                  reference: f(a.id).reference ?? a.confirmation?.reference,
+                                })
+                              }
+                            >
+                              Record confirmed receipt
+                            </button>
+                          </div>
+                        )}
+                        {canAct &&
+                          !['rejected', 'superseded', 'cannot_validate'].includes(a.state) && (
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() => {
+                                const reason = window.prompt('Why can it not arrive in time?');
+                                if (reason) act(a, 'reject', { reason });
+                              }}
+                            >
+                              Reject / cannot arrive
+                            </button>
+                          )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
+// Planning → Pending orders: visible commercial demand without capacity or material.
+export function PendingOrders({
+  csrf,
+  plantId,
+  permissions,
+  refreshKey,
+}: {
+  csrf: string;
+  plantId: string;
+  permissions: string[];
+  refreshKey: number;
+}) {
+  const call = useApi(csrf);
+  const canPlan = permissions.includes('schedule.plan');
+  const [data, setData] = useState<any>(null),
+    [error, setError] = useState(''),
+    [notice, setNotice] = useState(''),
+    [review, setReview] = useState<any>(null),
+    [tick, setTick] = useState(0),
+    [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    call(`plants/${plantId}/pending`)
+      .then((d) => live && setData(d))
+      .catch((e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [plantId, refreshKey, tick]);
+  function act(p: any, what: string) {
+    setBusy(true);
+    setError('');
+    call(`plants/${plantId}/pending/${what}`, 'POST', { order: p.order_ref, version: p.version })
+      .then((d) => {
+        setNotice(d.message);
+        setTick((x) => x + 1);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  }
+  return (
+    <>
+      <Messages error={error} notice={notice} />
+      {review && (
+        <LaterOptions
+          csrf={csrf}
+          plantId={plantId}
+          order={review.order_ref}
+          candidate={review.proposed_date}
+          canPlan={canPlan}
+          onClose={() => setReview(null)}
+          onDone={(d: any) => {
+            setReview(null);
+            setNotice(d.message);
+            setTick((x) => x + 1);
+          }}
+        />
+      )}
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Pending orders to plan</h2>
+            <p className="panel-sub">
+              Visible commercial demand, excluded from committed capacity and material allocation
+              until the new date is confirmed and the order rescheduled.
+            </p>
+          </div>
+        </div>
+        {data && data.items.length === 0 && (
+          <p className="panel-body">No orders awaiting planning.</p>
+        )}
+        {data && data.items.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order / customer / item</th>
+                  <th className="num">Quantity</th>
+                  <th>Original / proposed</th>
+                  <th>State</th>
+                  <th>Gating materials</th>
+                  <th className="actions">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((p: any) => (
+                  <tr key={p.order_ref} data-pending={p.order_ref}>
+                    <td>
+                      <strong>{p.order_ref}</strong>
+                      <div className="cell-sub">
+                        {p.customer || '—'} · {p.item}
+                      </div>
+                    </td>
+                    <td className="num">{num(p.quantity, 0)}</td>
+                    <td>
+                      Original {p.original_date}
+                      <div className="cell-sub">Proposed {p.proposed_date}</div>
+                    </td>
+                    <td>
+                      {p.state_label}
+                      <div className="cell-sub">
+                        #{p.last_decision_no}: {p.reason}
+                      </div>
+                    </td>
+                    <td>
+                      {(p.gating ?? []).length
+                        ? p.gating
+                            .map((g: any) =>
+                              g.unknown
+                                ? `${g.component} cannot validate`
+                                : `${g.component} ${num(g.shortage, 3)}`,
+                            )
+                            .join(', ')
+                        : '—'}
+                    </td>
+                    <td className="actions">
+                      {canPlan && (
+                        <>
+                          <button className="button" disabled={busy} onClick={() => setReview(p)}>
+                            Review / confirm and schedule
+                          </button>
+                          {p.state === 'awaiting_confirmation' && (
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() => act(p, 'ready')}
+                            >
+                              Date confirmation received
+                            </button>
+                          )}
+                          <button
+                            className="text-button"
+                            disabled={busy}
+                            onClick={() =>
+                              window.confirm(`Cancel ${p.order_ref}?`) && act(p, 'cancel')
+                            }
+                          >
+                            Decline / cancel
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
 export function Scheduler({
   csrf,
   plantId,
@@ -450,6 +1112,8 @@ export function Scheduler({
     [tick, setTick] = useState(0),
     [open, setOpen] = useState<string | null>(null),
     [club, setClub] = useState<string | null>(null),
+    [expedite, setExpedite] = useState<string | null>(null),
+    [later, setLater] = useState<string | null>(null),
     [plan, setPlan] = useState<any>(null),
     [report, setReport] = useState<any>(null),
     [dragging, setDragging] = useState<string | null>(null),
@@ -606,6 +1270,34 @@ export function Scheduler({
           <ImpactReport impact={report} title="Impact of the last decision" />
         </section>
       )}
+      {expedite && (
+        <ExpediteOptions
+          csrf={csrf}
+          plantId={plantId}
+          order={expedite}
+          canPlan={canPlan}
+          onClose={() => setExpedite(null)}
+          onDone={(d: any) => {
+            setExpedite(null);
+            setNotice(d.message);
+            setTick((x) => x + 1);
+          }}
+        />
+      )}
+      {later && (
+        <LaterOptions
+          csrf={csrf}
+          plantId={plantId}
+          order={later}
+          canPlan={canPlan}
+          onClose={() => setLater(null)}
+          onDone={(d: any) => {
+            setLater(null);
+            setNotice(d.message);
+            setTick((x) => x + 1);
+          }}
+        />
+      )}
       {club && (
         <ClubOptions
           csrf={csrf}
@@ -686,8 +1378,8 @@ export function Scheduler({
                     }
                     draggable={canPlan && scheduled && !filter && !q}
                     onDragStart={(e) => {
-                      setDragging(o.order_no);
-                      e.dataTransfer.setData('text/plain', o.order_no);
+                      setDragging(o.order_ref);
+                      e.dataTransfer.setData('text/plain', o.order_ref);
                     }}
                     onDragEnd={() => setDragging(null)}
                     onDragOver={(e) => dragging && scheduled && e.preventDefault()}
@@ -695,9 +1387,13 @@ export function Scheduler({
                       e.preventDefault();
                       const from = e.dataTransfer.getData('text/plain');
                       setDragging(null);
-                      if (!from || from === o.order_no) return;
+                      if (!from || from === o.order_ref) return;
                       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                      move(from, o.order_no, e.clientY < r.top + r.height / 2 ? 'before' : 'after');
+                      move(
+                        from,
+                        o.order_ref,
+                        e.clientY < r.top + r.height / 2 ? 'before' : 'after',
+                      );
                     }}
                   >
                     <td className="num">
@@ -750,6 +1446,11 @@ export function Scheduler({
                     </td>
                     <td>
                       {m ? <span className={'status-pill ' + m[0]}>{m[1]}</span> : '—'}
+                      {o.plan_state && o.plan_state !== 'material_clear' && (
+                        <div className="cell-sub plan-state">
+                          <strong>{ORDER_STATES[o.plan_state] ?? o.plan_state}</strong>
+                        </div>
+                      )}
                       {o.messages?.[0] && scheduled && (
                         <div className="cell-sub">{o.messages[0]}</div>
                       )}
@@ -762,7 +1463,7 @@ export function Scheduler({
                               className="text-button"
                               aria-label={`Move ${o.order_no} up`}
                               disabled={busy || !prev || !!filter || !!q}
-                              onClick={() => move(o.order_no, prev.order_no, 'before')}
+                              onClick={() => move(o.order_ref, prev.order_ref, 'before')}
                             >
                               ↑
                             </button>
@@ -770,7 +1471,7 @@ export function Scheduler({
                               className="text-button"
                               aria-label={`Move ${o.order_no} down`}
                               disabled={busy || !next || !!filter || !!q}
-                              onClick={() => move(o.order_no, next.order_no, 'after')}
+                              onClick={() => move(o.order_ref, next.order_ref, 'after')}
                             >
                               ↓
                             </button>
@@ -781,6 +1482,27 @@ export function Scheduler({
                             >
                               Club
                             </button>
+                            {(['expedite', 'unknown'].includes(o.material_check) ||
+                              o.late_days > 0) && (
+                              <>
+                                {o.material_check === 'expedite' && (
+                                  <button
+                                    className="text-button"
+                                    aria-label={`Request material expedite for ${o.order_ref}`}
+                                    onClick={() => setExpedite(o.order_ref)}
+                                  >
+                                    Expedite
+                                  </button>
+                                )}
+                                <button
+                                  className="text-button"
+                                  aria-label={`Explore a later date for ${o.order_ref}`}
+                                  onClick={() => setLater(o.order_ref)}
+                                >
+                                  Later date
+                                </button>
+                              </>
+                            )}
                           </>
                         )}
                       </td>

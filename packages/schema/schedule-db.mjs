@@ -13,7 +13,15 @@ import {
   schedulePlant,
   workingDates,
 } from '../engines/scheduler.mjs';
-import { materialReadiness, orderTimes } from '../engines/decisions.mjs';
+import { materialReadiness, orderTimes, snapshot } from '../engines/decisions.mjs';
+import {
+  bundleState,
+  confirmedSupply,
+  expediteRows,
+  laterDates,
+  mergeActions,
+  orderState,
+} from '../engines/materials-decisions.mjs';
 import {
   drumBook,
   inheritBom,
@@ -196,20 +204,98 @@ export async function loadBomUsage(db, today) {
 }
 
 // Open purchase order lines per plant and item: [{ qty (base unit), due }].
+// AV-8: recorded supplier confirmations move the confirmed quantity to its confirmed date.
 async function loadSupplyLines(db, siteId = null) {
   const out = new Map();
   for (const r of (
     await db.query(
-      `SELECT o.site_id,l.item_id,(l.quantity-l.received_quantity)*l.unit_factor AS qty,to_char(l.due_date,'YYYY-MM-DD') AS due
+      `SELECT o.site_id,l.id,o.po_no,l.line_no,l.item_id,(l.quantity-l.received_quantity)*l.unit_factor AS qty,to_char(l.due_date,'YYYY-MM-DD') AS due
        FROM purchase_order_lines l JOIN purchase_orders o ON o.id=l.po_id
-       WHERE o.status='OPEN' AND l.status='OPEN' AND l.received_quantity < l.quantity AND ($1::uuid IS NULL OR o.site_id=$1)`,
+       WHERE o.status='OPEN' AND l.status='OPEN' AND l.received_quantity < l.quantity AND ($1::uuid IS NULL OR o.site_id=$1)
+       ORDER BY l.due_date,o.po_no,l.line_no`,
       [siteId],
     )
   ).rows) {
     if (!out.has(r.site_id)) out.set(r.site_id, new Map());
     const m = out.get(r.site_id);
     if (!m.has(r.item_id)) m.set(r.item_id, []);
-    m.get(r.item_id).push({ qty: Number(r.qty), due: r.due });
+    m.get(r.item_id).push({
+      qty: Number(r.qty),
+      due: r.due,
+      key: r.id,
+      lineId: r.id,
+      poNo: r.po_no,
+      lineNo: String(r.line_no),
+    });
+  }
+  const actions = await loadExpediteActions(db, siteId);
+  for (const [site, list] of actions) {
+    const confirmed = list.filter((a) => a.confirmation);
+    if (confirmed.length) out.set(site, confirmedSupply(out.get(site) ?? new Map(), confirmed));
+  }
+  return out;
+}
+
+// Expedite actions per plant in the engine's shape.
+export async function loadExpediteActions(db, siteId = null) {
+  const out = new Map();
+  for (const a of (
+    await db.query(
+      `SELECT a.*,to_char(a.required_date,'YYYY-MM-DD') AS required,to_char(a.confirmed_date,'YYYY-MM-DD') AS confirmed,
+         to_char(a.current_due,'YYYY-MM-DD') AS due
+       FROM expedite_actions a WHERE ($1::uuid IS NULL OR a.site_id=$1) ORDER BY a.action_no`,
+      [siteId],
+    )
+  ).rows) {
+    if (!out.has(a.site_id)) out.set(a.site_id, []);
+    out.get(a.site_id).push({
+      id: a.id,
+      no: Number(a.action_no),
+      key: a.action_key,
+      type: a.kind,
+      componentId: a.component_item_id,
+      qty: a.quantity === null ? null : Number(a.quantity),
+      required: a.required,
+      supplyKey: a.po_line_id,
+      currentDue: a.due,
+      members: a.members,
+      bundles: a.bundles,
+      dependents: a.dependents,
+      state: a.state,
+      requestedBy: a.requested_by,
+      version: a.version,
+      confirmation: a.confirmed
+        ? { date: a.confirmed, qty: Number(a.confirmed_qty), reference: a.confirmation_ref }
+        : null,
+    });
+  }
+  return out;
+}
+
+// Order plans per plant: Map(site -> Map(order ref -> plan)).
+export async function loadOrderPlans(db, siteId = null) {
+  const out = new Map();
+  for (const p of (
+    await db.query(
+      `SELECT p.*,to_char(p.original_date,'YYYY-MM-DD') AS original,to_char(p.proposed_date,'YYYY-MM-DD') AS proposed,
+         to_char(p.accepted_date,'YYYY-MM-DD') AS accepted,to_char(p.release_date,'YYYY-MM-DD') AS release
+       FROM order_plans p WHERE ($1::uuid IS NULL OR p.site_id=$1)`,
+      [siteId],
+    )
+  ).rows) {
+    if (!out.has(p.site_id)) out.set(p.site_id, new Map());
+    out.get(p.site_id).set(p.order_ref, {
+      state: p.state,
+      bundleId: p.bundle_id,
+      originalDate: p.original,
+      proposedDate: p.proposed,
+      acceptedDate: p.accepted,
+      releaseDate: p.release,
+      reason: p.reason,
+      gating: p.gating,
+      lastDecisionNo: p.last_decision_no === null ? null : Number(p.last_decision_no),
+      version: p.version,
+    });
   }
   return out;
 }
@@ -228,6 +314,10 @@ const axisDates = (plant, today) =>
 // Open production orders (the book) with their lot fields. due = the order's promise (need-by).
 export const BOOK_COLUMNS = `o.id,o.site_id,o.order_no,o.item_id,i.code,to_char(o.due_date,'YYYY-MM-DD') AS due,o.quantity,
   o.source,o.order_ref,o.lot_no,o.lot_count,to_char(o.lot_date,'YYYY-MM-DD') AS lot_date,o.front,o.rush,o.rush_before`;
+// AV-8: an order awaiting the customer's date confirmation is visible demand, not committed
+// capacity or material (Nilkamal handover: Pending Orders to Plan).
+export const NOT_PENDING = `NOT EXISTS (SELECT 1 FROM order_plans pp WHERE pp.site_id=o.site_id
+  AND pp.order_ref=coalesce(o.order_ref,o.order_no) AND pp.state IN ('awaiting_confirmation','ready_to_reschedule'))`;
 export const bookRow = (o) => ({
   id: o.id,
   ref: o.order_no,
@@ -275,6 +365,7 @@ const unitsOf = (book, dates, today) =>
       itemId: o.itemId,
       code: o.code,
       qty: o.qty,
+      promiseDate: o.due,
       dueDate: o.front ? today : o.lotDate,
       dueDay: o.front ? 0 : lotDay,
       orderDueDay: day,
@@ -373,6 +464,8 @@ export async function scheduleSites(
   const summary = {};
   const supplyBySite = await loadSupplyLines(db);
   const sequences = await loadSequences(db);
+  const actionsBySite = await loadExpediteActions(db);
+  const plansBySite = await loadOrderPlans(db);
   const codes = new Map(
     (
       await db.query('SELECT id,code FROM items WHERE id=ANY($1::uuid[])', [
@@ -447,11 +540,17 @@ export async function scheduleSites(
         finish: o.finish,
         release: dateAt(o.start),
         finishDate: dates[Math.min(dates.length - 1, o.shipDay - 1)],
-        promise: o.order.dueDate,
+        promise: o.order.promiseDate ?? o.order.dueDate,
         slack: o.slack,
         lateDays: o.late ? o.shipDay - (o.order.orderDueDay ?? o.order.dueDay) : 0,
         groupedWith: o.groupedWith,
         material: r?.status ?? null,
+        planState: orderState(
+          oidOf(o.order),
+          r,
+          plansBySite.get(siteId)?.get(oidOf(o.order)),
+          actionsBySite.get(siteId) ?? [],
+        ),
         messages: readinessMessages(r, codes),
         lines: readinessLines(r, codes, s.units),
         planGroup: o.order.planGroup ?? null,
@@ -471,8 +570,8 @@ export async function scheduleSites(
       const p = rows.slice(i, i + CHUNK);
       const c = (f) => p.map(f);
       await db.query(
-        `INSERT INTO schedule_orders(tenant_id,run_id,site_id,production_order_id,position,status,start_min,finish_min,release_date,finish_date,promise_date,slack_min,late_days,grouped_with,material_check,messages,material_lines,plan_group,manual_placed,release_min)
-         SELECT $1,$2,$3,r.* FROM unnest($4::uuid[],$5::int[],$6::text[],$7::numeric[],$8::numeric[],$9::date[],$10::date[],$11::date[],$12::numeric[],$13::int[],$14::uuid[],$15::text[],$16::jsonb[],$17::jsonb[],$18::text[],$19::boolean[],$20::numeric[]) AS r`,
+        `INSERT INTO schedule_orders(tenant_id,run_id,site_id,production_order_id,position,status,start_min,finish_min,release_date,finish_date,promise_date,slack_min,late_days,grouped_with,material_check,messages,material_lines,plan_group,manual_placed,release_min,plan_state)
+         SELECT $1,$2,$3,r.* FROM unnest($4::uuid[],$5::int[],$6::text[],$7::numeric[],$8::numeric[],$9::date[],$10::date[],$11::date[],$12::numeric[],$13::int[],$14::uuid[],$15::text[],$16::jsonb[],$17::jsonb[],$18::text[],$19::boolean[],$20::numeric[],$21::text[]) AS r`,
         [
           run.tenant_id,
           run.id,
@@ -494,6 +593,7 @@ export async function scheduleSites(
           c((r) => r.planGroup ?? null),
           c((r) => r.manualPlaced ?? false),
           c((r) => r.releaseMin ?? null),
+          c((r) => r.planState ?? null),
         ],
       );
     }
@@ -645,7 +745,7 @@ export async function listSchedule(
     await db.query(
       `SELECT s.position,s.status,s.start_min,s.finish_min,to_char(s.release_date,'YYYY-MM-DD') AS release_date,
          to_char(s.finish_date,'YYYY-MM-DD') AS finish_date,to_char(s.promise_date,'YYYY-MM-DD') AS promise_date,
-         s.slack_min,s.late_days,s.material_check,s.messages,s.material_lines,s.plan_group,s.manual_placed,
+         s.slack_min,s.late_days,s.material_check,s.messages,s.material_lines,s.plan_group,s.manual_placed,s.plan_state,coalesce(o.order_ref,o.order_no) AS order_ref,
          o.id,o.order_no,o.quantity,i.code AS item,i.name AS item_name,
          u.code AS unit,g.order_no AS grouped_with
        FROM schedule_orders s JOIN production_orders o ON o.id=s.production_order_id JOIN items i ON i.id=o.item_id
@@ -832,7 +932,7 @@ export async function decisionContext(db, siteId) {
   const book = (
     await db.query(
       `SELECT ${BOOK_COLUMNS} FROM production_orders o JOIN items i ON i.id=o.item_id
-       WHERE o.site_id=$1 AND o.status='OPEN'`,
+       WHERE o.site_id=$1 AND o.status='OPEN' AND ${NOT_PENDING}`,
       [siteId],
     )
   ).rows.map(bookRow);
@@ -1449,4 +1549,399 @@ export async function writeInsertedOrder(db, tenantId, siteId, o) {
       ],
     );
   return ref;
+}
+
+// ---------- Materials decisions (AV-8) ----------
+// Reference: Nilkamal simulation handover, Request material expedite, supplier confirmation,
+// Explore / quote later date and Pending Orders to Plan.
+
+const dayIndex = (dc, date) => Math.max(1, dueDayIndex(date, dc.dates));
+const dateOf = (dc, day) => dc.dates[Math.min(dc.dates.length - 1, Math.max(0, day - 1))];
+
+// The plant's expedite actions and order plans, added to a decision context.
+export async function materialsContext(db, dc) {
+  dc.actions = (await loadExpediteActions(db, dc.siteId)).get(dc.siteId) ?? [];
+  dc.plans = (await loadOrderPlans(db, dc.siteId)).get(dc.siteId) ?? new Map();
+  return dc;
+}
+
+// An order's production units, also when it is pending (out of the committed book).
+export async function orderUnits(db, dc, ref) {
+  const inBook = dc.units.filter((u) => oidOf(u) === ref);
+  if (inBook.length) return { units: inBook, scheduled: true };
+  const rows = (
+    await db.query(
+      `SELECT ${BOOK_COLUMNS} FROM production_orders o JOIN items i ON i.id=o.item_id
+       WHERE o.site_id=$1 AND o.status='OPEN' AND coalesce(o.order_ref,o.order_no)=$2`,
+      [dc.siteId, ref],
+    )
+  ).rows.map(bookRow);
+  return { units: unitsOf(rows, dc.dates, dc.today), scheduled: false };
+}
+
+// Display-ready expedite rows.
+export function describeActions(dc, rows) {
+  const code = (id) => dc.codes.get(id) ?? id;
+  return rows.map((a) => ({
+    id: a.id ?? null,
+    no: a.no ?? null,
+    key: a.key,
+    type: a.type,
+    component: a.componentId ? code(a.componentId) : null,
+    qty: a.qty,
+    required: a.required ?? null,
+    onHand: a.onHand ?? null,
+    timely: a.timely ?? null,
+    requirement: a.requirement ?? null,
+    shortage: a.shortage ?? null,
+    po: a.poNo ?? null,
+    line: a.lineNo ?? null,
+    currentDue: a.currentDue ?? null,
+    members: a.members ?? [],
+    dependents: a.dependents ?? [],
+    state: a.state ?? null,
+    confirmation: a.confirmation ?? null,
+    missing: !!a.missing,
+  }));
+}
+
+// The orders an expedite covers (a pinned group is requested together) and its component rows.
+// A pending order is judged on its best later-date placement.
+export async function expeditePreview(db, dc, ref) {
+  const group = (dc.plan?.groups ?? []).find((g) => g.ids.includes(ref));
+  const ids = group ? group.ids : [ref];
+  const { units, scheduled } = await orderUnits(db, dc, ref);
+  if (!units.length) return null;
+  let snap;
+  if (scheduled) snap = snapshot(dc.units, dc.ctx);
+  else {
+    const plan = dc.plans.get(ref);
+    const later = laterDates({
+      current: dc.units,
+      units,
+      id: ref,
+      groups: dc.plan?.groups ?? [],
+      ctx: dc.ctx,
+      first: plan?.releaseDate ? dayIndex(dc, plan.releaseDate) : 1,
+      originalPromise: units[0].orderDueDay,
+    });
+    snap = later.scenarios[0]?.after;
+    if (!snap) return { ids, rows: [], snap: null };
+  }
+  const supply = new Map();
+  for (const [k, v] of dc.ctx.supply)
+    supply.set(
+      k,
+      v.filter((p) => p.lineId),
+    );
+  return { ids, rows: expediteRows(snap, ids, supply, dc.today), snap };
+}
+
+// Writes an expedite request: one open bundle per set of orders; each component action is merged
+// with an open action for the same component and purchase line.
+export async function writeExpediteBundle(db, actor, dc, ids, rows, decisionNo) {
+  const key = ids.slice().sort().join('+');
+  let bundle = (
+    await db.query(
+      "SELECT id,bundle_no FROM expedite_bundles WHERE site_id=$1 AND order_key=$2 AND state<>'closed'",
+      [dc.siteId, key],
+    )
+  ).rows[0];
+  if (!bundle) {
+    const no = (await db.query("SELECT next_number('expedite_bundle') AS n")).rows[0].n;
+    bundle = (
+      await db.query(
+        `INSERT INTO expedite_bundles(id,tenant_id,site_id,bundle_no,orders,order_key,decision_no,requested_by)
+         VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7) RETURNING id,bundle_no`,
+        [actor.tenant_id, dc.siteId, no, ids, key, decisionNo, actor.id],
+      )
+    ).rows[0];
+  }
+  const merged = mergeActions(dc.actions, rows);
+  const touched = [];
+  for (const a of merged) {
+    if (a.isNew) {
+      const no = (await db.query("SELECT next_number('expedite_action') AS n")).rows[0].n;
+      const id = (
+        await db.query(
+          `INSERT INTO expedite_actions(id,tenant_id,site_id,action_no,action_key,kind,component_item_id,quantity,required_date,
+             po_line_id,current_due,members,bundles,dependents,state,requested_by)
+           VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,ARRAY[$12]::uuid[],$13,$14,$15) RETURNING id`,
+          [
+            actor.tenant_id,
+            dc.siteId,
+            no,
+            a.key,
+            a.type,
+            a.componentId,
+            a.qty,
+            a.required,
+            a.lineId ?? null,
+            a.currentDue ?? null,
+            a.members,
+            bundle.id,
+            JSON.stringify(a.dependents ?? []),
+            a.state,
+            actor.id,
+          ],
+        )
+      ).rows[0].id;
+      touched.push(id);
+    } else {
+      await db.query(
+        `UPDATE expedite_actions SET quantity=$2,required_date=$3,state=$4,members=$5,dependents=$6,
+           bundles=CASE WHEN $7::uuid = ANY(bundles) THEN bundles ELSE bundles || $7::uuid END,
+           approved_by=CASE WHEN $4='requested' THEN NULL ELSE approved_by END,
+           approved_at=CASE WHEN $4='requested' THEN NULL ELSE approved_at END,
+           requested_by=CASE WHEN $4='requested' THEN $8 ELSE requested_by END,
+           version=version+1,updated_at=now() WHERE id=$1`,
+        [
+          a.id,
+          a.qty,
+          a.required,
+          a.state,
+          a.members,
+          JSON.stringify(a.dependents ?? []),
+          bundle.id,
+          actor.id,
+        ],
+      );
+      touched.push(a.id);
+    }
+  }
+  for (const id of ids)
+    await db.query(
+      `INSERT INTO order_plans(tenant_id,site_id,order_ref,bundle_id,reason,last_decision_no) VALUES($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (tenant_id,site_id,order_ref) DO UPDATE SET bundle_id=excluded.bundle_id,reason=excluded.reason,
+         last_decision_no=excluded.last_decision_no,version=order_plans.version+1,updated_at=now()`,
+      [
+        actor.tenant_id,
+        dc.siteId,
+        id,
+        bundle.id,
+        'Receipt request only; supplier confirmation still required.',
+        decisionNo,
+      ],
+    );
+  await refreshBundles(db, dc.siteId);
+  return { bundleId: bundle.id, bundleNo: Number(bundle.bundle_no), actions: touched };
+}
+
+// Bundle states follow their actions.
+export async function refreshBundles(db, siteId) {
+  const actions = (await loadExpediteActions(db, siteId)).get(siteId) ?? [];
+  for (const b of (
+    await db.query("SELECT id FROM expedite_bundles WHERE site_id=$1 AND state<>'closed'", [siteId])
+  ).rows) {
+    const list = actions.filter((a) => a.bundles.includes(b.id));
+    if (list.length)
+      await db.query(
+        'UPDATE expedite_bundles SET state=$2,updated_at=now() WHERE id=$1 AND state<>$2',
+        [b.id, bundleState(list)],
+      );
+  }
+}
+
+// Every expedite bundle and action of a plant, newest first.
+export async function listExpedites(db, dc) {
+  const bundles = (
+    await db.query(
+      `SELECT b.id,b.bundle_no,b.orders,b.state,b.decision_no,b.created_at,coalesce(u.name,'') AS requested_by
+       FROM expedite_bundles b LEFT JOIN app_users u ON u.id=b.requested_by
+       WHERE b.site_id=$1 ORDER BY b.bundle_no DESC LIMIT 100`,
+      [dc.siteId],
+    )
+  ).rows;
+  const people = new Map(
+    (
+      await db.query(
+        `SELECT DISTINCT u.id,u.name FROM expedite_actions a JOIN app_users u ON u.id IN (a.requested_by,a.approved_by,a.confirmed_by)
+         WHERE a.site_id=$1`,
+        [dc.siteId],
+      )
+    ).rows.map((r) => [r.id, r.name]),
+  );
+  const raw = (
+    await db.query(
+      `SELECT a.id,a.requested_by,a.approved_by,a.confirmed_by,a.reason,a.version,o.po_no,l.line_no
+       FROM expedite_actions a LEFT JOIN purchase_order_lines l ON l.id=a.po_line_id LEFT JOIN purchase_orders o ON o.id=l.po_id
+       WHERE a.site_id=$1`,
+      [dc.siteId],
+    )
+  ).rows;
+  const extra = new Map(raw.map((r) => [r.id, r]));
+  const codes = new Map(
+    (
+      await db.query('SELECT id,code FROM items WHERE id=ANY($1::uuid[])', [
+        [...new Set(dc.actions.map((a) => a.componentId).filter(Boolean))],
+      ])
+    ).rows.map((r) => [r.id, r.code]),
+  );
+  return {
+    bundles: bundles.map((b) => ({ ...b, bundle_no: Number(b.bundle_no) })),
+    actions: dc.actions
+      .slice()
+      .reverse()
+      .map((a) => {
+        const x = extra.get(a.id);
+        return {
+          ...describeActions({ codes }, [
+            { ...a, poNo: x?.po_no, lineNo: x ? String(x.line_no) : null },
+          ])[0],
+          version: a.version,
+          bundles: bundles.filter((b) => a.bundles.includes(b.id)).map((b) => Number(b.bundle_no)),
+          requestedBy: people.get(x?.requested_by) ?? null,
+          requestedById: x?.requested_by ?? null,
+          approvedBy: people.get(x?.approved_by) ?? null,
+          confirmedBy: people.get(x?.confirmed_by) ?? null,
+          reason: x?.reason ?? '',
+        };
+      }),
+  };
+}
+
+// Later dates for one order (scheduled or pending): up to three distinct placements.
+export async function laterPreview(db, dc, ref, candidateDate = null) {
+  const { units, scheduled } = await orderUnits(db, dc, ref);
+  if (!units.length) return null;
+  const plan = dc.plans.get(ref);
+  const res = laterDates({
+    current: dc.units,
+    units,
+    id: ref,
+    groups: dc.plan?.groups ?? [],
+    ctx: dc.ctx,
+    first: plan?.releaseDate ? dayIndex(dc, plan.releaseDate) : 1,
+    candidate: candidateDate ? dayIndex(dc, candidateDate) : null,
+    originalPromise: units[0].orderDueDay,
+  });
+  return { ...res, units, scheduled, plan };
+}
+
+export function describeLater(dc, res) {
+  const code = (id) => dc.codes.get(id) ?? id;
+  return res.scenarios.map((s) => ({
+    key: s.key,
+    label: s.label,
+    normal: s.normal,
+    capacityOK: s.capacityOK,
+    release: dateOf(dc, s.day),
+    // The order's earliest production release in this placement.
+    productionRelease: dateOf(
+      dc,
+      Math.min(...s.seq.filter((u) => oidOf(u) === s.id).map((u) => u.planRelease)),
+    ),
+    promise: dateOf(dc, s.promise),
+    finishDate: dateOf(dc, s.ship),
+    start: s.start,
+    finish: s.finish,
+    beforeId: s.beforeId,
+    status: s.status,
+    carryUnits: s.carryUnits,
+    savedMin: s.savedMin,
+    moveSlip: s.moveSlip,
+    moveSlackHours: s.moveSlackHours,
+    originalPromise: dateOf(dc, s.originalPromise),
+    late: s.late,
+    broken: s.broken,
+    materialHurt: s.materialHurt,
+    gaps: s.gaps.map((g) => ({
+      component: code(g.componentId),
+      shortage: g.shortage,
+      release: g.release,
+    })),
+    unknown: [...new Set(s.unknown.map((g) => code(g.componentId)))],
+    impact: describeImpact(dc, s.impact),
+  }));
+}
+
+// Applies a later-date placement: propose (order goes to Pending, out of the committed book),
+// confirm (the accepted date becomes the promise and the order is rescheduled) or move (rescheduled,
+// promise unchanged).
+export async function applyLater(db, actor, dc, ref, res, s, mode, decisionNo) {
+  const old = dc.plans.get(ref);
+  const original = old?.originalDate ?? res.units[0].promiseDate ?? res.units[0].dueDate;
+  const row = dc.row ?? {};
+  const gating = [
+    ...s.gaps.map((g) => ({
+      component: dc.codes.get(g.componentId) ?? g.componentId,
+      shortage: g.shortage,
+    })),
+    ...[...new Set(s.unknown.map((g) => g.componentId))].map((c) => ({
+      component: dc.codes.get(c) ?? c,
+      unknown: true,
+    })),
+  ];
+  const groups = (row.groups ?? []).filter((g) => !g.ids.includes(ref));
+  const promise = dateOf(dc, s.promise);
+  if (mode === 'propose') {
+    await savePlan(db, actor.tenant_id, dc.siteId, {
+      manual_order: row.manual_order?.length ? row.manual_order.filter((x) => x !== ref) : null,
+      groups,
+      releases: Object.fromEntries(
+        Object.entries(row.releases ?? {}).filter(([id]) => !res.units.some((u) => u.id === id)),
+      ),
+    });
+  } else {
+    const releases = {};
+    for (const u of s.seq) {
+      const day = Math.max(u.planRelease || 0, (!u.manualPlaced && !u.front && u.lotDay) || 0);
+      if (day > 0) releases[u.id] = dateOf(dc, day);
+    }
+    await savePlan(db, actor.tenant_id, dc.siteId, {
+      manual_order: [...new Set(s.seq.map(oidOf))],
+      groups,
+      releases,
+    });
+    const mine = s.seq.filter((u) => oidOf(u) === ref);
+    for (const u of mine)
+      await db.query(
+        `UPDATE production_orders SET due_date=CASE WHEN $3 THEN $2::date ELSE due_date END,
+           lot_date=CASE WHEN source='INSERTED' THEN $4::date ELSE lot_date END,front=false,
+           version=version+1,updated_at=now() WHERE id=$1`,
+        [u.id, promise, mode === 'confirm', dateOf(dc, u.planRelease)],
+      );
+  }
+  await db.query(
+    `INSERT INTO order_plans(tenant_id,site_id,order_ref,state,original_date,proposed_date,accepted_date,release_date,reason,gating,last_decision_no)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     ON CONFLICT (tenant_id,site_id,order_ref) DO UPDATE SET state=excluded.state,original_date=excluded.original_date,
+       proposed_date=excluded.proposed_date,accepted_date=coalesce(excluded.accepted_date,order_plans.accepted_date),
+       release_date=excluded.release_date,reason=excluded.reason,gating=excluded.gating,last_decision_no=excluded.last_decision_no,
+       version=order_plans.version+1,updated_at=now()`,
+    [
+      actor.tenant_id,
+      dc.siteId,
+      ref,
+      mode === 'propose' ? 'awaiting_confirmation' : 'scheduled',
+      original,
+      promise,
+      mode === 'confirm' ? promise : null,
+      dateOf(dc, s.day),
+      (
+        (s.normal ? 'Materials and capacity support this date.' : 'Conditional date.') +
+        (mode === 'move' ? ' Original customer promise retained.' : '')
+      ).slice(0, 500),
+      JSON.stringify(gating),
+      decisionNo,
+    ],
+  );
+  const mine = s.seq.filter((u) => oidOf(u) === ref);
+  return { original, promise, release: dateOf(dc, Math.min(...mine.map((u) => u.planRelease))) };
+}
+
+// Orders awaiting the customer's date (or ready to reschedule).
+export async function listPending(db, siteId) {
+  return (
+    await db.query(
+      `SELECT p.order_ref,p.state,to_char(p.original_date,'YYYY-MM-DD') AS original_date,to_char(p.proposed_date,'YYYY-MM-DD') AS proposed_date,
+         to_char(p.release_date,'YYYY-MM-DD') AS release_date,p.reason,p.gating,p.last_decision_no,p.version,
+         (SELECT i.code FROM production_orders o JOIN items i ON i.id=o.item_id WHERE o.site_id=p.site_id AND coalesce(o.order_ref,o.order_no)=p.order_ref LIMIT 1) AS item,
+         (SELECT sum(o.quantity) FROM production_orders o WHERE o.site_id=p.site_id AND coalesce(o.order_ref,o.order_no)=p.order_ref AND o.status='OPEN') AS quantity,
+         (SELECT max(o.customer) FROM production_orders o WHERE o.site_id=p.site_id AND coalesce(o.order_ref,o.order_no)=p.order_ref) AS customer
+       FROM order_plans p WHERE p.site_id=$1 AND p.state IN ('awaiting_confirmation','ready_to_reschedule')
+       ORDER BY p.updated_at`,
+      [siteId],
+    )
+  ).rows;
 }
