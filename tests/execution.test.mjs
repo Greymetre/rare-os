@@ -15,8 +15,15 @@ import {
   workingDates,
 } from '../packages/engines/scheduler.mjs';
 
+// The simulation handover bundle is client data and lives outside the repository, so the parity
+// test below runs where it is present and is skipped everywhere else (CI, a fresh clone).
+// NILKAMAL_HANDOVER_SEED points at the seed file on a machine that keeps the bundle elsewhere.
 const DEMO =
+  process.env.NILKAMAL_HANDOVER_SEED ??
   '/Users/apple/Developer/rare-os/Nilkamal_Simulation_Demo_Developer_Handover_21Sep2026/Demo_Build/nilkamal_seed_v9_materials.json';
+const demoSeed = fs.existsSync(DEMO)
+  ? false
+  : 'the Nilkamal handover bundle is not on this machine';
 
 test('buffer penetration and schedule adherence come from the two events', () => {
   // 1,320 planned minutes with a 25% buffer: 1,326 used 2% of the protection.
@@ -69,7 +76,7 @@ test('master-data self-audit: consistent drift is flagged, noise is not', () => 
   );
 });
 
-test('the audit rule reproduces the simulation handover figures', () => {
+test('the audit rule reproduces the simulation handover figures', { skip: demoSeed }, () => {
   const seed = JSON.parse(fs.readFileSync(DEMO, 'utf8'));
   const actuals = seed.routing_actual_elapsed;
   const standards = new Map(Object.entries(actuals).map(([item, a]) => [item, a.std_total_min]));

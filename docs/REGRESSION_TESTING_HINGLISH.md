@@ -111,6 +111,8 @@ Automated scan complete VAPT certificate nahi hai. Authenticated business-logic 
 
 Plant coverage ab default suite mein run hoti hai; purana opt-in retained-review test fresh disposable fixtures wala `plants.spec.ts` ban gaya hai. Kisi feature ko silently skip karke regression pass na maan lein.
 
+Ek hi test client data par nirbhar hai: `execution.test.mjs` ka _"audit rule reproduces the simulation handover figures"_. Nilkamal handover bundle repo ke bahar rehta hai (client data), isliye ye test sirf us machine par chalta hai jahan bundle maujood hai aur CI/fresh clone par **skip** ho jata hai (`NILKAMAL_HANDOVER_SEED` se path badal sakte hain). Baaki sab kuch har jagah chalta hai.
+
 ## Future changes ka process
 
 - Behavior-changing feature ke saath meaningful happy-path aur failure/permission regression add karein. Bug fix ka test original failure reproduce kare aur fix ke baad pass ho.
