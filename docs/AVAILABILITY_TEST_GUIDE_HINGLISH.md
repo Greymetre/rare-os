@@ -565,3 +565,37 @@ Nilkamal par: har item ka standard CT sheet se aata hai, aur completions abhi na
 - **Release make orders, release and complete work orders, log downtime** (production.execute).
 - **Adopt corrected cycle times from completed work orders** (masters.cycle_time).
 - **View** (planning.read): saari screens padhne ke liye.
+
+## AV-10 — Delivery aur planner ka din
+
+**Yeh kya karta hai:** jo calculation abhi chali hai, wahi do screens me padh kar dikhti hai — **Today** (aaj kya karna hai) aur **Delivery** (kya promise kiya tha, kya milega). Har list CSV me export hoti hai, aur upar hamesha likha rehta hai ki number kis calculation ke hain aur input badle to nahi.
+
+### 1. Today (planner ka din)
+
+**Planning → Today**. Upar tiles: kitna order karna hai, kitna release karna hai, kitne critical alerts, aur kitne promises penetrated hain.
+
+1. **Order today:** buffer board ki BUY recommendations; jinki date nikal chuki hai woh upar aur highlight me.
+2. **Release today:** jin orders ka release day aa gaya hai. Material ready na ho to **Hold** likha aata hai.
+3. **Alerts:** is calculation ke saare exceptions, sabse serious pehle:
+   - Critical: stock out jiska koi order nahi, ya promise jo late ja raha hai.
+   - High: red buffer, material short, late/rejected expedite, machine down, pichhle run se at-risk order.
+   - Medium: yellow buffer, material validate nahi ho raha, expedite abhi confirm nahi hua, customer ki date ka intezaar.
+   - Low: demand jo lead time ke bahar hai.
+
+### 2. Delivery
+
+**Planning → Delivery**:
+
+1. **OTIF by order:** order tabhi on time jab uske **saare lots** promise tak ho jayein. Ek lot late = poora order late.
+2. **By production lot:** wahi ginti lot-wise — ye number hamesha achha dikhta hai, isliye dono saath rakhe hain.
+3. **Promises: given against projected** table: release by, promised, projected finish, **buffer used %** aur protection.
+   - Buffer = promise tak ka poora runway; jo bacha hai woh slack hai.
+   - 40% tak Protected, 70% tak Watch, uske upar Expedite zone, aur finish promise ke baad ho to **Penetrated**.
+4. **Late only** checkbox se sirf late orders.
+5. **Export (CSV)** buttons: OTIF, time buffer, release schedule (aur Today par alerts, today's list).
+
+### 3. Stale-data indicator
+
+Dono screens par heading ke neeche likha rehta hai: calculation number, kab chali, simulation date, aur agar input badle hain to **"inputs changed: recalculating…"**. Kuch bhi badlo (order, buffer, downtime, plant planning) to ye turant dikhega aur recalculation ke baad apne aap saaf ho jayega.
+
+Nilkamal par abhi: **OTIF 100%** (76 me se 76 orders on time), 0 penetrated, aur alerts me zyadatar material wale (50 orders gated) aur buffer zones.

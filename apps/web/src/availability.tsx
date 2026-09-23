@@ -1,4 +1,5 @@
 import { CycleTimeAudit, Downtime, Execution } from './execution';
+import { Delivery, Today } from './delivery';
 import {
   Expedites,
   Gantt,
@@ -1117,6 +1118,8 @@ export function Availability({
     'Purchase orders',
     'Demand history',
     'Buffer settings',
+    'Today',
+    'Delivery',
     'Buffer board',
     'Scheduler',
     'Insert order',
@@ -1162,6 +1165,8 @@ export function Availability({
                   [
                     ...(has('planning.read')
                       ? [
+                          'Today',
+                          'Delivery',
                           'Buffer board',
                           'Scheduler',
                           'Insert order',
@@ -1327,6 +1332,12 @@ export function Availability({
           permissions={permissions}
           refreshKey={refreshKey}
         />
+      )}
+      {tab === 'Today' && plantId && (
+        <Today key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {tab === 'Delivery' && plantId && (
+        <Delivery key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
       )}
       {tab === 'Execution' && plantId && (
         <Execution

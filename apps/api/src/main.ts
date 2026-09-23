@@ -53,6 +53,7 @@ import { PurchaseController } from './purchase.controller.js';
 import { ScheduleController } from './schedule.controller.js';
 import { MaterialsDecisionsController } from './materials-decisions.controller.js';
 import { ExecutionController } from './execution.controller.js';
+import { DeliveryController } from './delivery.controller.js';
 import { AccessController } from './access.controller.js';
 @Catch()
 class Errors implements ExceptionFilter {
@@ -392,6 +393,7 @@ class AppController {
     ScheduleController,
     MaterialsDecisionsController,
     ExecutionController,
+    DeliveryController,
   ],
 })
 class AppModule {}

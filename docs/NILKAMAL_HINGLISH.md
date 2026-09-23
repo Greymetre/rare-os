@@ -96,12 +96,19 @@ ka run + changeover** exact.
 - Downtime: demo me at-risk orders scripted the; hamare yahan downtime ke baad schedule dobara chalta hai aur
   at-risk list do runs ki tulna se nikalti hai.
 
+## Delivery (AV-10)
+
+- **Today** aur **Delivery** screens current run se bante hain: OTIF (76/76 on time), time buffer, alerts,
+  aur "aaj kya order / release karna hai" ki list. Har list CSV me milti hai.
+- Demo ka time-buffer bar aur at-risk list prepared numbers par thi; hamare yahan dono schedule se nikalte
+  hain: promise tak ka runway aur uska bacha hua slack.
+
 ## Screens
 
 - **Stock and demand → Production orders**: order par click → poora BOM: per unit, zaroorat, buffer zone,
   on hand ("not available" agar stock record nahi), on order, net flow, needed by, verdict.
 - **Planning → Buffer board**: detail mein weekly usage, CV, safety, demand ka breakdown, driving orders aur lead time at loading.
-- **Planning → Scheduler / Insert order / Pending orders / Expedites / Execution / Downtime / Cycle time audit / Gantt / Resource load**, **Setup → Plant planning**.
+- **Planning → Today / Delivery / Buffer board / Scheduler / Insert order / Pending orders / Expedites / Execution / Downtime / Cycle time audit / Gantt / Resource load**, **Setup → Plant planning**.
 - **Buffer profiles**: "Zone method" = Weekly (Nilkamal).
 
 ## Abhi baaki (demo mein hai, yahan nahi)
