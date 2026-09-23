@@ -1,3 +1,4 @@
+import { CycleTimeAudit, Downtime, Execution } from './execution';
 import {
   Expedites,
   Gantt,
@@ -1121,6 +1122,9 @@ export function Availability({
     'Insert order',
     'Pending orders',
     'Expedites',
+    'Execution',
+    'Downtime',
+    'Cycle time audit',
     'Gantt',
     'Resource load',
     'Plant planning',
@@ -1163,6 +1167,9 @@ export function Availability({
                           'Insert order',
                           'Pending orders',
                           'Expedites',
+                          'Execution',
+                          'Downtime',
+                          'Cycle time audit',
                           'Gantt',
                           'Resource load',
                         ]
@@ -1314,6 +1321,33 @@ export function Availability({
       )}
       {tab === 'Expedites' && plantId && (
         <Expedites
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Execution' && plantId && (
+        <Execution
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Downtime' && plantId && (
+        <Downtime
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Cycle time audit' && plantId && (
+        <CycleTimeAudit
           key={plantId}
           csrf={csrf}
           plantId={plantId}

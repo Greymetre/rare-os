@@ -1418,6 +1418,9 @@ export function Scheduler({
                         <div className="cell-sub">Grouped after {o.grouped_with}</div>
                       )}
                       {o.manual_placed && <div className="cell-sub">Placed by planner</div>}
+                      {o.execution_state === 'released' && (
+                        <div className="cell-sub">Released: running, not re-sequenced</div>
+                      )}
                     </td>
                     <td>
                       {o.item}
@@ -1980,6 +1983,7 @@ export function PlanningSettings({
               profile_day: String(form.profile_day),
               day_weights: form.day_weights,
               area_operations: form.area_operations,
+              execution_buffer_pct: String(form.execution_buffer_pct),
               version: Number(form.version),
             })
               .then((d) => {
@@ -2009,6 +2013,14 @@ export function PlanningSettings({
                   <option value="FIXED">Master lead time (fixed)</option>
                   <option value="PLANNED_LOAD">Master plus queue at planned loading</option>
                 </select>
+              </label>
+              <label>
+                Execution buffer (% of planned minutes)
+                <input
+                  inputMode="numeric"
+                  value={form.execution_buffer_pct}
+                  onChange={(e) => setForm({ ...form, execution_buffer_pct: e.target.value })}
+                />
               </label>
               <label>
                 Day of the month for the profile

@@ -38,6 +38,12 @@ export const permissions = [
   ['schedule.plan', 'Availability', 'Change the schedule: move, club and declub orders'],
   ['schedule.insert', 'Availability', 'Insert customer orders into the schedule and quote dates'],
   [
+    'production.execute',
+    'Availability',
+    'Release make orders, release and complete work orders, log downtime',
+  ],
+  ['masters.cycle_time', 'Availability', 'Adopt corrected cycle times from completed work orders'],
+  [
     'purchase.expedite',
     'Availability',
     'Approve expedite requests and record supplier confirmations',
@@ -84,6 +90,8 @@ export const requiredPermissions = {
   'schedule.plan': ['planning.read'],
   'schedule.insert': ['planning.read'],
   'purchase.expedite': ['purchase.read', 'planning.read'],
+  'production.execute': ['planning.read', 'orders.read'],
+  'masters.cycle_time': ['planning.read', 'masters.read'],
   'planning.run': ['planning.read'],
   'buffers.manage': ['planning.read'],
   // Each import type also requires its own maintain permission, checked by the API.
@@ -132,4 +140,6 @@ export const livePermissionCodes = [
   'schedule.plan',
   'schedule.insert',
   'purchase.expedite',
+  'production.execute',
+  'masters.cycle_time',
 ];

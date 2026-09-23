@@ -142,6 +142,7 @@ export function snapshot(seq, ctx) {
     routings: ctx.routings,
     resources: ctx.resources,
     dayMinutes: ctx.dayMinutes,
+    downtime: ctx.downtime ?? null,
   });
   const times = orderTimes(pass, ctx.dayMinutes);
   const materials = materialReadiness(pass, ctx);

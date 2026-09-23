@@ -86,16 +86,26 @@ ka run + changeover** exact.
   - **Seed order pending:** 15625229 ke scenarios aur 86/86 buffers exact. Pending imported order apne FG ki demand se ghat jaata hai, demo jaisa.
 - Hamara farq: expedite approval **maker-checker** hai (demo me requester khud approve kar sakta hai).
 
+## Execution (AV-9)
+
+- Loader execution ke naye tables saaf karta hai aur MO / release / downtime numbering #1 se shuru karta hai.
+- Demo ka execution loop wahi do event hai (release + completion). Demo me ye log seed data tha; hamare yahan
+  planner khud release aur complete karta hai, aur audit **apne** completions par banta hai.
+- Demo ka master-data audit apne prepared series par tha (uska "standard" CT sheet se alag hai), isliye hum
+  sirf **rule** ki parity rakhte hain: unit test demo ke 12 series par avg, drift aur wahi 3 flagged items deta hai.
+- Downtime: demo me at-risk orders scripted the; hamare yahan downtime ke baad schedule dobara chalta hai aur
+  at-risk list do runs ki tulna se nikalti hai.
+
 ## Screens
 
 - **Stock and demand → Production orders**: order par click → poora BOM: per unit, zaroorat, buffer zone,
   on hand ("not available" agar stock record nahi), on order, net flow, needed by, verdict.
 - **Planning → Buffer board**: detail mein weekly usage, CV, safety, demand ka breakdown, driving orders aur lead time at loading.
-- **Planning → Scheduler / Insert order / Pending orders / Expedites / Gantt / Resource load**, **Setup → Plant planning**.
+- **Planning → Scheduler / Insert order / Pending orders / Expedites / Execution / Downtime / Cycle time audit / Gantt / Resource load**, **Setup → Plant planning**.
 - **Buffer profiles**: "Zone method" = Weekly (Nilkamal).
 
 ## Abhi baaki (demo mein hai, yahan nahi)
 
-SAP ZMTO lines ka import (abhi odd size screen par family + size se aata hai); make order release (AV-9). Demo ka resource load graph drum ke "nose to tail" model par hai; hamara graph timed schedule se
+SAP ZMTO lines ka import (abhi odd size screen par family + size se aata hai). Demo ka resource load graph drum ke "nose to tail" model par hai; hamara graph timed schedule se
 asli busy minutes dikhata hai (totals same, din-wise baant alag). Approval
 hamara maker-checker hi rahega (demo ka one-click nahi).

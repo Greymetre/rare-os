@@ -661,6 +661,7 @@ export class ScheduleController {
       'day_weights',
       'profile_day',
       'area_operations',
+      'execution_buffer_pct',
       'version',
     ]);
     // Version 0: the plant still uses the defaults.
@@ -673,6 +674,7 @@ export class ScheduleController {
       profile_day: int(raw.profile_day, 'Profile day', 1, 31, 7),
       day_weights: null as number[] | null,
       area_operations: [] as string[],
+      execution_buffer_pct: int(raw.execution_buffer_pct, 'Execution buffer %', 0, 200, 25),
     };
     if (raw.area_operations !== undefined && raw.area_operations !== null) {
       const ops = (

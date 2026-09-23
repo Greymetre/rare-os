@@ -129,3 +129,5 @@ export function applyLater(
   decisionNo: number,
 ): Promise<any>;
 export function listPending(db: Db, siteId: string): Promise<any[]>;
+export function loadDowntime(db: Db, siteId?: string | null): Promise<Map<string, any[]>>;
+export function downtimeOn(rows: any[] | undefined, dates: string[]): any[];

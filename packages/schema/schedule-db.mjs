@@ -46,6 +46,7 @@ export const PLANT_PLANNING_DEFAULTS = {
   day_weights: null,
   profile_day: 7,
   area_operations: [],
+  execution_buffer_pct: 25,
 };
 
 // Calendars, resources, active routings and planning policy of every active plant.
@@ -70,6 +71,7 @@ export async function loadPlantModel(db, today) {
         day_weights: s.day_weights?.map(Number) ?? null,
         profile_day: s.profile_day,
         area_operations: s.area_operations ?? [],
+        execution_buffer_pct: Number(s.execution_buffer_pct ?? 25),
         version: s.version,
       };
   for (const c of (
@@ -300,6 +302,33 @@ export async function loadOrderPlans(db, siteId = null) {
   return out;
 }
 
+// AV-9: open downtime per plant, as schedule units the forward pass blocks out.
+export async function loadDowntime(db, siteId = null) {
+  const out = new Map();
+  for (const r of (
+    await db.query(
+      `SELECT site_id,resource_id,machine,to_char(event_date,'YYYY-MM-DD') AS day,minutes
+       FROM downtime_events WHERE state='open' AND ($1::uuid IS NULL OR site_id=$1)`,
+      [siteId],
+    )
+  ).rows) {
+    if (!out.has(r.site_id)) out.set(r.site_id, []);
+    out.get(r.site_id).push({
+      resourceId: r.resource_id,
+      machine: r.machine === null ? null : Number(r.machine),
+      date: r.day,
+      minutes: Number(r.minutes),
+    });
+  }
+  return out;
+}
+
+// Downtime on the schedule axis: a date becomes a day index; a past date stops the first day.
+export const downtimeOn = (rows, dates) =>
+  (rows ?? [])
+    .map((d) => ({ ...d, day: Math.max(1, dueDayIndex(d.date, dates)) }))
+    .filter((d) => d.day <= dates.length);
+
 async function loadSequences(db, siteId = null) {
   return new Map(
     (
@@ -313,7 +342,8 @@ const axisDates = (plant, today) =>
 
 // Open production orders (the book) with their lot fields. due = the order's promise (need-by).
 export const BOOK_COLUMNS = `o.id,o.site_id,o.order_no,o.item_id,i.code,to_char(o.due_date,'YYYY-MM-DD') AS due,o.quantity,
-  o.source,o.order_ref,o.lot_no,o.lot_count,to_char(o.lot_date,'YYYY-MM-DD') AS lot_date,o.front,o.rush,o.rush_before`;
+  o.source,o.order_ref,o.lot_no,o.lot_count,to_char(o.lot_date,'YYYY-MM-DD') AS lot_date,o.front,o.rush,o.rush_before,
+  o.execution_state,o.release_no`;
 // AV-8: an order awaiting the customer's date confirmation is visible demand, not committed
 // capacity or material (Nilkamal handover: Pending Orders to Plan).
 export const NOT_PENDING = `NOT EXISTS (SELECT 1 FROM order_plans pp WHERE pp.site_id=o.site_id
@@ -325,6 +355,9 @@ export const bookRow = (o) => ({
   code: o.code,
   due: o.due,
   qty: Number(o.quantity),
+  // AV-9: released work runs first, in release order, and is never re-sequenced.
+  executionState: o.execution_state,
+  releaseNo: o.release_no === null || o.release_no === undefined ? null : Number(o.release_no),
   ...(o.source === 'INSERTED'
     ? {
         inserted: true,
@@ -345,6 +378,7 @@ export const bookRow = (o) => ({
 const unitsOf = (book, dates, today) =>
   book.map((o) => {
     const day = dueDayIndex(o.due, dates);
+    const running = o.releaseNo == null ? {} : { releaseNo: o.releaseNo };
     if (!o.lotDate)
       return {
         id: o.id,
@@ -356,6 +390,7 @@ const unitsOf = (book, dates, today) =>
         dueDate: o.due,
         dueDay: day,
         orderDueDay: day,
+        ...running,
       };
     const lotDay = Math.max(1, dueDayIndex(o.lotDate, dates));
     return {
@@ -374,6 +409,7 @@ const unitsOf = (book, dates, today) =>
       lotDay,
       front: o.front,
       noAutoGroup: true,
+      ...running,
       ...(o.rush ? { rushBefore: o.rushBefore ?? null } : {}),
     };
   });
@@ -466,6 +502,7 @@ export async function scheduleSites(
   const sequences = await loadSequences(db);
   const actionsBySite = await loadExpediteActions(db);
   const plansBySite = await loadOrderPlans(db);
+  const downtimeBySite = await loadDowntime(db);
   const codes = new Map(
     (
       await db.query('SELECT id,code FROM items WHERE id=ANY($1::uuid[])', [
@@ -499,6 +536,7 @@ export async function scheduleSites(
       dayMinutes: D,
       clubWindowDays: plant.settings.club_window_days,
       plan: planOf(sequences.get(siteId), dates),
+      downtime: downtimeOn(downtimeBySite.get(siteId), dates),
     });
     if (s.groupingExhausted)
       messages.push(
@@ -746,7 +784,7 @@ export async function listSchedule(
       `SELECT s.position,s.status,s.start_min,s.finish_min,to_char(s.release_date,'YYYY-MM-DD') AS release_date,
          to_char(s.finish_date,'YYYY-MM-DD') AS finish_date,to_char(s.promise_date,'YYYY-MM-DD') AS promise_date,
          s.slack_min,s.late_days,s.material_check,s.messages,s.material_lines,s.plan_group,s.manual_placed,s.plan_state,coalesce(o.order_ref,o.order_no) AS order_ref,
-         o.id,o.order_no,o.quantity,i.code AS item,i.name AS item_name,
+         o.id,o.order_no,o.quantity,o.execution_state,i.code AS item,i.name AS item_name,
          u.code AS unit,g.order_no AS grouped_with
        FROM schedule_orders s JOIN production_orders o ON o.id=s.production_order_id JOIN items i ON i.id=o.item_id
        JOIN units u ON u.id=i.base_unit_id LEFT JOIN production_orders g ON g.id=s.grouped_with
@@ -869,11 +907,11 @@ export async function plantPlanning(db, siteId) {
 
 export async function savePlantPlanning(db, tenantId, siteId, value) {
   await db.query(
-    `INSERT INTO plant_planning(tenant_id,site_id,club_window_days,lead_time_basis,day_weights,profile_day,area_operations)
-     VALUES($1,$2,$3,$4,$5,$6,$7)
+    `INSERT INTO plant_planning(tenant_id,site_id,club_window_days,lead_time_basis,day_weights,profile_day,area_operations,execution_buffer_pct)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8)
      ON CONFLICT (tenant_id,site_id) DO UPDATE SET club_window_days=excluded.club_window_days,lead_time_basis=excluded.lead_time_basis,
        day_weights=excluded.day_weights,profile_day=excluded.profile_day,area_operations=excluded.area_operations,
-       version=plant_planning.version+1,updated_at=now()`,
+       execution_buffer_pct=excluded.execution_buffer_pct,version=plant_planning.version+1,updated_at=now()`,
     [
       tenantId,
       siteId,
@@ -882,6 +920,7 @@ export async function savePlantPlanning(db, tenantId, siteId, value) {
       value.day_weights,
       value.profile_day,
       value.area_operations ?? [],
+      value.execution_buffer_pct ?? 25,
     ],
   );
 }
@@ -963,6 +1002,7 @@ export async function decisionContext(db, siteId) {
     resources: plant.resources,
     dayMinutes: D,
     clubWindowDays: plant.settings.club_window_days,
+    downtime: downtimeOn((await loadDowntime(db, siteId)).get(siteId), dates),
   };
   const schedule = schedulePlant({ ...base, plan });
   const ctx = {
@@ -980,6 +1020,7 @@ export async function decisionContext(db, siteId) {
     resources: plant.resources,
     drumId: schedule.drumId,
     clubWindowDays: plant.settings.club_window_days,
+    downtime: base.downtime,
   };
   const codes = new Map(
     (

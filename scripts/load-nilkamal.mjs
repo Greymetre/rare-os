@@ -32,6 +32,8 @@ const b = JSON.parse(fs.readFileSync(file, 'utf8'));
 
 // Tables that belong to a company but not to its identity and access set-up.
 const PLANNING_TABLES = [
+  'cycle_time_adoptions',
+  'downtime_events',
   'order_plans',
   'expedite_actions',
   'expedite_bundles',
@@ -129,7 +131,8 @@ try {
   );
   // Planning decisions and inserted orders start again from #1.
   await q(
-    "DELETE FROM number_series WHERE tenant_id=$1 AND series IN ('planning_decision','inserted_order','expedite_bundle','expedite_action')",
+    `DELETE FROM number_series WHERE tenant_id=$1 AND series IN ('planning_decision','inserted_order',
+       'expedite_bundle','expedite_action','make_order','work_release','downtime')`,
     [WORKSPACE],
   );
   await q('DELETE FROM tenants WHERE id=ANY($1::uuid[])', [others.map((x) => x.id)]);

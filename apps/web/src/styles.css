@@ -1996,3 +1996,29 @@ section[aria-label='Insert options'] .scenario-grid {
   background: #fdf1e6;
   color: #a3341f;
 }
+
+.gauge-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.gauge {
+  display: inline-block;
+  width: 70px;
+  height: 8px;
+  border-radius: 4px;
+  background: #eceef1;
+  overflow: hidden;
+}
+.gauge-fill {
+  display: block;
+  height: 100%;
+  background: #7fb99a;
+}
+.gauge-fill.pending {
+  background: #e4c26a;
+}
+.gauge-fill.off {
+  background: #a3341f;
+}

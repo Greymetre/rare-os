@@ -615,6 +615,21 @@ export function BufferBoard({
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false);
+  // AV-9: a make recommendation becomes a production order in the book.
+  const releaseMake = (item: string) => {
+    setBusy(true);
+    setError('');
+    call(`plants/${plantId}/make-orders/release`, 'POST', {
+      item,
+      runNo: Number(status?.current?.run_no),
+    })
+      .then((d) => {
+        setNotice(d.message);
+        setTick((x) => x + 1);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
   const board = useList(
     csrf,
     pagePath(`plants/${plantId}/buffers`, { zone, q, cursor: cursors[cursors.length - 1] }),
@@ -823,6 +838,17 @@ export function BufferBoard({
                               Proposal #{r.pending_proposal_no} waiting for approval
                             </div>
                           )}
+                          {r.recommended_kind === 'MAKE' &&
+                            permissions.includes('production.execute') && (
+                              <button
+                                className="text-button"
+                                disabled={busy}
+                                aria-label={`Release a make order for ${r.item}`}
+                                onClick={() => releaseMake(r.item)}
+                              >
+                                Release make order
+                              </button>
+                            )}
                         </>
                       ) : (
                         <span className="cell-sub">—</span>

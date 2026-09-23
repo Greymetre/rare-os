@@ -100,6 +100,14 @@ export function releaseMinute(u, dayMinutes) {
 
 // The planner's order of work: listed orders in their listed order (lots by lot number), others
 // inserted before the first listed unit with a later sequence date.
+// Released work runs first, in the order it was released; it is never re-sequenced.
+export const runningFirst = (units) => {
+  const running = units
+    .filter((u) => u.releaseNo != null)
+    .sort((a, b) => a.releaseNo - b.releaseNo || a.ref.localeCompare(b.ref));
+  return { running, rest: units.filter((u) => u.releaseNo == null) };
+};
+
 export function manualSequence(units, manualOrder) {
   const pos = new Map(manualOrder.map((id, i) => [id, i]));
   const key = (u) => u.dueDate;
@@ -149,7 +157,42 @@ export const placeGroups = (seq, groups) =>
   groups.reduce((out, g) => placeGroup(out, g.ids, g.day, g.beforeId, g.id), seq);
 
 // Times every operation. Returns per-order operations and finish, and per-machine blocks.
-export function forwardPass({ sequence, routings, resources, dayMinutes }) {
+// AV-9: minutes a machine is not available (downtime), as plant-minute intervals per machine.
+// downtime: [{ resourceId, machine (null = every machine), day, minutes }]; day is 1-based.
+export function downtimeIntervals(downtime, resources, dayMinutes) {
+  const out = new Map(); // `${resourceId}|${machine}` -> [[from, to]]
+  for (const d of downtime ?? []) {
+    const r = resources.get(d.resourceId);
+    if (!r) continue;
+    const machines = d.machine ? [d.machine] : Array.from({ length: r.machines }, (_, i) => i + 1);
+    const from = Math.max(0, (d.day - 1) * dayMinutes);
+    for (const m of machines) {
+      const key = d.resourceId + '|' + m;
+      if (!out.has(key)) out.set(key, []);
+      out.get(key).push([from, Math.min(from + d.minutes, d.day * dayMinutes)]);
+    }
+  }
+  for (const list of out.values()) list.sort((a, b) => a[0] - b[0]);
+  return out;
+}
+
+// The first minute at or after `start` where `run` minutes of work fit without a stopped machine.
+function afterDowntime(start, run, intervals) {
+  if (!intervals?.length) return start;
+  let t = start;
+  for (let pass = 0; pass < intervals.length + 1; pass++) {
+    const hit = intervals.find(([from, to]) => t < to - EPS && from < t + run - EPS);
+    if (!hit) return t;
+    t = hit[1];
+  }
+  return t;
+}
+
+export function forwardPass({ sequence, routings, resources, dayMinutes, downtime = null }) {
+  // downtime: the events themselves, or the intervals a caller already built.
+  const blocked = Array.isArray(downtime)
+    ? downtimeIntervals(downtime, resources, dayMinutes)
+    : downtime;
   const allocations = new Map(
     [...resources.values()].map((r) => [r.id, allocate(r, sequence, routings)]),
   );
@@ -165,7 +208,11 @@ export function forwardPass({ sequence, routings, resources, dayMinutes }) {
       const key = op.resourceId + '|' + a.machine;
       const chg = a.changeover / eff,
         run = op.work / eff;
-      const start = Math.max(ready, (free.get(key) ?? 0) + chg, releaseMinute(order, dayMinutes));
+      const start = afterDowntime(
+        Math.max(ready, (free.get(key) ?? 0) + chg, releaseMinute(order, dayMinutes)),
+        run,
+        blocked?.get(key),
+      );
       const finish = start + run;
       free.set(key, finish);
       ops.push({
@@ -206,6 +253,8 @@ export function groupedSequence({
   clubWindowDays,
   maxChecks,
   cohorts = null,
+  head = [],
+  downtime = null,
 }) {
   let seq = orders.slice().sort(byDue);
   // With cohorts (lists of order ids), only orders of one cohort are pulled together.
@@ -251,12 +300,19 @@ export function groupedSequence({
           const candidate = seq.slice();
           candidate.splice(j, 1);
           candidate.splice(end, 0, p);
-          before ??= forwardPass({ sequence: seq, routings, resources, dayMinutes }).orders;
-          const after = forwardPass({
-            sequence: candidate,
+          before ??= forwardPass({
+            sequence: head.concat(seq),
             routings,
             resources,
             dayMinutes,
+            downtime,
+          }).orders;
+          const after = forwardPass({
+            sequence: head.concat(candidate),
+            routings,
+            resources,
+            dayMinutes,
+            downtime,
           }).orders;
           const hurt = [...after.values()].filter(
             (o) => o.late && o.shipDay > before.get(o.order.id).shipDay,
@@ -294,16 +350,21 @@ export function schedulePlant({
   clubWindowDays = 1,
   maxChecks,
   plan: decisions = null,
+  downtime: downtimeEvents = null,
 }) {
   const routed = orders.filter((o) =>
     operationsOf(o, routings).some((op) => resources.has(op.resourceId)),
   );
   const unrouted = orders.filter((o) => !routed.includes(o));
+  // AV-9: released work runs first in release order and is never re-sequenced; downtime takes
+  // minutes off a machine on its day.
+  const { running, rest } = runningFirst(routed);
+  const downtime = downtimeIntervals(downtimeEvents, resources, dayMinutes);
   // Inserted and rush orders do not start new clubs: the book keeps the clubs it would have without
   // them (Nilkamal handover: the landed placement's cohorts), each still checked against promises.
   const landedCohorts = () => {
-    const own = routed.filter((o) => !o.noAutoGroup && o.rushBefore === undefined);
-    if (own.length === routed.length) return null;
+    const own = rest.filter((o) => !o.noAutoGroup && o.rushBefore === undefined);
+    if (own.length === rest.length) return null;
     return groupedSequence({
       orders: own,
       routings,
@@ -311,26 +372,30 @@ export function schedulePlant({
       dayMinutes,
       clubWindowDays,
       maxChecks,
+      head: running,
+      downtime,
     }).groups.map((g) => g.members);
   };
   // The planner's decisions (AV-7): a manual order of work replaces the computed one; release days
   // and pinned groups apply on top of either.
   const plan = decisions?.manualOrder?.length
     ? {
-        sequence: manualSequence(routed, decisions.manualOrder),
+        sequence: manualSequence(rest, decisions.manualOrder),
         groups: [],
         refused: [],
         checks: 0,
         exhausted: false,
       }
     : groupedSequence({
-        orders: routed,
+        orders: rest,
         routings,
         resources,
         dayMinutes,
         clubWindowDays,
         maxChecks,
         cohorts: landedCohorts(),
+        head: running,
+        downtime,
       });
   if (decisions) {
     const releases = decisions.releases ?? new Map();
@@ -341,7 +406,14 @@ export function schedulePlant({
       decisions.groups ?? [],
     );
   }
-  const pass = forwardPass({ sequence: plan.sequence, routings, resources, dayMinutes });
+  plan.sequence = running.concat(plan.sequence);
+  const pass = forwardPass({
+    sequence: plan.sequence,
+    routings,
+    resources,
+    dayMinutes,
+    downtime,
+  });
   // Busy plant minutes per machine and day, from the timed blocks (changeover precedes its run).
   const busy = new Map();
   const addBusy = (resourceId, from, to) => {

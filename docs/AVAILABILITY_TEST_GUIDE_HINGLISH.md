@@ -519,3 +519,49 @@ MFRCFSSFBND78725 × 160** → quote 03-Oct (before 15627039, Commit + replenish)
 - **Change the schedule** (schedule.plan): expedite request, later date, pending actions.
 - **Approve expedite requests and record supplier confirmations** (purchase.expedite): approve, confirm, reject. Requester khud approve nahi kar sakta.
 - **View** (planning.read): saare previews aur lists.
+
+## AV-9 — Execution (work orders, downtime, cycle-time audit)
+
+**Yeh kya karta hai:** plant se sirf **do event** chahiye: order **release** hua, aur **complete** hua. Inhi do se buffer penetration, schedule adherence aur cycle-time audit banta hai. Koi in-process scan ya sensor nahi.
+
+- **Release:** jis calculation par planner ne release kiya, uske **planned minutes** order par freeze ho jaate hain. Release hone ke baad kaam **sequence me aage aa jaata hai aur dobara re-sequence nahi hota** — na grouping se, na club se, na planner ke move se.
+- **Complete:** completion date, quantity aur **elapsed work minutes**. Order band ho jaata hai aur book se nikal jaata hai.
+- **Buffer penetration:** planned ke upar (execution buffer %) ka protective time. 0% = plan ke andar, 100% = poora buffer, uske upar = buffer blown. Buffer % **Setup → Plant planning** me hai (default 25%).
+- **Downtime:** kisi resource (ya ek machine) ke kisi din ke minutes chale jaate hain. Schedule wahi minutes kho deta hai aur **at-risk promises khud nikalte hain** (scripted nahi).
+- **Make order release:** buffer board ki MAKE recommendation ek production order ban jaati hai.
+- **Cycle-time audit:** apne completions se har item ka actual min/unit nikal kar maintained standard se compare hota hai. Flag tabhi jab: kam se kam 5 completions, sab ek hi taraf (upar ya neeche), aur drift 10% ya zyada. **Adopt** karne par naya routing revision (ACT1, ACT2…) banta hai aur purana usi din se band ho jaata hai.
+
+### 1. Release aur complete
+
+1. **Planning → Execution**. Upar tiles: schedule adherence, abhi kitne chal rahe hain.
+2. "Release work" table me kisi order par **Release** dabao. Message me planned minutes dikhega.
+3. **Scheduler** kholo: woh order ab #1 par hoga aur "Released: running, not re-sequenced" likha hoga. Use drag/move karke hilane ki koshish karo — apni jagah par hi rahega.
+4. Wapas **Execution** me us row me completion form bharo: date, quantity, elapsed work minutes → **Record completion**.
+   - Planned 60 aur elapsed 72 ho to penetration 80% (25% buffer) aur "Inside buffer".
+   - Elapsed 80 ho to buffer blown.
+5. Order schedule se nikal jaata hai aur adherence update hota hai.
+
+### 2. Downtime aur at-risk
+
+1. **Planning → Downtime** → resource (drum bhi chalega), machine (khaali = poora resource), date, minutes, reason → **Log downtime**.
+2. Recalculation ke baad "Promises at risk" me wo orders dikhte hain jo pehle time par the aur ab late hain (ya pehle se zyada late).
+3. **Machine is back** dabane par minutes wapas mil jaate hain aur schedule phir se seedha ho jaata hai.
+
+### 3. Make order release
+
+1. **Planning → Buffer board** me kisi made item ki row kholo (zone red/breach ho).
+2. Recommendation cell me **Release make order** → `MO-1` jaisa order ban jaata hai, quantity aur due date recommendation wali.
+
+### 4. Cycle-time audit
+
+1. **Planning → Cycle time audit**. Jab tak 5 completions na hon, item "Inside noise" ya "Consistent, small" dikhega.
+2. Ek hi item ke 5 orders release + complete karo, har baar elapsed standard se 20% zyada → row **Consistently wrong** ho jaayegi.
+3. **Adopt** dabao → naya routing revision bunta hai. Uske baad schedule naye (asli) minutes se planning karta hai, aur dobara Adopt karne par "nothing to correct" aata hai.
+
+Nilkamal par: har item ka standard CT sheet se aata hai, aur completions abhi nahi hain, isliye audit khaali rehta hai jab tak aap khud kuch work orders complete na karo. Demo ke prepared 12 series par rule ki parity unit test me check hoti hai (wahi 3 items flag hote hain).
+
+### 5. Permissions
+
+- **Release make orders, release and complete work orders, log downtime** (production.execute).
+- **Adopt corrected cycle times from completed work orders** (masters.cycle_time).
+- **View** (planning.read): saari screens padhne ke liye.

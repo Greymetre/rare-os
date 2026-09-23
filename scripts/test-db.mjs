@@ -937,6 +937,103 @@ try {
   console.log(
     'PASS materials decisions: approval by someone else, only a full supplier confirmation within the request, pending orders dated, nothing deleted, planning inputs, company isolation',
   );
+  // AV-9: the two execution events are consistent, downtime is bounded and a planning input,
+  // adopted cycle times are a permanent record.
+  const wo = randomUUID();
+  await db.query(
+    `INSERT INTO production_orders(id,tenant_id,site_id,order_no,item_id,quantity,due_date,execution_state,
+       released_date,release_no,planned_minutes) VALUES($1,$2,$3,'DB-WO-9',$4,5,current_date+3,'released',current_date,1,120)`,
+    [wo, tenant, site, itemId],
+  );
+  const execution = (no, extra) =>
+    `INSERT INTO production_orders(id,tenant_id,site_id,order_no,item_id,quantity,due_date,${extra.cols})
+     VALUES(gen_random_uuid(),'${tenant}','${site}','DB-WOX-${no}','${itemId}',5,current_date+3,${extra.vals})`;
+  const beforeDowntime = await markers();
+  const resourceId = (await db.query('SELECT id FROM resources WHERE site_id=$1 LIMIT 1', [site]))
+    .rows[0]?.id;
+  if (resourceId) {
+    await db.query(
+      `INSERT INTO downtime_events(id,tenant_id,site_id,event_no,resource_id,machine,event_date,minutes,reason,logged_by)
+       VALUES(gen_random_uuid(),$1,$2,1,$3,1,current_date,240,'Breakdown',$4)`,
+      [tenant, site, resourceId, randomUUID()],
+    );
+    assert.ok((await markers()) > beforeDowntime, 'downtime is a planning input');
+  }
+  for (const [label, code, sql] of [
+    [
+      'released work without a release number',
+      '23514',
+      execution(1, { cols: 'execution_state,released_date', vals: "'released',current_date" }),
+    ],
+    [
+      'planned work with a release date',
+      '23514',
+      execution(2, {
+        cols: 'execution_state,released_date,release_no',
+        vals: "'planned',current_date,2",
+      }),
+    ],
+    [
+      'completion without elapsed minutes',
+      '23514',
+      execution(3, {
+        cols: 'execution_state,released_date,release_no,completed_date,completed_quantity',
+        vals: "'completed',current_date,3,current_date,5",
+      }),
+    ],
+    [
+      'completion before the release',
+      '23514',
+      execution(4, {
+        cols: 'execution_state,released_date,release_no,completed_date,completed_quantity,elapsed_work_minutes',
+        vals: "'completed',current_date,4,current_date-1,5,100",
+      }),
+    ],
+    [
+      'unknown execution state',
+      '23514',
+      execution(5, { cols: 'execution_state', vals: "'running'" }),
+    ],
+    ['unknown production order source', '23514', execution(6, { cols: 'source', vals: "'GUESS'" })],
+    ...(resourceId
+      ? [
+          [
+            'downtime longer than a day',
+            '23514',
+            `INSERT INTO downtime_events(id,tenant_id,site_id,event_no,resource_id,event_date,minutes,reason)
+             VALUES(gen_random_uuid(),'${tenant}','${site}',2,'${resourceId}',current_date,1441,'Too long')`,
+          ],
+          [
+            'downtime without a reason',
+            '23514',
+            `INSERT INTO downtime_events(id,tenant_id,site_id,event_no,resource_id,event_date,minutes,reason)
+             VALUES(gen_random_uuid(),'${tenant}','${site}',3,'${resourceId}',current_date,60,'')`,
+          ],
+          ['delete a downtime event', '42501', 'DELETE FROM downtime_events'],
+        ]
+      : []),
+    ['delete an adopted cycle time', '42501', 'DELETE FROM cycle_time_adoptions'],
+    ['rewrite an adopted cycle time', '42501', 'UPDATE cycle_time_adoptions SET drift_pct=0'],
+    [
+      'execution buffer above 200%',
+      '23514',
+      `INSERT INTO plant_planning(tenant_id,site_id,execution_buffer_pct) VALUES('${tenant}','${hiddenSite}',201)`,
+    ],
+  ])
+    await denied(label, code, sql);
+  // The two events on one order: complete what was released.
+  await db.query(
+    `UPDATE production_orders SET execution_state='completed',status='CLOSED',completed_date=current_date,
+       completed_quantity=5,elapsed_work_minutes=150 WHERE id=$1`,
+    [wo],
+  );
+  assert.equal(
+    (await db.query('SELECT status FROM production_orders WHERE id=$1', [wo])).rows[0].status,
+    'CLOSED',
+  );
+  console.log(
+    'PASS execution: release and completion stay consistent, downtime bounded and a planning input, adopted cycle times permanent, plant buffer limits',
+  );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);
   const pending = await db.query('SELECT * FROM outbox_pending(500)');
