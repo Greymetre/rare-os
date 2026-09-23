@@ -2022,3 +2022,51 @@ section[aria-label='Insert options'] .scenario-grid {
 .gauge-fill.off {
   background: #a3341f;
 }
+
+/* AV-11 planning tools: a bar chart drawn from the numbers. */
+.bars {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 160px;
+  padding: 0 0 18px;
+  margin: 8px 0 18px;
+}
+.bars .bar {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.bars .bar-fill {
+  display: block;
+  background: #5b7fa6;
+  border-radius: 3px 3px 0 0;
+  opacity: 0.85;
+}
+.bars .bar-fill.over {
+  background: #a3341f;
+}
+.bars .bar em {
+  position: absolute;
+  bottom: -16px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
+  font-style: normal;
+  color: #7a8190;
+}
+.bars .bar-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 2px dashed #3d4351;
+  font-size: 10px;
+  color: #3d4351;
+  text-align: right;
+  padding-right: 4px;
+}

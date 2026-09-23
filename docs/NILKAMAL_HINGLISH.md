@@ -103,12 +103,33 @@ ka run + changeover** exact.
 - Demo ka time-buffer bar aur at-risk list prepared numbers par thi; hamare yahan dono schedule se nikalte
   hain: promise tak ka runway aur uska bacha hua slack.
 
+## Planning tools (AV-11)
+
+Nilkamal data par aaj ke numbers (planning date 21-Sep-2026):
+
+- **Month shape:** drum **QU02**, 2,448 min/din, 31 working days. Shape 15,763 minutes capacity se
+  zyada maangti hai, jisme 15,269 shuru ke shaant dino me pehle banaya ja sakta hai; mahine ka
+  **52.5%** aakhri ek-tihai dino me girta hai. Level load par peak stock **2,060 units (din 22)**,
+  mahine ka volume 10,005 units (sirf FG, components dobara nahi gine).
+- **Recommended buffers:** 258 items par service curve (85/90/95%). Fill normal loss function se
+  nikalta hai — demo me ye prepared number tha, yahan har item ke apne variability se banta hai.
+- **Buffer vs MTO:** 274 items — 185 BUFFER, 89 MTO, aur **14** jagah aaj ki policy sifarish se alag hai.
+- **Network:** plant 1116, drum QU02 **25%** par, agle resource se **15.8 pp** ka gap — stable.
+  What-if: QU02 ko 2 se 3 ya 4 machine karne par bhi constraint wahi (QU02, 17% aur 13%) —
+  **6** machine par hi constraint CU02 par jaata hai.
+- **Target mode:** 30 din ki history 11,617 units; agar target usse kam ho (ratio 0.4) to stock
+  1,088 units kam chahiye aur constraint 71% par aa jaata hai.
+- **Assumptions:** 7 rows (plant planning, calendar, lead time basis, profiles) — sab ek jagah.
+
+Events aur schemes Nilkamal data me abhi koi nahi hai; dono khud dalne par hi plan badalte hain
+(scheme sirf accept karne par).
+
 ## Screens
 
 - **Stock and demand → Production orders**: order par click → poora BOM: per unit, zaroorat, buffer zone,
   on hand ("not available" agar stock record nahi), on order, net flow, needed by, verdict.
 - **Planning → Buffer board**: detail mein weekly usage, CV, safety, demand ka breakdown, driving orders aur lead time at loading.
-- **Planning → Today / Delivery / Buffer board / Scheduler / Insert order / Pending orders / Expedites / Execution / Downtime / Cycle time audit / Gantt / Resource load**, **Setup → Plant planning**.
+- **Planning → Today / Delivery / Buffer board / Scheduler / Insert order / Pending orders / Expedites / Execution / Downtime / Cycle time audit / Planning tools / Network / Gantt / Resource load**, **Setup → Plant planning**.
 - **Buffer profiles**: "Zone method" = Weekly (Nilkamal).
 
 ## Abhi baaki (demo mein hai, yahan nahi)

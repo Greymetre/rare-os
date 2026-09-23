@@ -599,3 +599,96 @@ Nilkamal par: har item ka standard CT sheet se aata hai, aur completions abhi na
 Dono screens par heading ke neeche likha rehta hai: calculation number, kab chali, simulation date, aur agar input badle hain to **"inputs changed: recalculating…"**. Kuch bhi badlo (order, buffer, downtime, plant planning) to ye turant dikhega aur recalculation ke baad apne aap saaf ho jayega.
 
 Nilkamal par abhi: **OTIF 100%** (76 me se 76 orders on time), 0 penetrated, aur alerts me zyadatar material wale (50 orders gated) aur buffer zones.
+
+---
+
+## AV-11 — Planning tools (mahine ki shape, buffer set, events, schemes, target, space, network)
+
+Ye saare tools **Planning → Planning tools** tab me hain, upar ek **Tool** dropdown se chunte hain. Network alag tab hai.
+Do tools plan ko sach me badalte hain (**Events & seasons**, **Scheme intake** — accept karne par), baaki sirf simulation hain: jab tak aap khud kuch save nahi karte, plan wahi rehta hai.
+
+Change karne ke liye **planning.tools** permission chahiye; dekhne ke liye planning.read kaafi hai.
+
+### 1. Month shape (mahine ki shape banaam constraint)
+
+**Tool → Month shape**. Upar constraint (drum) ka naam, uski din bhar ki capacity aur mahine ke working days.
+
+1. Bars me har din ka required minutes aur ek line par capacity. Line ke upar wale din constraint se zyada maang rahe hain.
+2. **Over capacity** = poore mahine me kitne minutes capacity se zyada maange gaye.
+3. **Prebuildable** = shuru ke shaant dino ki spare capacity se kitna peak pehle banaya ja sakta hai.
+4. **Last third %** = mahine ka kitna hissa aakhri ek-tihai dino me girta hai (yahi "month-end rush" ka number hai).
+5. **Level load** neeche: agar roz barabar banayein to peak stock kis din aur kitna (units aur days of demand).
+
+Ye shape **Setup → Plant planning** ke _day weights_ se aati hai, volume plant ke finished goods (FG) ki demand se — components dobara nahi ginte.
+
+### 2. Recommended buffers (service level se buffer set)
+
+**Tool → Recommended buffers**, upar **Service level** (85/90/95/98%).
+
+1. Har item ke liye ADU, variability, lead time, aur us service level par red/yellow/green zones.
+2. **Fill %** = normal loss function se nikla hua, kitni demand stock se poori hogi. Steady item par 100% tak jaata hai, lumpy par kam.
+3. Upar curve: 85 → 90 → 95% badhane par poore book ka top of green aur stock value kitna badhta hai — "service kitne ka padta hai" isi se dikhta hai.
+4. Ye recommendation hai: buffer tab hi badlega jab aap Buffer settings me jaakar khud badlein.
+
+### 3. Buffer vs MTO (kis item ko buffer chahiye hi nahi)
+
+**Tool → Buffer vs MTO**. Har item ke liye: saal me kitne hafton me order aaya (orders/year), variability, aur sifarish.
+
+- Saal me 12+ hafte **aur** variability 1.0 se kam = **BUFFER**.
+- Warna **MTO** (order aane par banao, sirf ek hafte ka cover).
+- Jahan aaj ki policy sifarish se alag hai, woh row upar aur highlight me (`change`).
+
+### 4. Events & seasons (jo history me hai hi nahi)
+
+**Tool → Events & seasons** → form: code, naam, Event/Season, window (from–to), **uplift %**, aur items (ya family, ya khaali = poora plant).
+
+1. Save karne ke baad recalculation apne aap chalti hai.
+2. Us item ke zones uplift se scale ho jaate hain, aur buffer row par message aata hai: _"Zones sized for an event: 50% above the trailing rate."_
+3. Zones **window se pehle** hi badhte hain — item ke lead time jitna pehle — taki replenishment window ke andar land kare. Curve me `inWindow` wale hafte alag dikhte hain.
+4. **Active** hata do ya window nikal jaye, to zones apne aap wapas normal.
+
+Test: uplift 50% dalo, recalculation ke baad us item ka top of green thik 1.5 guna hona chahiye.
+
+### 5. Scheme intake (dealer scheme)
+
+**Tool → Scheme intake** → item, window, expected units.
+
+1. Naya scheme **proposed** rehta hai: sirf dikhta hai, demand me nahi jaata.
+2. **Accept** karne par hi uske units demand ban jaate hain (window par barabar bata kar, lead-time horizon ke andar) aur qualified demand badh jaati hai.
+3. **Decline** karne par kuch nahi badalta. Decision kisne liya, woh row me likha rehta hai.
+
+### 6. Target mode (sales target ki keemat)
+
+**Tool → Target mode** → family (ya khaali = saare FG), period aur target units.
+
+1. **History units** = us period jitne dino ki aaj ki rate se nikli demand.
+2. **Ratio** = target ÷ history. Har item ke zones isi ratio par dobara nikaalte hain.
+3. **Delta stock / delta value** = target poora karne ke liye kitna extra stock aur kitne paise chahiye.
+4. **Utilisation %** = constraint par kitna load ho jayega. 100% se upar matlab target ke liye capacity ya shape badalna padega.
+
+Kuch save nahi hota — ye sirf keemat batata hai.
+
+### 7. Space mode (jitni jagah hai, utna set)
+
+**Tool → Space mode** → pehle **Space limit** set karo (units ya volume).
+
+1. Recommended set jagah me aa gaya to **fits**, aur kitni jagah bachi.
+2. Na aaye to pehle **green** zones proportion me kaate jaate hain — **yellow ke neeche kabhi nahi**.
+3. Agar sirf yellow tak bhi jagah se zyada hai, to **below** flag aata hai: matlab jagah hi kam hai, buffer ghata kar kaam nahi chalega.
+
+### 8. Assumptions (plan kis baat par khada hai)
+
+**Tool → Assumptions**. Plant planning, calendar, profiles, lead time basis — sabki aaj ki value ek jagah, "ye number kahan se aata hai" ke saath.
+
+- Har row par **Confirm** dabakar note likh sakte hain (client ne confirm kiya). Confirm hone par pill **Confirmed** ho jaati hai, dobara dabane par **Reopen**.
+
+### 9. Network
+
+**Planning → Network** tab: saare plants ek table me — open orders, drum, uska utilisation, agla resource aur **stability**.
+
+- Stability = drum aur uske baad wale resource ke beech ka gap (percentage points). Gap chhota ho to _Close_: chhoti si mix ya machine badalne par constraint jagah badal sakta hai.
+- Neeche **machine what-if**: kisi resource ka machine count badal kar dekho constraint hilta hai ya nahi. Kuch save nahi hota.
+
+### 10. Permissions
+
+Viewer (sirf planning.read) ko saare tools dikhte hain, par event/scheme/space/assumption save ke buttons nahi dikhte aur API bhi 403 deti hai.

@@ -1,6 +1,7 @@
 // Database side of material buffers (AV-4): profiles, buffer settings and versioned planning runs.
 // Every function receives a pg client inside a company-scoped (RLS) transaction.
 import { effectiveAdu, effectiveSeries, planPlant } from '../engines/ddmrp.mjs';
+import { eventFactor, schemeDemand } from '../engines/planning-tools.mjs';
 import { conversionFactors } from './demand-stock-db.mjs';
 import { itemsByCode, plantsByCode, resolvePlant } from './plant-model-db.mjs';
 import { syncProposals } from './purchase-db.mjs';
@@ -245,7 +246,7 @@ async function loadInputs(db, today) {
          p.red_base_pct,p.red_safety_pct,p.green_pct,p.order_cycle_days,p.spike_threshold_pct,p.adu_window_days,
          p.method,p.zone_weeks,p.cv_weeks,p.order_multiple,p.moq_adu_days,
          src.moq,src.lot_multiple,src.purchase_unit_id,pu.code AS purchase_unit,pu.decimals AS purchase_decimals,
-         src.supplier_id,coalesce(src.lead_time_days,s.lead_time_days) AS source_lead_time,i.base_unit_id
+         src.supplier_id,coalesce(src.lead_time_days,s.lead_time_days) AS source_lead_time,i.base_unit_id,i.family
        FROM item_buffers b
        JOIN sites site ON site.id=b.site_id AND site.active
        JOIN items i ON i.id=b.item_id AND i.active
@@ -358,6 +359,41 @@ async function loadInputs(db, today) {
     if (!productionOrders.has(o.site_id)) productionOrders.set(o.site_id, []);
     productionOrders.get(o.site_id).push(bookRow(o));
   }
+  // AV-11: events and seasons size the zones for a rate the history has not seen; an accepted
+  // scheme's volume inside the horizon is demand.
+  const events = new Map();
+  for (const e of (
+    await db.query(
+      `SELECT e.*,to_char(e.from_date,'YYYY-MM-DD') AS from_day,to_char(e.to_date,'YYYY-MM-DD') AS to_day
+       FROM demand_events e WHERE e.active`,
+    )
+  ).rows) {
+    if (!events.has(e.site_id)) events.set(e.site_id, []);
+    events.get(e.site_id).push({
+      itemIds: e.item_ids,
+      family: e.family,
+      from: e.from_day,
+      to: e.to_day,
+      upliftPct: Number(e.uplift_pct),
+      active: e.active,
+    });
+  }
+  const schemes = new Map();
+  for (const s of (
+    await db.query(
+      `SELECT s.*,to_char(s.from_date,'YYYY-MM-DD') AS from_day,to_char(s.to_date,'YYYY-MM-DD') AS to_day
+       FROM demand_schemes s WHERE s.state='accepted'`,
+    )
+  ).rows) {
+    if (!schemes.has(s.site_id)) schemes.set(s.site_id, []);
+    schemes.get(s.site_id).push({
+      itemId: s.item_id,
+      from: s.from_day,
+      to: s.to_day,
+      expectedUnits: Number(s.expected_units),
+      state: s.state,
+    });
+  }
   // AV-8: imported orders awaiting the customer's new date leave their finished good's demand.
   const pendingDemand = new Map();
   for (const r of (
@@ -412,6 +448,7 @@ async function loadInputs(db, today) {
     sites.get(s.site_id).push({
       itemId: s.item_id,
       code: s.code,
+      family: s.family ?? '',
       makeBuy: s.make_buy,
       decimals: s.decimals,
       policy: s.policy,
@@ -444,6 +481,8 @@ async function loadInputs(db, today) {
     stockKnown,
     productionOrders,
     pendingDemand,
+    events,
+    schemes,
   };
 }
 
@@ -481,6 +520,23 @@ export function planSites(inputs, today, plants = new Map()) {
       demand: inputs.demand.get(siteId) ?? [],
       productionOrders: inputs.productionOrders?.get(siteId) ?? [],
       pendingDemand: inputs.pendingDemand?.get(siteId) ?? new Map(),
+      // AV-11: the planning tools' events and schemes.
+      demandFactors: new Map(
+        settings.map((s) => [
+          s.itemId,
+          eventFactor(
+            inputs.events?.get(siteId) ?? [],
+            { itemId: s.itemId, family: s.family ?? '' },
+            today,
+            s.leadTimeDays ?? s.source?.leadTimeDays ?? 0,
+          ),
+        ]),
+      ),
+      schemeDemand: schemeDemand(
+        inputs.schemes?.get(siteId) ?? [],
+        today,
+        Math.max(...settings.map((s) => s.leadTimeDays ?? 0), 30),
+      ),
       series,
       stockKnown: inputs.stockKnown?.get(siteId) ?? new Set(),
       leadTimes: plantLeadTimes(plants.get(siteId), settings, adu),
@@ -512,12 +568,12 @@ async function saveResults(db, tenantId, runId, results) {
          on_hand,open_supply,qualified_demand,spike_demand,outside_horizon,nfp,zone,priority_pct,on_hand_alert,
          recommended_kind,recommended_qty,recommended_purchase_qty,purchase_unit,supplier_id,due_date,messages,
          zone_adu,zone_days,cv,safety_pct,lead_time_demand,production_demand,planned_make_demand,required_date,drivers,
-         lead_time_live,lead_time_factor)
+         lead_time_live,lead_time_factor,event_factor,scheme_demand)
        SELECT $1,$2,r.* FROM unnest($3::uuid[],$4::uuid[],$5::text[],$6::text[],$7::numeric[],$8::int[],$9::numeric[],$10::numeric[],
          $11::numeric[],$12::numeric[],$13::numeric[],$14::numeric[],$15::numeric[],$16::numeric[],$17::numeric[],$18::text[],$19::numeric[],
          $20::text[],$21::text[],$22::numeric[],$23::numeric[],$24::text[],$25::uuid[],$26::date[],$27::jsonb[],
          $28::numeric[],$29::int[],$30::numeric[],$31::numeric[],$32::numeric[],$33::numeric[],$34::numeric[],$35::date[],$36::jsonb[],
-         $37::numeric[],$38::numeric[]) AS r`,
+         $37::numeric[],$38::numeric[],$39::numeric[],$40::numeric[]) AS r`,
       [
         tenantId,
         runId,
@@ -557,6 +613,8 @@ async function saveResults(db, tenantId, runId, results) {
         col((r) => JSON.stringify((r.drivers ?? []).map(({ itemId, ...d }) => d))),
         col((r) => r.leadTimeLive ?? null),
         col((r) => r.leadTimeFactor ?? null),
+        col((r) => r.eventFactor ?? null),
+        col((r) => r.schemeDemand ?? null),
       ],
     );
   }

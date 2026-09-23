@@ -43,6 +43,7 @@ export const permissions = [
     'Release make orders, release and complete work orders, log downtime',
   ],
   ['masters.cycle_time', 'Availability', 'Adopt corrected cycle times from completed work orders'],
+  ['planning.tools', 'Availability', 'Maintain events, schemes, targets and space limits'],
   [
     'purchase.expedite',
     'Availability',
@@ -92,6 +93,7 @@ export const requiredPermissions = {
   'purchase.expedite': ['purchase.read', 'planning.read'],
   'production.execute': ['planning.read', 'orders.read'],
   'masters.cycle_time': ['planning.read', 'masters.read'],
+  'planning.tools': ['planning.read'],
   'planning.run': ['planning.read'],
   'buffers.manage': ['planning.read'],
   // Each import type also requires its own maintain permission, checked by the API.
@@ -142,4 +144,5 @@ export const livePermissionCodes = [
   'purchase.expedite',
   'production.execute',
   'masters.cycle_time',
+  'planning.tools',
 ];

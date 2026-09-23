@@ -187,7 +187,9 @@ function bomOrder(ids, usage) {
 //   series?: Map(itemId -> { weeks, blocks }) effective weekly demand for WEEKLY profiles,
 //   stockKnown?: Set(itemId) items with a stock record (WEEKLY: others have no known position),
 //   leadTimes?: Map(itemId -> { days, factor, unbounded }) made items' lead time at planned loading
-//   pendingDemand?: Map(itemId -> qty) imported orders awaiting a customer date (off the item's demand)
+//   pendingDemand?: Map(itemId -> qty) imported orders awaiting a customer date (off the item's demand),
+//   demandFactors?: Map(itemId -> factor) event / season uplift that sizes the zones (AV-11),
+//   schemeDemand?: Map(itemId -> qty) accepted scheme volume inside the horizon (AV-11)
 // }
 export function planPlant(input) {
   const { today, settings, adu, usage, onHand, supply, demand } = input;
@@ -296,6 +298,22 @@ export function planPlant(input) {
       };
       row.leadTimeLive = live.days;
       row.leadTimeFactor = live.factor;
+    }
+    // AV-11: an event or a season the history has not seen yet sizes the zones for its rate, from
+    // far enough ahead that the replenishment lands inside the window.
+    const event = input.demandFactors?.get(s.itemId);
+    if (event && Math.abs(event - 1) > EPS) {
+      const scale = (x) => (weekly(s) ? Math.round(x * event) : round6(x * event));
+      row.zones = {
+        ...row.zones,
+        topOfRed: scale(row.zones.topOfRed),
+        topOfYellow: scale(row.zones.topOfYellow),
+        topOfGreen: scale(row.zones.topOfGreen),
+      };
+      row.eventFactor = event;
+      row.messages.push(
+        `Zones sized for an event: ${Math.round((event - 1) * 100)}% above the trailing rate.`,
+      );
     }
   }
 
@@ -422,6 +440,12 @@ export function planPlant(input) {
     if (row.status !== 'planned') continue;
     const s = byItem.get(row.itemId);
     const isWeekly = weekly(s);
+    // AV-11: an accepted scheme's expected volume inside the horizon is demand.
+    const scheme = input.schemeDemand?.get(row.itemId) ?? 0;
+    if (scheme > 0) {
+      row.qualifiedDemand += scheme;
+      row.schemeDemand = round6(scheme);
+    }
     // Orders awaiting the customer's new date are not demand on their finished good now.
     const pending = input.pendingDemand?.get(row.itemId) ?? 0;
     if (pending > 0) row.qualifiedDemand = Math.max(0, row.qualifiedDemand - pending);

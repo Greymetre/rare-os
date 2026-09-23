@@ -1034,6 +1034,87 @@ try {
   console.log(
     'PASS execution: release and completion stay consistent, downtime bounded and a planning input, adopted cycle times permanent, plant buffer limits',
   );
+  // AV-11: events, schemes, targets and space limits are per plant, bounded, and planning inputs.
+  const beforeTools = await markers();
+  await db.query(
+    `INSERT INTO demand_events(id,tenant_id,site_id,code,name,kind,from_date,to_date,uplift_pct,item_ids)
+     VALUES(gen_random_uuid(),$1,$2,'DIWALI','Festival','EVENT',current_date,current_date+10,40,ARRAY[$3]::uuid[])`,
+    [tenant, site, itemId],
+  );
+  assert.ok((await markers()) > beforeTools, 'an event is a planning input');
+  const beforeScheme = await markers();
+  await db.query(
+    `INSERT INTO demand_schemes(id,tenant_id,site_id,code,name,item_id,from_date,to_date,expected_units)
+     VALUES(gen_random_uuid(),$1,$2,'SCH1','Dealer scheme',$3,current_date,current_date+30,500)`,
+    [tenant, site, itemId],
+  );
+  assert.ok((await markers()) > beforeScheme, 'a scheme is a planning input');
+  await db.query(
+    "INSERT INTO space_limits(id,tenant_id,site_id,measure,capacity) VALUES(gen_random_uuid(),$1,$2,'UNITS',1000)",
+    [tenant, site],
+  );
+  await db.query(
+    `INSERT INTO sales_targets(id,tenant_id,site_id,code,name,from_date,to_date,target_units)
+     VALUES(gen_random_uuid(),$1,$2,'T1','October',current_date,current_date+30,5000)`,
+    [tenant, site],
+  );
+  for (const [label, code, sql] of [
+    [
+      'the same event code twice in a plant',
+      '23505',
+      `INSERT INTO demand_events(id,tenant_id,site_id,code,name,from_date,to_date,uplift_pct)
+       VALUES(gen_random_uuid(),'${tenant}','${site}','diwali','Again',current_date,current_date+1,10)`,
+    ],
+    [
+      'an event window that ends before it starts',
+      '23514',
+      `INSERT INTO demand_events(id,tenant_id,site_id,code,name,from_date,to_date,uplift_pct)
+       VALUES(gen_random_uuid(),'${tenant}','${site}','BACK','Backwards',current_date+5,current_date,10)`,
+    ],
+    [
+      'an uplift that removes more than all the demand',
+      '23514',
+      `INSERT INTO demand_events(id,tenant_id,site_id,code,name,from_date,to_date,uplift_pct)
+       VALUES(gen_random_uuid(),'${tenant}','${site}','GONE','Impossible',current_date,current_date+1,-100)`,
+    ],
+    [
+      'a scheme without units',
+      '23514',
+      `INSERT INTO demand_schemes(id,tenant_id,site_id,code,name,item_id,from_date,to_date,expected_units)
+       VALUES(gen_random_uuid(),'${tenant}','${site}','SCH0','Nothing','${itemId}',current_date,current_date+1,0)`,
+    ],
+    [
+      'an unknown scheme state',
+      '23514',
+      `INSERT INTO demand_schemes(id,tenant_id,site_id,code,name,item_id,from_date,to_date,expected_units,state)
+       VALUES(gen_random_uuid(),'${tenant}','${site}','SCH2','Maybe','${itemId}',current_date,current_date+1,5,'maybe')`,
+    ],
+    [
+      'two space limits for one plant',
+      '23505',
+      `INSERT INTO space_limits(id,tenant_id,site_id,measure,capacity) VALUES(gen_random_uuid(),'${tenant}','${site}','UNITS',50)`,
+    ],
+    ['delete an event', '42501', 'DELETE FROM demand_events'],
+    ['delete a scheme', '42501', 'DELETE FROM demand_schemes'],
+    ['delete a target', '42501', 'DELETE FROM sales_targets'],
+  ])
+    await denied(label, code, sql);
+  await db.query('RESET ROLE');
+  await db.query("SELECT set_config('app.tenant_id','',true)");
+  await db.query(
+    `INSERT INTO demand_events(id,tenant_id,site_id,code,name,from_date,to_date,uplift_pct)
+     VALUES(gen_random_uuid(),$1,$2,'HIDDEN','Other company',current_date,current_date+1,10)`,
+    [other, hiddenSite],
+  );
+  await db.query('SET LOCAL ROLE rare_app');
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
+  assert.deepEqual(
+    (await db.query('SELECT code FROM demand_events ORDER BY code')).rows.map((r) => r.code),
+    ['DIWALI'],
+  );
+  console.log(
+    'PASS planning tools: events and schemes are planning inputs, windows and uplifts bounded, one space limit per plant, nothing deleted, company isolation',
+  );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);
   const pending = await db.query('SELECT * FROM outbox_pending(500)');

@@ -32,6 +32,11 @@ const b = JSON.parse(fs.readFileSync(file, 'utf8'));
 
 // Tables that belong to a company but not to its identity and access set-up.
 const PLANNING_TABLES = [
+  'demand_events',
+  'demand_schemes',
+  'sales_targets',
+  'space_limits',
+  'planning_assumptions',
   'cycle_time_adoptions',
   'downtime_events',
   'order_plans',

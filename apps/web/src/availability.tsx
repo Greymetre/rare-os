@@ -1,5 +1,6 @@
 import { CycleTimeAudit, Downtime, Execution } from './execution';
 import { Delivery, Today } from './delivery';
+import { Network, PlanningTools } from './planning-tools';
 import {
   Expedites,
   Gantt,
@@ -1128,6 +1129,8 @@ export function Availability({
     'Execution',
     'Downtime',
     'Cycle time audit',
+    'Planning tools',
+    'Network',
     'Gantt',
     'Resource load',
     'Plant planning',
@@ -1175,6 +1178,8 @@ export function Availability({
                           'Execution',
                           'Downtime',
                           'Cycle time audit',
+                          'Planning tools',
+                          'Network',
                           'Gantt',
                           'Resource load',
                         ]
@@ -1365,6 +1370,18 @@ export function Availability({
           permissions={permissions}
           refreshKey={refreshKey}
         />
+      )}
+      {tab === 'Planning tools' && plantId && (
+        <PlanningTools
+          key={plantId}
+          csrf={csrf}
+          plantId={plantId}
+          permissions={permissions}
+          refreshKey={refreshKey}
+        />
+      )}
+      {tab === 'Network' && plantId && (
+        <Network key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
       )}
       {tab === 'Gantt' && plantId && (
         <Gantt key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
