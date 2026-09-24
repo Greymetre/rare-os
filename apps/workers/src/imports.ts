@@ -1,4 +1,12 @@
 import { importKind, validateRows } from '../../../packages/schema/imports.mjs';
+import { openWorkbook, headerColumns } from '../../../packages/engines/workbook.mjs';
+import {
+  isBlankRow,
+  mapRow,
+  reconcile,
+  resolveMapping,
+  rowPasses,
+} from '../../../packages/engines/import-mapping.mjs';
 import {
   decideAction,
   existingRecords,
@@ -188,13 +196,108 @@ async function masterActions(db: PoolClient, kind: string, results: Result[]) {
 }
 
 // Validation is deterministic over the staged rows and current records, so retries converge.
+// AV-12: a batch read from an uploaded workbook stages its own rows the first time it is
+// validated. The mapping is applied here rather than in the request, because a real export runs
+// to hundreds of thousands of rows.
+const MAX_WORKBOOK_ROWS = 300000;
+async function stageFromFile(db: PoolClient, batch: any) {
+  const already = (
+    await db.query('SELECT count(*)::int AS n FROM import_rows WHERE batch_id=$1', [batch.id])
+  ).rows[0].n;
+  if (already) return Number(batch.source_rows ?? already);
+  const file = (await db.query('SELECT content FROM import_files WHERE id=$1', [batch.file_id]))
+    .rows[0];
+  if (!file) throw Error('The uploaded file is no longer available');
+  const mapping = batch.mapping ?? {};
+  const headerRow = Number(batch.header_row ?? 1);
+  const firstDataRow = Number(mapping.firstDataRow ?? headerRow + 1);
+  const options = mapping.options ?? {};
+  const workbook = openWorkbook(file.content, { maxRows: MAX_WORKBOOK_ROWS });
+  const filters = mapping.options?.filters ?? [];
+  const removedBy = new Map<string, number>();
+  let resolved: any = null,
+    sourceRows = 0,
+    dataRows = 0,
+    blankRows = 0,
+    staged = 0;
+  let lines: number[] = [],
+    data: string[] = [];
+  const flush = async () => {
+    if (!lines.length) return;
+    await db.query(
+      `INSERT INTO import_rows(tenant_id,batch_id,line_no,data,source_row)
+       SELECT $1,$2,v.line,v.data,v.line FROM unnest($3::int[],$4::jsonb[]) AS v(line,data)`,
+      [batch.tenant_id, batch.id, lines, data],
+    );
+    lines = [];
+    data = [];
+  };
+  for (const row of workbook.rows(batch.sheet || undefined)) {
+    sourceRows++;
+    if (row.row === headerRow) {
+      resolved = resolveMapping(mapping, headerColumns(row.cells));
+      if (resolved.problems.length)
+        throw Error(
+          `The mapping no longer fits this sheet: ${resolved.problems
+            .map((p: any) => `${p.field}: ${p.message}`)
+            .join(' ')}`,
+        );
+      continue;
+    }
+    if (row.row < firstDataRow || !resolved) continue;
+    dataRows++;
+    // SAP pads its sheets; an empty row is not an error, it is nothing at all.
+    if (options.skipBlankRows !== false && isBlankRow(row.cells)) {
+      blankRows++;
+      continue;
+    }
+    const mapped = mapRow(resolved, row.cells, options);
+    // Rows the mapping deliberately leaves out — another plant, a subtotal line, stock at zero —
+    // are counted against the rule that removed them.
+    const passes = rowPasses(mapped.values, filters);
+    if (!passes.ok) {
+      removedBy.set(passes.rule!, (removedBy.get(passes.rule!) ?? 0) + 1);
+      continue;
+    }
+    const payload: Record<string, unknown> = { ...mapped.values };
+    if (mapped.issues.length)
+      payload._mappingIssue = mapped.issues
+        .map((i: any) => `${i.message} (column ${i.column})`)
+        .join(' ');
+    lines.push(row.row);
+    data.push(JSON.stringify(payload));
+    staged++;
+    if (lines.length >= CHUNK) await flush();
+  }
+  await flush();
+  if (!staged)
+    throw Error(
+      `Sheet "${batch.sheet}" has no data rows under row ${headerRow}. Check the header row and the sheet.`,
+    );
+  await db.query('UPDATE import_batches SET total_rows=$2,source_rows=$3 WHERE id=$1', [
+    batch.id,
+    staged,
+    sourceRows,
+  ]);
+  batch.total_rows = staged;
+  batch.source_rows = sourceRows;
+  batch.reading = {
+    sheetRows: sourceRows,
+    dataRows,
+    blankRows,
+    filtered: [...removedBy.entries()].map(([rule, count]) => ({ rule, count })),
+  };
+  return batch.reading;
+}
+
 export async function validateImport(db: PoolClient, payload: Payload) {
   const batch = await lockBatch(db, payload.batchId, 'validating');
   if (!batch) return;
   if (!importKind(batch.kind)) throw Error('Unsupported import kind');
+  if (batch.file_id) await stageFromFile(db, batch);
   const staged = (await stagedRows(db, batch.id, 'data')).map(({ line, payload: data }) => {
-    const { _columnCountError, ...rest } = data;
-    return { line, data: rest, columnCountError: _columnCountError };
+    const { _columnCountError, _mappingIssue, ...rest } = data;
+    return { line, data: rest, columnCountError: _columnCountError ?? _mappingIssue };
   });
   const results: Result[] = validateRows(batch.kind, staged);
   const summary: Record<string, number> = { create: 0, update: 0, unchanged: 0 };
@@ -255,9 +358,37 @@ export async function validateImport(db: PoolClient, payload: Payload) {
     );
   }
   const errorRows = results.filter((r) => r.errors.length).length;
+  // What the file had, what was read from it and what was left out: the reconciliation a person
+  // reads before committing. Quantities are totalled per unit, never across units.
+  const columns = importKind(batch.kind)!.columns;
+  const reading = batch.reading ?? {};
+  const report = batch.file_id
+    ? {
+        ...reconcile({
+          // Everything under the header row: what was mapped, left blank, removed by a rule or
+          // rejected has to add back up to this number.
+          sourceRows: Number(reading.dataRows ?? results.length),
+          rows: results.map((r) => ({ values: r.value ?? {}, errors: r.errors })),
+          blankSkipped: Number(reading.blankRows ?? 0),
+          filtered: reading.filtered ?? [],
+          quantityField: columns.includes('quantity') ? 'quantity' : '',
+          unitField: columns.includes('unit') ? 'unit' : '',
+        }),
+        sheetRows: Number(reading.sheetRows ?? batch.source_rows ?? 0),
+        sheet: batch.sheet,
+        headerRow: batch.header_row,
+        fileName: batch.file_name,
+      }
+    : {};
   await db.query(
-    "UPDATE import_batches SET status='validated',valid_rows=$2,error_rows=$3,summary=$4,validated_at=now(),error=NULL,version=version+1 WHERE id=$1",
-    [batch.id, results.length - errorRows, errorRows, JSON.stringify(summary)],
+    "UPDATE import_batches SET status='validated',valid_rows=$2,error_rows=$3,summary=$4,reconciliation=$5,validated_at=now(),error=NULL,version=version+1 WHERE id=$1",
+    [
+      batch.id,
+      results.length - errorRows,
+      errorRows,
+      JSON.stringify(summary),
+      JSON.stringify(report),
+    ],
   );
 }
 

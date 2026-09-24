@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
-import { json, text, urlencoded, type Request, type Response } from 'express';
+import { json, raw, text, urlencoded, type Request, type Response } from 'express';
 import session from 'express-session';
 import { RedisStore } from 'connect-redis';
 import { createClient } from 'redis';
@@ -55,6 +55,7 @@ import { MaterialsDecisionsController } from './materials-decisions.controller.j
 import { ExecutionController } from './execution.controller.js';
 import { DeliveryController } from './delivery.controller.js';
 import { PlanningToolsController } from './planning-tools.controller.js';
+import { RawImportsController, MAX_WORKBOOK_BYTES } from './raw-imports.controller.js';
 import { AccessController } from './access.controller.js';
 @Catch()
 class Errors implements ExceptionFilter {
@@ -396,6 +397,7 @@ class AppController {
     ExecutionController,
     DeliveryController,
     PlanningToolsController,
+    RawImportsController,
   ],
 })
 class AppModule {}
@@ -410,6 +412,19 @@ app.use(helmet());
 // and form payloads (including the identity provider's back-channel logout token).
 // CSV imports are the only larger body: text/csv on /api/imports, capped at the import file limit.
 app.use('/api/imports', text({ type: 'text/csv', limit: '5mb' }));
+// AV-12: an ERP exports workbooks. Those arrive as bytes on one route only, capped at the
+// workbook limit (the real sales history is 33.6 MB), and are never parsed as text.
+app.use(
+  '/api/imports/raw/files',
+  raw({
+    type: [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'application/octet-stream',
+    ],
+    limit: MAX_WORKBOOK_BYTES,
+  }),
+);
 app.use(json({ limit: '64kb' }));
 app.use(urlencoded({ extended: false, limit: '64kb' }));
 app.use((req: Request, res: Response, next: () => void) => {
