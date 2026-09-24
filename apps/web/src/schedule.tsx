@@ -1089,16 +1089,21 @@ export function PendingOrders({
   );
 }
 
+// The sequence, and the clubbing and date scenarios explored against it. The handover keeps those
+// as two entries, so the screen opens on one part at a time; the overlays a decision raises
+// (expedite, later date, impact) belong to both.
 export function Scheduler({
   csrf,
   plantId,
   permissions,
   refreshKey,
+  focus = 'all',
 }: {
   csrf: string;
   plantId: string;
   permissions: string[];
   refreshKey: number;
+  focus?: 'all' | 'schedule' | 'decisions';
 }) {
   const call = useApi(csrf);
   const [view, setView] = useState('current'),
@@ -1166,105 +1171,107 @@ export function Scheduler({
   return (
     <>
       <Messages error={error} notice={notice} />
-      <section className="panel planning-status">
-        <div className="panel-heading">
-          <div>
-            <h2>Scheduler</h2>
-            <p className="panel-sub">
-              Open production orders in sequence: due date first, same item within the grouping
-              window run back to back unless that makes another order late. Every operation is timed
-              forward on its machine; the drum is the most loaded resource.{' '}
-              {data?.status?.fixedDate && (
-                <span className="status-pill pending">
-                  Simulation: planning date fixed at {data.status.fixedDate}
-                </span>
-              )}{' '}
-              {data?.status &&
-                (data.status.upToDate ? (
-                  <span className="status-pill ok">Up to date</span>
-                ) : (
-                  <span className="status-pill pending" role="status">
-                    Recalculating…
+      {focus !== 'decisions' && (
+        <section className="panel planning-status">
+          <div className="panel-heading">
+            <div>
+              <h2>Scheduler</h2>
+              <p className="panel-sub">
+                Open production orders in sequence: due date first, same item within the grouping
+                window run back to back unless that makes another order late. Every operation is
+                timed forward on its machine; the drum is the most loaded resource.{' '}
+                {data?.status?.fixedDate && (
+                  <span className="status-pill pending">
+                    Simulation: planning date fixed at {data.status.fixedDate}
                   </span>
-                ))}
-            </p>
+                )}{' '}
+                {data?.status &&
+                  (data.status.upToDate ? (
+                    <span className="status-pill ok">Up to date</span>
+                  ) : (
+                    <span className="status-pill pending" role="status">
+                      Recalculating…
+                    </span>
+                  ))}
+              </p>
+            </div>
+            <ViewSwitch
+              view={view}
+              setView={(v: string) => {
+                setCursors([]);
+                setView(v);
+              }}
+              publication={data?.publication}
+            />
           </div>
-          <ViewSwitch
-            view={view}
-            setView={(v: string) => {
-              setCursors([]);
-              setView(v);
-            }}
-            publication={data?.publication}
-          />
-        </div>
-        {h && (
-          <div className="zone-tiles schedule-tiles">
-            <div className="zone-tile">
-              <strong>{h.orders}</strong>
-              <span>Orders scheduled (run #{h.run_no})</span>
-            </div>
-            <div className={'zone-tile ' + (h.late ? 'red' : 'green')}>
-              <strong>{h.late}</strong>
-              <span>Late against promise</span>
-            </div>
-            <div className="zone-tile">
-              <strong>{h.drum ?? '—'}</strong>
-              <span>Drum{h.drum_name ? ` — ${h.drum_name}` : ''}</span>
-            </div>
-            <div className="zone-tile">
-              <strong>{days(h.makespan_min, h)} d</strong>
-              <span>Last finish, working days from {h.start_date}</span>
-            </div>
-            <div className="zone-tile">
-              <strong>{num(h.changeover_saved_min, 0)} min</strong>
-              <span>Drum changeover saved by grouping</span>
-            </div>
-            {h.unscheduled > 0 && (
-              <div className="zone-tile missing">
-                <strong>{h.unscheduled}</strong>
-                <span>Not schedulable (no routing)</span>
+          {h && (
+            <div className="zone-tiles schedule-tiles">
+              <div className="zone-tile">
+                <strong>{h.orders}</strong>
+                <span>Orders scheduled (run #{h.run_no})</span>
               </div>
-            )}
-          </div>
-        )}
-        {h?.messages?.length > 0 && (
-          <ul className="messages">
-            {h.messages.map((m: string) => (
-              <li key={m}>{m}</li>
-            ))}
-          </ul>
-        )}
-        {data && (
-          <PublishBar
-            data={data}
-            permissions={permissions}
-            csrf={csrf}
-            onPublished={(m: string) => {
-              setNotice(m);
-              setTick((x) => x + 1);
-            }}
-          />
-        )}
-        {plan?.manual && view === 'current' && (
-          <div className="publish-bar">
-            <p className="panel-sub">
-              <span className="status-pill pending">Manual order of work</span> A planner set the
-              sequence; new orders are placed by due date among them. Pinned clubs:{' '}
-              {plan.groups.length}.
-            </p>
-            {canPlan && (
-              <button
-                className="button"
-                disabled={busy}
-                onClick={() => decide('release-manual', {})}
-              >
-                Release to computed order
-              </button>
-            )}
-          </div>
-        )}
-      </section>
+              <div className={'zone-tile ' + (h.late ? 'red' : 'green')}>
+                <strong>{h.late}</strong>
+                <span>Late against promise</span>
+              </div>
+              <div className="zone-tile">
+                <strong>{h.drum ?? '—'}</strong>
+                <span>Drum{h.drum_name ? ` — ${h.drum_name}` : ''}</span>
+              </div>
+              <div className="zone-tile">
+                <strong>{days(h.makespan_min, h)} d</strong>
+                <span>Last finish, working days from {h.start_date}</span>
+              </div>
+              <div className="zone-tile">
+                <strong>{num(h.changeover_saved_min, 0)} min</strong>
+                <span>Drum changeover saved by grouping</span>
+              </div>
+              {h.unscheduled > 0 && (
+                <div className="zone-tile missing">
+                  <strong>{h.unscheduled}</strong>
+                  <span>Not schedulable (no routing)</span>
+                </div>
+              )}
+            </div>
+          )}
+          {h?.messages?.length > 0 && (
+            <ul className="messages">
+              {h.messages.map((m: string) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          )}
+          {data && (
+            <PublishBar
+              data={data}
+              permissions={permissions}
+              csrf={csrf}
+              onPublished={(m: string) => {
+                setNotice(m);
+                setTick((x) => x + 1);
+              }}
+            />
+          )}
+          {plan?.manual && view === 'current' && (
+            <div className="publish-bar">
+              <p className="panel-sub">
+                <span className="status-pill pending">Manual order of work</span> A planner set the
+                sequence; new orders are placed by due date among them. Pinned clubs:{' '}
+                {plan.groups.length}.
+              </p>
+              {canPlan && (
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={() => decide('release-manual', {})}
+                >
+                  Release to computed order
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+      )}
       {report && (
         <section className="panel">
           <ImpactReport impact={report} title="Impact of the last decision" />
@@ -1313,234 +1320,236 @@ export function Scheduler({
           }}
         />
       )}
-      <section className="panel">
-        <div className="toolbar panel-toolbar">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              setCursors([]);
-              setQ(query.trim().toLowerCase());
-            }}
-          >
-            <input
-              aria-label="Schedule search"
-              placeholder="Order or item starts with…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <button className="button">Search</button>
-          </form>
-          <label>
-            Show
-            <select
-              value={filter}
-              onChange={(e) => {
+      {focus !== 'decisions' && (
+        <section className="panel">
+          <div className="toolbar panel-toolbar">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
                 setCursors([]);
-                setFilter(e.target.value);
+                setQ(query.trim().toLowerCase());
               }}
             >
-              <option value="">All orders in sequence</option>
-              <option value="late">Late against promise</option>
-              <option value="gated">Material gated or unknown</option>
-              <option value="unscheduled">Not schedulable</option>
-            </select>
-          </label>
-        </div>
-        <div className="table-wrap">
-          <table className="schedule-table">
-            <thead>
-              <tr>
-                <th className="num">#</th>
-                <th>Order</th>
-                <th>Item</th>
-                <th className="num">Quantity</th>
-                <th>Release (start)</th>
-                <th>Finish</th>
-                <th>Promise</th>
-                <th className="num">Slack (days)</th>
-                <th>Status</th>
-                <th>Materials</th>
-                {canPlan && <th className="actions">Plan</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.items ?? []).map((o: any, i: number, list: any[]) => {
-                const m = MATERIAL[o.material_check];
-                const scheduled = o.status === 'scheduled';
-                const prev = list[i - 1]?.status === 'scheduled' ? list[i - 1] : null;
-                const next = list[i + 1]?.status === 'scheduled' ? list[i + 1] : null;
-                return [
-                  <tr
-                    key={o.id}
-                    className={
-                      (o.late_days > 0 ? 'late ' : '') +
-                      (dragging && scheduled ? 'drop-target' : '')
-                    }
-                    draggable={canPlan && scheduled && !filter && !q}
-                    onDragStart={(e) => {
-                      setDragging(o.order_ref);
-                      e.dataTransfer.setData('text/plain', o.order_ref);
-                    }}
-                    onDragEnd={() => setDragging(null)}
-                    onDragOver={(e) => dragging && scheduled && e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const from = e.dataTransfer.getData('text/plain');
-                      setDragging(null);
-                      if (!from || from === o.order_ref) return;
-                      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                      move(
-                        from,
-                        o.order_ref,
-                        e.clientY < r.top + r.height / 2 ? 'before' : 'after',
-                      );
-                    }}
-                  >
-                    <td className="num">
-                      {canPlan && scheduled && !filter && !q && (
-                        <span className="grip" aria-hidden="true">
-                          ⋮⋮
-                        </span>
-                      )}
-                      {o.position}
-                    </td>
-                    <td>
-                      <button
-                        className="text-button cell-link"
-                        aria-expanded={open === o.id}
-                        aria-label={`Materials for ${o.order_no}`}
-                        onClick={() => setOpen(open === o.id ? null : o.id)}
-                      >
-                        <strong>{o.order_no}</strong>
-                      </button>
-                      {o.plan_group && <div className="cell-sub pinned">Pinned club</div>}
-                      {!o.plan_group && o.grouped_with && (
-                        <div className="cell-sub">Grouped after {o.grouped_with}</div>
-                      )}
-                      {o.manual_placed && <div className="cell-sub">Placed by planner</div>}
-                      {o.execution_state === 'released' && (
-                        <div className="cell-sub">Released: running, not re-sequenced</div>
-                      )}
-                    </td>
-                    <td>
-                      {o.item}
-                      <div className="cell-sub">{o.item_name}</div>
-                    </td>
-                    <td className="num">
-                      {num(o.quantity)} {o.unit}
-                    </td>
-                    <td className="nowrap">{clock(h, o.start_min)}</td>
-                    <td className="nowrap">{clock(h, o.finish_min)}</td>
-                    <td className="nowrap">{o.promise_date}</td>
-                    <td className="num">{o.slack_min === null ? '—' : days(o.slack_min, h)}</td>
-                    <td>
-                      {o.status === 'unscheduled' ? (
-                        <span className="status-pill off">Not schedulable</span>
-                      ) : o.late_days > 0 ? (
-                        <span className="status-pill off">
-                          Late {o.late_days} day{o.late_days > 1 ? 's' : ''}
-                        </span>
-                      ) : (
-                        <span className="status-pill ok">On time</span>
-                      )}
-                      {o.messages?.[0] && o.status === 'unscheduled' && (
-                        <div className="cell-sub">{o.messages[0]}</div>
-                      )}
-                    </td>
-                    <td>
-                      {m ? <span className={'status-pill ' + m[0]}>{m[1]}</span> : '—'}
-                      {o.plan_state && o.plan_state !== 'material_clear' && (
-                        <div className="cell-sub plan-state">
-                          <strong>{ORDER_STATES[o.plan_state] ?? o.plan_state}</strong>
-                        </div>
-                      )}
-                      {o.messages?.[0] && scheduled && (
-                        <div className="cell-sub">{o.messages[0]}</div>
-                      )}
-                    </td>
-                    {canPlan && (
-                      <td className="actions nowrap">
-                        {scheduled && (
-                          <>
-                            <button
-                              className="text-button"
-                              aria-label={`Move ${o.order_no} up`}
-                              disabled={busy || !prev || !!filter || !!q}
-                              onClick={() => move(o.order_ref, prev.order_ref, 'before')}
-                            >
-                              ↑
-                            </button>
-                            <button
-                              className="text-button"
-                              aria-label={`Move ${o.order_no} down`}
-                              disabled={busy || !next || !!filter || !!q}
-                              onClick={() => move(o.order_ref, next.order_ref, 'after')}
-                            >
-                              ↓
-                            </button>
-                            <button
-                              className="text-button"
-                              aria-label={`Club options for ${o.item}`}
-                              onClick={() => setClub(o.item)}
-                            >
-                              Club
-                            </button>
-                            {(['expedite', 'unknown'].includes(o.material_check) ||
-                              o.late_days > 0) && (
-                              <>
-                                {o.material_check === 'expedite' && (
-                                  <button
-                                    className="text-button"
-                                    aria-label={`Request material expedite for ${o.order_ref}`}
-                                    onClick={() => setExpedite(o.order_ref)}
-                                  >
-                                    Expedite
-                                  </button>
-                                )}
-                                <button
-                                  className="text-button"
-                                  aria-label={`Explore a later date for ${o.order_ref}`}
-                                  onClick={() => setLater(o.order_ref)}
-                                >
-                                  Later date
-                                </button>
-                              </>
-                            )}
-                          </>
+              <input
+                aria-label="Schedule search"
+                placeholder="Order or item starts with…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <button className="button">Search</button>
+            </form>
+            <label>
+              Show
+              <select
+                value={filter}
+                onChange={(e) => {
+                  setCursors([]);
+                  setFilter(e.target.value);
+                }}
+              >
+                <option value="">All orders in sequence</option>
+                <option value="late">Late against promise</option>
+                <option value="gated">Material gated or unknown</option>
+                <option value="unscheduled">Not schedulable</option>
+              </select>
+            </label>
+          </div>
+          <div className="table-wrap">
+            <table className="schedule-table">
+              <thead>
+                <tr>
+                  <th className="num">#</th>
+                  <th>Order</th>
+                  <th>Item</th>
+                  <th className="num">Quantity</th>
+                  <th>Release (start)</th>
+                  <th>Finish</th>
+                  <th>Promise</th>
+                  <th className="num">Slack (days)</th>
+                  <th>Status</th>
+                  <th>Materials</th>
+                  {canPlan && <th className="actions">Plan</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {(data?.items ?? []).map((o: any, i: number, list: any[]) => {
+                  const m = MATERIAL[o.material_check];
+                  const scheduled = o.status === 'scheduled';
+                  const prev = list[i - 1]?.status === 'scheduled' ? list[i - 1] : null;
+                  const next = list[i + 1]?.status === 'scheduled' ? list[i + 1] : null;
+                  return [
+                    <tr
+                      key={o.id}
+                      className={
+                        (o.late_days > 0 ? 'late ' : '') +
+                        (dragging && scheduled ? 'drop-target' : '')
+                      }
+                      draggable={canPlan && scheduled && !filter && !q}
+                      onDragStart={(e) => {
+                        setDragging(o.order_ref);
+                        e.dataTransfer.setData('text/plain', o.order_ref);
+                      }}
+                      onDragEnd={() => setDragging(null)}
+                      onDragOver={(e) => dragging && scheduled && e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const from = e.dataTransfer.getData('text/plain');
+                        setDragging(null);
+                        if (!from || from === o.order_ref) return;
+                        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        move(
+                          from,
+                          o.order_ref,
+                          e.clientY < r.top + r.height / 2 ? 'before' : 'after',
+                        );
+                      }}
+                    >
+                      <td className="num">
+                        {canPlan && scheduled && !filter && !q && (
+                          <span className="grip" aria-hidden="true">
+                            ⋮⋮
+                          </span>
+                        )}
+                        {o.position}
+                      </td>
+                      <td>
+                        <button
+                          className="text-button cell-link"
+                          aria-expanded={open === o.id}
+                          aria-label={`Materials for ${o.order_no}`}
+                          onClick={() => setOpen(open === o.id ? null : o.id)}
+                        >
+                          <strong>{o.order_no}</strong>
+                        </button>
+                        {o.plan_group && <div className="cell-sub pinned">Pinned club</div>}
+                        {!o.plan_group && o.grouped_with && (
+                          <div className="cell-sub">Grouped after {o.grouped_with}</div>
+                        )}
+                        {o.manual_placed && <div className="cell-sub">Placed by planner</div>}
+                        {o.execution_state === 'released' && (
+                          <div className="cell-sub">Released: running, not re-sequenced</div>
                         )}
                       </td>
-                    )}
-                  </tr>,
-                  open === o.id && (
-                    <tr key={o.id + '-lines'} className="detail-row">
-                      <td colSpan={canPlan ? 11 : 10}>
-                        <ReadinessLines lines={o.material_lines} />
+                      <td>
+                        {o.item}
+                        <div className="cell-sub">{o.item_name}</div>
                       </td>
-                    </tr>
-                  ),
-                ];
-              })}
-            </tbody>
-          </table>
-        </div>
-        {!data && <p role="status">Loading schedule…</p>}
-        {data && !data.items?.length && (
-          <div className="empty">{data.empty ?? 'No orders match this view.'}</div>
-        )}
-        <div className="table-footer">
-          <button className="button" disabled={!cursors.length} onClick={() => setCursors([])}>
-            First page
-          </button>
-          <button
-            className="button"
-            disabled={!data?.nextCursor}
-            onClick={() => setCursors([...cursors, data.nextCursor])}
-          >
-            Next page
-          </button>
-        </div>
-      </section>
-      {plan?.items?.length > 0 && (
+                      <td className="num">
+                        {num(o.quantity)} {o.unit}
+                      </td>
+                      <td className="nowrap">{clock(h, o.start_min)}</td>
+                      <td className="nowrap">{clock(h, o.finish_min)}</td>
+                      <td className="nowrap">{o.promise_date}</td>
+                      <td className="num">{o.slack_min === null ? '—' : days(o.slack_min, h)}</td>
+                      <td>
+                        {o.status === 'unscheduled' ? (
+                          <span className="status-pill off">Not schedulable</span>
+                        ) : o.late_days > 0 ? (
+                          <span className="status-pill off">
+                            Late {o.late_days} day{o.late_days > 1 ? 's' : ''}
+                          </span>
+                        ) : (
+                          <span className="status-pill ok">On time</span>
+                        )}
+                        {o.messages?.[0] && o.status === 'unscheduled' && (
+                          <div className="cell-sub">{o.messages[0]}</div>
+                        )}
+                      </td>
+                      <td>
+                        {m ? <span className={'status-pill ' + m[0]}>{m[1]}</span> : '—'}
+                        {o.plan_state && o.plan_state !== 'material_clear' && (
+                          <div className="cell-sub plan-state">
+                            <strong>{ORDER_STATES[o.plan_state] ?? o.plan_state}</strong>
+                          </div>
+                        )}
+                        {o.messages?.[0] && scheduled && (
+                          <div className="cell-sub">{o.messages[0]}</div>
+                        )}
+                      </td>
+                      {canPlan && (
+                        <td className="actions nowrap">
+                          {scheduled && (
+                            <>
+                              <button
+                                className="text-button"
+                                aria-label={`Move ${o.order_no} up`}
+                                disabled={busy || !prev || !!filter || !!q}
+                                onClick={() => move(o.order_ref, prev.order_ref, 'before')}
+                              >
+                                ↑
+                              </button>
+                              <button
+                                className="text-button"
+                                aria-label={`Move ${o.order_no} down`}
+                                disabled={busy || !next || !!filter || !!q}
+                                onClick={() => move(o.order_ref, next.order_ref, 'after')}
+                              >
+                                ↓
+                              </button>
+                              <button
+                                className="text-button"
+                                aria-label={`Club options for ${o.item}`}
+                                onClick={() => setClub(o.item)}
+                              >
+                                Club
+                              </button>
+                              {(['expedite', 'unknown'].includes(o.material_check) ||
+                                o.late_days > 0) && (
+                                <>
+                                  {o.material_check === 'expedite' && (
+                                    <button
+                                      className="text-button"
+                                      aria-label={`Request material expedite for ${o.order_ref}`}
+                                      onClick={() => setExpedite(o.order_ref)}
+                                    >
+                                      Expedite
+                                    </button>
+                                  )}
+                                  <button
+                                    className="text-button"
+                                    aria-label={`Explore a later date for ${o.order_ref}`}
+                                    onClick={() => setLater(o.order_ref)}
+                                  >
+                                    Later date
+                                  </button>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </td>
+                      )}
+                    </tr>,
+                    open === o.id && (
+                      <tr key={o.id + '-lines'} className="detail-row">
+                        <td colSpan={canPlan ? 11 : 10}>
+                          <ReadinessLines lines={o.material_lines} />
+                        </td>
+                      </tr>
+                    ),
+                  ];
+                })}
+              </tbody>
+            </table>
+          </div>
+          {!data && <p role="status">Loading schedule…</p>}
+          {data && !data.items?.length && (
+            <div className="empty">{data.empty ?? 'No orders match this view.'}</div>
+          )}
+          <div className="table-footer">
+            <button className="button" disabled={!cursors.length} onClick={() => setCursors([])}>
+              First page
+            </button>
+            <button
+              className="button"
+              disabled={!data?.nextCursor}
+              onClick={() => setCursors([...cursors, data.nextCursor])}
+            >
+              Next page
+            </button>
+          </div>
+        </section>
+      )}
+      {focus !== 'schedule' && plan?.items?.length > 0 && (
         <section className="panel">
           <h2>Planning decisions</h2>
           <div className="table-wrap">

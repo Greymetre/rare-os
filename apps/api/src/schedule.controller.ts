@@ -1,4 +1,5 @@
 import { planningStatus } from '../../../packages/schema/planning-db.mjs';
+import { materialsOverview, schedulingOverview } from '../../../packages/schema/overview-db.mjs';
 import { compareClub, impact, snapshot } from '../../../packages/engines/decisions.mjs';
 import { expediteRows } from '../../../packages/engines/materials-decisions.mjs';
 import {
@@ -27,6 +28,8 @@ import {
   scheduleBlocks,
   scheduleResources,
   scheduleRun,
+  clubWindowScenarios,
+  leadTimeList,
 } from '../../../packages/schema/schedule-db.mjs';
 import { Controller, Get, Post, Put, Req, Param } from '@nestjs/common';
 import type { Request } from 'express';
@@ -624,6 +627,59 @@ export class ScheduleController {
         note,
       });
       return { message: `Schedule of run #${runNo} published for plant ${plant.code}.` };
+    });
+  }
+
+  // AV-13 (handover screens): the first screen of each engine, the grouping window as a question,
+  // and the lead time every made item is actually running at.
+  @Get('plants/:plantId/overview/scheduling') async schedulingOverview(
+    @Req() req: Request,
+    @Param('plantId') plantId: string,
+  ) {
+    const actor = await access(req, 'planning.read');
+    return scoped(actor.tenant_id, async (db) => {
+      const plant = await requirePlant(db, actor, id(plantId));
+      return {
+        plant: { id: plant.id, code: plant.code, name: plant.name },
+        ...(await schedulingOverview(db, plant.id)),
+      };
+    });
+  }
+
+  @Get('plants/:plantId/overview/materials') async materialsOverview(
+    @Req() req: Request,
+    @Param('plantId') plantId: string,
+  ) {
+    const actor = await access(req, 'planning.read');
+    return scoped(actor.tenant_id, async (db) => {
+      const plant = await requirePlant(db, actor, id(plantId));
+      return {
+        plant: { id: plant.id, code: plant.code, name: plant.name },
+        ...(await materialsOverview(db, plant.id)),
+      };
+    });
+  }
+
+  @Get('plants/:plantId/club-windows') async clubWindows(
+    @Req() req: Request,
+    @Param('plantId') plantId: string,
+  ) {
+    const actor = await access(req, 'planning.read');
+    return scoped(actor.tenant_id, async (db) => {
+      const plant = await requirePlant(db, actor, id(plantId));
+      const view = await clubWindowScenarios(db, plant.id);
+      return view ?? { empty: 'This plant has no calendar or no open orders to sequence yet.' };
+    });
+  }
+
+  @Get('plants/:plantId/lead-time') async leadTimes(
+    @Req() req: Request,
+    @Param('plantId') plantId: string,
+  ) {
+    const actor = await access(req, 'planning.read');
+    return scoped(actor.tenant_id, async (db) => {
+      const plant = await requirePlant(db, actor, id(plantId));
+      return leadTimeList(db, plant.id);
     });
   }
 

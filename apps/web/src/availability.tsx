@@ -3,6 +3,12 @@ import { Delivery, Today } from './delivery';
 import { Network, PlanningTools } from './planning-tools';
 import { RawImport, Reconciliation } from './raw-import';
 import {
+  ChangeoverSimulator,
+  LeadTimeRealityList,
+  MaterialsOverview,
+  SchedulingOverview,
+} from './overview';
+import {
   Expedites,
   Gantt,
   InsertOrder,
@@ -545,6 +551,18 @@ type FieldInfo = {
   options?: string[];
   max?: number;
 };
+// One planning tool per menu entry, with the handover's own names.
+const TOOL_TABS: Record<string, string> = {
+  'Month Shape': 'month',
+  'Recommended Buffers': 'recommended',
+  'Buffer vs MTO': 'mto',
+  'Events & Seasons': 'events',
+  'Scheme Intake': 'schemes',
+  'Target Mode': 'target',
+  'Space Mode': 'space',
+  Assumptions: 'assumptions',
+};
+
 type KindInfo = {
   kind: string;
   label: string;
@@ -1155,98 +1173,98 @@ export function Availability({
   if (!kinds) return <p role="status">Loading planning data…</p>;
   const order = ['items', 'suppliers', 'item_suppliers', 'customers', 'unit_conversions'];
   const has = (p: string) => permissions.includes(p);
-  const plantTabs = [
-    'Calendars',
-    'Resources',
-    'Routings',
-    'Stock locations',
-    'Stock',
-    'Customer orders',
-    'Production orders',
-    'Purchase orders',
-    'Demand history',
-    'Buffer settings',
-    'Today',
-    'Delivery',
-    'Buffer board',
-    'Scheduler',
-    'Insert order',
-    'Pending orders',
-    'Expedites',
-    'Execution',
-    'Downtime',
-    'Cycle time audit',
-    'Planning tools',
-    'Network',
-    'Gantt',
-    'Resource load',
-    'Plant planning',
-    'Purchase proposals',
+  // The menu follows the Nilkamal simulation handover (21-Sep-2026): Availability is two engines,
+  // Scheduling & Execution (TOC / DBR) and Materials Planning (DDMRP), with the demo's own screen
+  // names. Everything the demo keeps in its Masters module sits in the third group here. Every
+  // entry is gated by the permission its screen needs, so a menu never offers what a person
+  // cannot open.
+  const SCHEDULING: [string, string][] = [
+    ['Overview', 'planning.read'],
+    ['Capacity & Changeover', 'masters.read'],
+    ['Product Routing', 'masters.read'],
+    ['Changeover Simulator', 'planning.read'],
+    ['Scheduler', 'planning.read'],
+    ['Resource Load Graph', 'planning.read'],
+    ['Buffer Board & Exceptions', 'planning.read'],
+    ['Gantt View', 'planning.read'],
+    ['Lead Time Reality', 'planning.read'],
+    ['Release Schedule', 'planning.read'],
+    ['Insert an order', 'planning.read'],
+    ['Order OTIF', 'planning.read'],
+    ['Execution Loop', 'planning.read'],
+    ['Master-Data Audit', 'planning.read'],
+    ['Work Orders & Downtime', 'planning.read'],
+    ['Club / date scenarios', 'planning.read'],
+    ['Pending Orders to Plan', 'planning.read'],
   ];
-  const setupTabs = [
-    'Readiness',
+  const MATERIALS: [string, string][] = [
+    ['Materials Overview', 'planning.read'],
+    ['Stock & Service', 'inventory.read'],
+    ['Recommended Buffers', 'planning.read'],
+    ['Planning Priorities', 'planning.read'],
+    ['Workbench', 'planning.read'],
+    ['Demand History', 'orders.read'],
+    ['Buffer vs MTO', 'planning.read'],
+    ['Month Shape', 'planning.read'],
+    ['Target Mode', 'planning.read'],
+    ['Events & Seasons', 'planning.read'],
+    ['Scheme Intake', 'planning.read'],
+    ['Space Mode', 'planning.read'],
+    ['Material expedites', 'planning.read'],
+    ['Proposed Orders', 'purchase.read'],
+    ['Alerts', 'planning.read'],
+    ['Parts & Buffer Profiles', 'planning.read'],
+    ['Buffers & POs', 'purchase.read'],
+    ['Assumptions', 'planning.read'],
+  ];
+  const MASTERS: [string, string][] = [
+    ['Readiness', 'masters.read'],
+    ['Units', 'masters.read'],
+    ...order
+      .map((k) => kinds.find((x) => x.kind === k)?.label)
+      .filter(Boolean)
+      .map((label) => [label as string, 'masters.read'] as [string, string]),
+    ['Calendars', 'masters.read'],
+    ['BOMs', 'masters.read'],
+    ['Stock locations', 'masters.read'],
+    ['Stock', 'inventory.read'],
+    ['Customer orders', 'orders.read'],
+    ['Production orders', 'orders.read'],
+    ['Purchase orders', 'purchase.read'],
+    ['Plant planning', 'planning.read'],
+    ['Network', 'planning.read'],
+    ['Imports', 'masters.read'],
+    ['File import', 'masters.read'],
+  ];
+  const allowed = (list: [string, string][]) => list.filter(([, p]) => has(p)).map(([t]) => t);
+  // Screens that work on one plant show the plant picker above them.
+  const companyWide = new Set([
     'Units',
-    ...order.map((k) => kinds.find((x) => x.kind === k)?.label).filter(Boolean),
-    'Calendars',
-    'Resources',
     'BOMs',
-    'Routings',
-    'Stock locations',
-    ...(has('planning.read') ? ['Buffer profiles', 'Buffer settings', 'Plant planning'] : []),
-  ] as string[];
-  const transactionTabs = [
-    ...(has('inventory.read') ? ['Stock'] : []),
-    ...(has('orders.read') ? ['Customer orders', 'Production orders'] : []),
-    ...(has('purchase.read') ? ['Purchase orders'] : []),
-    ...(has('orders.read') ? ['Demand history'] : []),
     'Imports',
     'File import',
+    'Network',
+    'Parts & Buffer Profiles',
+    ...order.map((k) => kinds.find((x) => x.kind === k)?.label).filter(Boolean),
+  ] as string[]);
+  const groups: [string, string, string[]][] = [
+    ['Scheduling & Execution', 'TOC / DBR engine', allowed(SCHEDULING)],
+    ['Materials Planning', 'DDMRP engine', allowed(MATERIALS)],
+    ['Plant & masters', 'one dataset behind every screen', allowed(MASTERS)],
   ];
   const current = kinds.find((k) => k.label === tab);
   return (
     <>
       <nav className="module-nav" aria-label="Availability sections">
-        {[
-          ['Setup', setupTabs],
-          ['Stock and demand', transactionTabs],
-          ...(has('planning.read') || has('purchase.read')
-            ? [
-                [
-                  'Planning',
-                  [
-                    ...(has('planning.read')
-                      ? [
-                          'Today',
-                          'Delivery',
-                          'Buffer board',
-                          'Scheduler',
-                          'Insert order',
-                          'Pending orders',
-                          'Expedites',
-                          'Execution',
-                          'Downtime',
-                          'Cycle time audit',
-                          'Planning tools',
-                          'Network',
-                          'Gantt',
-                          'Resource load',
-                        ]
-                      : []),
-                    ...(has('purchase.read') ? ['Purchase proposals'] : []),
-                  ],
-                ],
-              ]
-            : []),
-        ].map(([group, list]) => (
-          <div key={group as string} className="subtabs">
-            <span className="subtabs-label">{group}</span>
+        {groups.map(([group, engine, list]) => (
+          <div key={group} className="subtabs">
+            <span className="subtabs-label">
+              {group}
+              <small>{engine}</small>
+            </span>
             {/* Tabs wrap inside their own column, so a second line starts under the first tab. */}
-            <div
-              className="subtabs-tabs"
-              role="tablist"
-              aria-label={`Availability ${String(group).toLowerCase()}`}
-            >
-              {(list as string[]).map((t) => (
+            <div className="subtabs-tabs" role="tablist" aria-label={`Availability ${group}`}>
+              {list.map((t) => (
                 <button
                   key={t}
                   role="tab"
@@ -1261,9 +1279,7 @@ export function Availability({
           </div>
         ))}
       </nav>
-      {(tab === 'Readiness' || plantTabs.includes(tab)) && (
-        <PlantPicker csrf={csrf} value={plantId} onChange={setPlantId} />
-      )}
+      {!companyWide.has(tab) && <PlantPicker csrf={csrf} value={plantId} onChange={setPlantId} />}
       {tab === 'Readiness' && <Readiness csrf={csrf} refreshKey={refreshKey} />}
       {tab === 'Readiness' && plantId && (
         <PlantReadiness csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
@@ -1271,11 +1287,11 @@ export function Availability({
       {tab === 'Calendars' && plantId && (
         <Calendars csrf={csrf} plantId={plantId} canManage={canManage} refreshKey={refreshKey} />
       )}
-      {tab === 'Resources' && plantId && (
+      {tab === 'Capacity & Changeover' && plantId && (
         <Resources csrf={csrf} plantId={plantId} canManage={canManage} refreshKey={refreshKey} />
       )}
       {tab === 'BOMs' && <Boms csrf={csrf} canManage={canManage} refreshKey={refreshKey} />}
-      {tab === 'Routings' && plantId && (
+      {tab === 'Product Routing' && plantId && (
         <Routings
           key={plantId}
           csrf={csrf}
@@ -1318,7 +1334,7 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Purchase orders' && plantId && (
+      {tab === 'Buffers & POs' && plantId && (
         <PurchaseOrders
           csrf={csrf}
           plantId={plantId}
@@ -1326,13 +1342,13 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Demand history' && plantId && (
+      {tab === 'Demand History' && plantId && (
         <DemandHistory key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
       )}
-      {tab === 'Buffer profiles' && (
+      {tab === 'Parts & Buffer Profiles' && (
         <BufferProfiles csrf={csrf} canManage={has('buffers.manage')} refreshKey={refreshKey} />
       )}
-      {tab === 'Buffer settings' && plantId && (
+      {tab === 'Workbench' && plantId && (
         <BufferSettings
           key={plantId}
           csrf={csrf}
@@ -1341,7 +1357,7 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Buffer board' && plantId && (
+      {tab === 'Buffer Board & Exceptions' && plantId && (
         <BufferBoard
           key={plantId}
           csrf={csrf}
@@ -1350,16 +1366,29 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Scheduler' && plantId && (
+      {tab === 'Overview' && plantId && (
+        <SchedulingOverview key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {tab === 'Materials Overview' && plantId && (
+        <MaterialsOverview key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {tab === 'Changeover Simulator' && plantId && (
+        <ChangeoverSimulator key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {tab === 'Lead Time Reality' && plantId && (
+        <LeadTimeRealityList key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {['Scheduler', 'Club / date scenarios'].includes(tab) && plantId && (
         <Scheduler
-          key={plantId}
+          key={plantId + tab}
           csrf={csrf}
           plantId={plantId}
           permissions={permissions}
           refreshKey={refreshKey}
+          focus={tab === 'Scheduler' ? 'schedule' : 'decisions'}
         />
       )}
-      {tab === 'Insert order' && plantId && (
+      {tab === 'Insert an order' && plantId && (
         <InsertOrder
           key={plantId}
           csrf={csrf}
@@ -1368,7 +1397,7 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Pending orders' && plantId && (
+      {tab === 'Pending Orders to Plan' && plantId && (
         <PendingOrders
           key={plantId}
           csrf={csrf}
@@ -1377,7 +1406,7 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Expedites' && plantId && (
+      {tab === 'Material expedites' && plantId && (
         <Expedites
           key={plantId}
           csrf={csrf}
@@ -1386,13 +1415,21 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Today' && plantId && (
-        <Today key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      {['Planning Priorities', 'Release Schedule', 'Alerts'].includes(tab) && plantId && (
+        <Today
+          key={plantId + tab}
+          csrf={csrf}
+          plantId={plantId}
+          refreshKey={refreshKey}
+          focus={
+            tab === 'Alerts' ? 'alerts' : tab === 'Release Schedule' ? 'releases' : 'priorities'
+          }
+        />
       )}
-      {tab === 'Delivery' && plantId && (
+      {tab === 'Order OTIF' && plantId && (
         <Delivery key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
       )}
-      {tab === 'Execution' && plantId && (
+      {tab === 'Execution Loop' && plantId && (
         <Execution
           key={plantId}
           csrf={csrf}
@@ -1401,7 +1438,7 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Downtime' && plantId && (
+      {tab === 'Work Orders & Downtime' && plantId && (
         <Downtime
           key={plantId}
           csrf={csrf}
@@ -1410,7 +1447,7 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Cycle time audit' && plantId && (
+      {tab === 'Master-Data Audit' && plantId && (
         <CycleTimeAudit
           key={plantId}
           csrf={csrf}
@@ -1419,22 +1456,23 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Planning tools' && plantId && (
+      {TOOL_TABS[tab] && plantId && (
         <PlanningTools
-          key={plantId}
+          key={plantId + tab}
           csrf={csrf}
           plantId={plantId}
           permissions={permissions}
           refreshKey={refreshKey}
+          only={TOOL_TABS[tab]}
         />
       )}
       {tab === 'Network' && plantId && (
         <Network key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
       )}
-      {tab === 'Gantt' && plantId && (
+      {tab === 'Gantt View' && plantId && (
         <Gantt key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
       )}
-      {tab === 'Resource load' && plantId && (
+      {tab === 'Resource Load Graph' && plantId && (
         <ResourceLoad key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
       )}
       {tab === 'Plant planning' && plantId && (
@@ -1446,7 +1484,7 @@ export function Availability({
           refreshKey={refreshKey}
         />
       )}
-      {tab === 'Purchase proposals' && plantId && (
+      {tab === 'Proposed Orders' && plantId && (
         <PurchaseProposals
           key={plantId}
           csrf={csrf}

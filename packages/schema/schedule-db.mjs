@@ -1986,3 +1986,90 @@ export async function listPending(db, siteId) {
     )
   ).rows;
 }
+
+// ---------- AV-13 (handover screens): the grouping window as a question, not a setting ----------
+
+// What a different grouping window would do to this book: how much setup it saves, how much
+// carrying it forces, and whether any promise breaks. Reference: Nilkamal simulation handover
+// (21-Sep-2026), "Changeover Simulator". Nothing is saved; the live setting is only marked.
+export async function clubWindowScenarios(db, siteId, windows = [0, 1, 2, 3, 5]) {
+  const dc = await decisionContext(db, siteId);
+  if (!dc) return null;
+  const live = Number(dc.plant.settings.club_window_days ?? 1);
+  const codes = new Map([...dc.plant.resources.values()].map((r) => [r.id, r.code]));
+  const rows = [...new Set([...windows, live])]
+    .sort((a, b) => a - b)
+    .map((windowDays) => {
+      const s = schedulePlant({ ...dc.base, clubWindowDays: windowDays, plan: dc.plan });
+      const changeoverMinutes = s.resources.reduce((n, r) => n + r.changeover, 0);
+      const drum = s.resources.find((r) => r.resourceId === s.drumId) ?? null;
+      return {
+        windowDays,
+        live: windowDays === live,
+        groups: s.groups.length,
+        grouped: s.groups.reduce((n, g) => n + g.members.length, 0),
+        changeovers: s.resources.reduce((n, r) => n + r.changeovers, 0),
+        changeoverMinutes: Math.round(changeoverMinutes),
+        changeoverSaved: Math.round(s.changeoverSaved ?? 0),
+        lateOrders: s.orders.filter((o) => o.late).length,
+        makespanDays: Math.round((s.makespan / dc.base.dayMinutes) * 10) / 10,
+        drum: drum
+          ? {
+              code: codes.get(drum.resourceId) ?? '',
+              runMinutes: Math.round(drum.run),
+              changeoverMinutes: Math.round(drum.changeover),
+            }
+          : null,
+      };
+    });
+  const current = rows.find((r) => r.live) ?? null;
+  return {
+    today: dc.today,
+    live,
+    orders: dc.book.length,
+    rows: rows.map((r) => ({
+      ...r,
+      // Against the window in force: setup minutes given back, and promises put at risk.
+      deltaChangeover: current ? r.changeoverMinutes - current.changeoverMinutes : 0,
+      deltaLate: current ? r.lateOrders - current.lateOrders : 0,
+    })),
+  };
+}
+
+// The lead time every made item is actually running at, against the one its buffer is sized on.
+// Reference: the handover's "Lead Time Reality": the queue a station adds is part of the lead time.
+export async function leadTimeList(db, siteId) {
+  const rows = (
+    await db.query(
+      `SELECT i.code AS item,i.name,b.lead_time_days,r.lead_time_live,r.lead_time_factor,r.adu,
+         r.top_of_green,r.zone,r.messages
+       FROM planning_results r JOIN planning_state s ON s.current_run_id=r.run_id
+       JOIN items i ON i.id=r.item_id
+       JOIN item_buffers b ON b.site_id=r.site_id AND b.item_id=r.item_id
+       WHERE r.site_id=$1 AND r.policy='BUFFER' AND i.make_buy='MAKE' AND r.lead_time_live IS NOT NULL
+       ORDER BY r.lead_time_factor DESC NULLS LAST, i.code LIMIT 200`,
+      [siteId],
+    )
+  ).rows.map((r) => ({
+    item: r.item,
+    name: r.name,
+    masterDays: n(r.lead_time_days),
+    liveDays: n(r.lead_time_live),
+    factor: n(r.lead_time_factor),
+    adu: n(r.adu),
+    topOfGreen: n(r.top_of_green),
+    zone: r.zone,
+    // The engine already says when a resource is too loaded to bound the queue at all.
+    unbounded: (r.messages ?? []).some((m) => String(m).includes('unbounded')),
+  }));
+  const stretched = rows.filter((r) => (r.factor ?? 1) > 1.05);
+  return {
+    rows,
+    counts: {
+      items: rows.length,
+      stretched: stretched.length,
+      unbounded: rows.filter((r) => r.unbounded).length,
+      worst: stretched[0] ?? null,
+    },
+  };
+}

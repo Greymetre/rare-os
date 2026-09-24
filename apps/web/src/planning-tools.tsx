@@ -50,15 +50,18 @@ export function PlanningTools({
   plantId,
   permissions,
   refreshKey,
+  // Each tool is its own menu entry, so the screen usually opens on one and hides the selector.
+  only,
 }: {
   csrf: string;
   plantId: string;
   permissions: string[];
   refreshKey: number;
+  only?: string;
 }) {
   const call = useApi(csrf);
   const canEdit = permissions.includes('planning.tools');
-  const [tool, setTool] = useState('month'),
+  const [tool, setTool] = useState(only ?? 'month'),
     // The payload is kept with the tool it belongs to: a tool switch renders once before the effect
     // clears the old one, and every screen would then read the previous tool's shape.
     [loaded, setLoaded] = useState<{ tool: string; data: any }>({ tool: '', data: null }),
@@ -85,6 +88,9 @@ export function PlanningTools({
                 : tool === 'assumptions'
                   ? 'tools/assumptions'
                   : null;
+  useEffect(() => {
+    if (only && tool !== only) setTool(only);
+  }, [only]);
   useEffect(() => {
     if (!path) return;
     let live = true;
@@ -118,16 +124,18 @@ export function PlanningTools({
       <Messages error={error} notice={notice} />
       <section className="panel">
         <div className="toolbar view-switch">
-          <label>
-            Tool
-            <select value={tool} onChange={(e) => setTool(e.target.value)}>
-              {TOOLS.map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {!only && (
+            <label>
+              Tool
+              <select value={tool} onChange={(e) => setTool(e.target.value)}>
+                {TOOLS.map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {(tool === 'recommended' || tool === 'space') && (
             <label>
               Service level

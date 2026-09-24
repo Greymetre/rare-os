@@ -1385,7 +1385,10 @@ footer span {
   margin: 10px 0;
   border-right: 1px solid #d9dce3;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 2px;
   padding: 0 8px 0 12px;
   font-size: 10px;
   line-height: 1.4;
@@ -2069,4 +2072,13 @@ section[aria-label='Insert options'] .scenario-grid {
   color: #3d4351;
   text-align: right;
   padding-right: 4px;
+}
+
+/* The engine a group of screens belongs to, under the group's name. */
+.module-nav .subtabs-label small {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: #a0a6b2;
 }

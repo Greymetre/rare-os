@@ -76,17 +76,27 @@ function useDelivery(csrf: string, plantId: string, refreshKey: number) {
 }
 
 // Planning → Today: the planner's day and the exceptions behind it.
+// The planner's day. The menu opens it on one part at a time — what to order and release
+// (planning priorities), only the releases (the release schedule) or only the exceptions
+// (alerts) — because those are three different questions asked at three different moments.
 export function Today({
   csrf,
   plantId,
   refreshKey,
+  focus = 'all',
 }: {
   csrf: string;
   plantId: string;
   refreshKey: number;
+  focus?: 'all' | 'priorities' | 'releases' | 'alerts';
 }) {
   const { data, error } = useDelivery(csrf, plantId, refreshKey);
   const day = data?.day;
+  const shows = (part: 'order' | 'release' | 'alerts') =>
+    focus === 'all' ||
+    (focus === 'priorities' && part !== 'alerts') ||
+    (focus === 'releases' && part === 'release') ||
+    (focus === 'alerts' && part === 'alerts');
   return (
     <>
       <Messages error={error} notice="" />
@@ -119,149 +129,165 @@ export function Today({
               </div>
             </div>
           </section>
-          <section className="panel">
-            <div className="panel-heading">
-              <div>
-                <h2>Order today</h2>
-                <p className="panel-sub">Bought items the board recommends; overdue dates first.</p>
+          {shows('order') && (
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>Order today</h2>
+                  <p className="panel-sub">
+                    Bought items the board recommends; overdue dates first.
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th className="num">Quantity</th>
-                    <th>Needed by</th>
-                    <th>Zone</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {day.order.map((r: any) => (
-                    <tr key={r.item} data-order-today={r.item} className={r.overdue ? 'late' : ''}>
-                      <td>
-                        <strong>{r.item}</strong>
-                      </td>
-                      <td className="num">
-                        {num(r.qty)} {r.unit}
-                      </td>
-                      <td>{r.due ?? '—'}</td>
-                      <td>{r.zone}</td>
-                    </tr>
-                  ))}
-                  {day.order.length === 0 && (
+              <div className="table-wrap">
+                <table>
+                  <thead>
                     <tr>
-                      <td colSpan={4}>Nothing to order today.</td>
+                      <th>Item</th>
+                      <th className="num">Quantity</th>
+                      <th>Needed by</th>
+                      <th>Zone</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-          <section className="panel">
-            <div className="panel-heading">
-              <div>
-                <h2>Release today</h2>
-                <p className="panel-sub">
-                  Work whose release date has arrived. A hold means its materials are not ready.
-                </p>
-              </div>
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Order</th>
-                    <th>Item</th>
-                    <th className="num">Quantity</th>
-                    <th>Release by</th>
-                    <th>Promise</th>
-                    <th>Materials</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {day.make.map((r: any) => (
-                    <tr key={r.order} data-release-today={r.order} className={r.hold ? 'late' : ''}>
-                      <td>
-                        <strong>{r.order}</strong>
-                      </td>
-                      <td>{r.item}</td>
-                      <td className="num">{num(r.qty)}</td>
-                      <td>{r.releaseDate}</td>
-                      <td>{r.promise}</td>
-                      <td>
-                        {r.hold ? (
-                          <span className="status-pill off">
-                            Hold: {MATERIAL[r.material] ?? r.material}
-                          </span>
-                        ) : (
-                          <span className="status-pill ok">Release on date</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {day.make.length === 0 && (
-                    <tr>
-                      <td colSpan={6}>Nothing to release today.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-          <section className="panel">
-            <div className="panel-heading">
-              <div>
-                <h2>Alerts</h2>
-                <p className="panel-sub">
-                  {data.counts.alerts} exception(s) from this calculation: stock, promises,
-                  materials, suppliers, customers and machines.
-                </p>
-              </div>
-            </div>
-            <Exports
-              plantId={plantId}
-              kinds={[
-                ['alerts', 'alerts'],
-                ['day-list', "today's list"],
-              ]}
-            />
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Severity</th>
-                    <th>Subject</th>
-                    <th>What</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.alerts.slice(0, 100).map((a: any, i: number) => {
-                    const s = SEVERITY[a.severity] ?? ['pending', a.severity];
-                    return (
-                      <tr key={i} data-alert={a.kind + ':' + a.subject}>
+                  </thead>
+                  <tbody>
+                    {day.order.map((r: any) => (
+                      <tr
+                        key={r.item}
+                        data-order-today={r.item}
+                        className={r.overdue ? 'late' : ''}
+                      >
                         <td>
-                          <span className={'status-pill ' + s[0]}>{s[1]}</span>
+                          <strong>{r.item}</strong>
                         </td>
-                        <td>
-                          <strong>{a.subject}</strong>
-                          {a.item && <div className="cell-sub">{a.item}</div>}
+                        <td className="num">
+                          {num(r.qty)} {r.unit}
                         </td>
-                        <td>{a.message}</td>
+                        <td>{r.due ?? '—'}</td>
+                        <td>{r.zone}</td>
                       </tr>
-                    );
-                  })}
-                  {data.alerts.length === 0 && (
+                    ))}
+                    {day.order.length === 0 && (
+                      <tr>
+                        <td colSpan={4}>Nothing to order today.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+          {shows('release') && (
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>Release today</h2>
+                  <p className="panel-sub">
+                    Work whose release date has arrived. A hold means its materials are not ready.
+                  </p>
+                </div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
                     <tr>
-                      <td colSpan={3}>
-                        No exceptions: every buffer and promise is inside its plan.
-                      </td>
+                      <th>Order</th>
+                      <th>Item</th>
+                      <th className="num">Quantity</th>
+                      <th>Release by</th>
+                      <th>Promise</th>
+                      <th>Materials</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                  </thead>
+                  <tbody>
+                    {day.make.map((r: any) => (
+                      <tr
+                        key={r.order}
+                        data-release-today={r.order}
+                        className={r.hold ? 'late' : ''}
+                      >
+                        <td>
+                          <strong>{r.order}</strong>
+                        </td>
+                        <td>{r.item}</td>
+                        <td className="num">{num(r.qty)}</td>
+                        <td>{r.releaseDate}</td>
+                        <td>{r.promise}</td>
+                        <td>
+                          {r.hold ? (
+                            <span className="status-pill off">
+                              Hold: {MATERIAL[r.material] ?? r.material}
+                            </span>
+                          ) : (
+                            <span className="status-pill ok">Release on date</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {day.make.length === 0 && (
+                      <tr>
+                        <td colSpan={6}>Nothing to release today.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+          {shows('alerts') && (
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>Alerts</h2>
+                  <p className="panel-sub">
+                    {data.counts.alerts} exception(s) from this calculation: stock, promises,
+                    materials, suppliers, customers and machines.
+                  </p>
+                </div>
+              </div>
+              <Exports
+                plantId={plantId}
+                kinds={[
+                  ['alerts', 'alerts'],
+                  ['day-list', "today's list"],
+                ]}
+              />
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Severity</th>
+                      <th>Subject</th>
+                      <th>What</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.alerts.slice(0, 100).map((a: any, i: number) => {
+                      const s = SEVERITY[a.severity] ?? ['pending', a.severity];
+                      return (
+                        <tr key={i} data-alert={a.kind + ':' + a.subject}>
+                          <td>
+                            <span className={'status-pill ' + s[0]}>{s[1]}</span>
+                          </td>
+                          <td>
+                            <strong>{a.subject}</strong>
+                            {a.item && <div className="cell-sub">{a.item}</div>}
+                          </td>
+                          <td>{a.message}</td>
+                        </tr>
+                      );
+                    })}
+                    {data.alerts.length === 0 && (
+                      <tr>
+                        <td colSpan={3}>
+                          No exceptions: every buffer and promise is inside its plan.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </>
       )}
     </>

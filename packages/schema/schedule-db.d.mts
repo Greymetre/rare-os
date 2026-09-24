@@ -131,3 +131,9 @@ export function applyLater(
 export function listPending(db: Db, siteId: string): Promise<any[]>;
 export function loadDowntime(db: Db, siteId?: string | null): Promise<Map<string, any[]>>;
 export function downtimeOn(rows: any[] | undefined, dates: string[]): any[];
+export function clubWindowScenarios(
+  db: PoolClient,
+  siteId: string,
+  windows?: number[],
+): Promise<any>;
+export function leadTimeList(db: PoolClient, siteId: string): Promise<any>;
