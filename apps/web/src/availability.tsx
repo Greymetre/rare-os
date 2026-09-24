@@ -1,6 +1,7 @@
 import { CycleTimeAudit, Downtime, Execution } from './execution';
 import { Delivery, Today } from './delivery';
 import { Network, PlanningTools } from './planning-tools';
+import { RawImport, Reconciliation } from './raw-import';
 import {
   Expedites,
   Gantt,
@@ -411,6 +412,8 @@ function BatchDetail({
         </div>
       )}
       {notice && <div className="notice">{notice}</div>}
+      {/* A batch read from a workbook accounts for every row of the sheet before it is committed. */}
+      <Reconciliation batch={batch} />
       <div className="import-stats">
         <div>
           <span>Rows</span>
@@ -816,19 +819,10 @@ function MasterTable({
   );
 }
 
-function Imports({
-  csrf,
-  permissions,
-  refreshKey,
-  kinds,
-}: {
-  csrf: string;
-  permissions: string[];
-  refreshKey: number;
-  kinds: KindInfo[];
-}) {
-  const call = useApi(csrf);
-  const options = [
+// The import types a person may use, with the permission each one asks for. Shared by the CSV
+// screen and the file screen so both offer exactly the same list.
+function importOptions(permissions: string[], kinds: KindInfo[]) {
+  return [
     {
       kind: 'units',
       label: 'Units of measure',
@@ -872,6 +866,59 @@ function Imports({
       canManage: permissions.includes('buffers.manage'),
     },
   ];
+}
+
+// AV-12: the same batch view as the CSV screen, under the file and mapping steps.
+function FileImport({
+  csrf,
+  permissions,
+  refreshKey,
+  kinds,
+}: {
+  csrf: string;
+  permissions: string[];
+  refreshKey: number;
+  kinds: KindInfo[];
+}) {
+  const options = importOptions(permissions, kinds);
+  const canImport = (kind: string) =>
+    permissions.includes('imports.create') && !!options.find((o) => o.kind === kind)?.canManage;
+  const [selected, setSelected] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  return (
+    <>
+      <RawImport
+        csrf={csrf}
+        permissions={permissions}
+        kinds={options}
+        onStaged={(batchId) => setSelected(batchId)}
+      />
+      {selected && (
+        <BatchDetail
+          key={selected + revision}
+          csrf={csrf}
+          batchId={selected}
+          canImport={canImport}
+          onChanged={() => setRevision((x) => x + 1)}
+        />
+      )}
+    </>
+  );
+}
+
+function Imports({
+  csrf,
+  permissions,
+  refreshKey,
+  kinds,
+}: {
+  csrf: string;
+  permissions: string[];
+  refreshKey: number;
+  kinds: KindInfo[];
+}) {
+  const call = useApi(csrf);
+  const options = importOptions(permissions, kinds);
   const labelOf = (kind: string) => options.find((o) => o.kind === kind)?.label ?? kind;
   const canImport = (kind: string) =>
     permissions.includes('imports.create') && !!options.find((o) => o.kind === kind)?.canManage;
@@ -1153,6 +1200,7 @@ export function Availability({
     ...(has('purchase.read') ? ['Purchase orders'] : []),
     ...(has('orders.read') ? ['Demand history'] : []),
     'Imports',
+    'File import',
   ];
   const current = kinds.find((k) => k.label === tab);
   return (
@@ -1410,6 +1458,9 @@ export function Availability({
       {tab === 'Units' && <Units csrf={csrf} permissions={permissions} refreshKey={refreshKey} />}
       {current && (
         <MasterTable key={current.kind} csrf={csrf} info={current} refreshKey={refreshKey} />
+      )}
+      {tab === 'File import' && (
+        <FileImport csrf={csrf} permissions={permissions} refreshKey={refreshKey} kinds={kinds} />
       )}
       {tab === 'Imports' && (
         <Imports csrf={csrf} permissions={permissions} refreshKey={refreshKey} kinds={kinds} />
