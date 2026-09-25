@@ -122,33 +122,35 @@ export function PlanningTools({
   return (
     <>
       <Messages error={error} notice={notice} />
-      <section className="panel">
-        <div className="toolbar view-switch">
-          {!only && (
-            <label>
-              Tool
-              <select value={tool} onChange={(e) => setTool(e.target.value)}>
-                {TOOLS.map(([k, label]) => (
-                  <option key={k} value={k}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {(tool === 'recommended' || tool === 'space') && (
-            <label>
-              Service level
-              <select value={service} onChange={(e) => setService(e.target.value)}>
-                <option value="0.85">85%</option>
-                <option value="0.9">90%</option>
-                <option value="0.95">95%</option>
-                <option value="0.98">98%</option>
-              </select>
-            </label>
-          )}
-        </div>
-      </section>
+      {(!only || tool === 'recommended' || tool === 'space') && (
+        <section className="panel">
+          <div className="toolbar view-switch">
+            {!only && (
+              <label>
+                Tool
+                <select value={tool} onChange={(e) => setTool(e.target.value)}>
+                  {TOOLS.map(([k, label]) => (
+                    <option key={k} value={k}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {(tool === 'recommended' || tool === 'space') && (
+              <label>
+                Service level
+                <select value={service} onChange={(e) => setService(e.target.value)}>
+                  <option value="0.85">85%</option>
+                  <option value="0.9">90%</option>
+                  <option value="0.95">95%</option>
+                  <option value="0.98">98%</option>
+                </select>
+              </label>
+            )}
+          </div>
+        </section>
+      )}
       {data?.empty && <p className="panel-body">{data.empty}</p>}
 
       {tool === 'month' && data && !data.empty && (

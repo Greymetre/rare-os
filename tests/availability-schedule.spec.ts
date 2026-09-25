@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -334,26 +335,26 @@ test('AV-6 scheduler: sequence with protected grouping, drum, timing, load, Gant
 
     // Screens.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Scheduler' }).click();
+    await openScreen(page, 'Scheduler');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plant} (${plant})` });
     await expect(page.getByRole('row').filter({ hasText: p + '-WO2' })).toContainText('On time');
     await expect(page.getByText('The latest calculation differs')).toBeVisible();
     await expect(page.getByRole('button', { name: /Publish run #/ })).toBeVisible();
-    await page.getByRole('tab', { name: 'Gantt' }).click();
+    await openScreen(page, 'Gantt View');
     await expect(
       page
         .locator('.gantt-label')
         .filter({ hasText: p + 'CUT' })
         .first(),
     ).toBeVisible();
-    await page.getByRole('tab', { name: 'Resource load' }).click();
+    await openScreen(page, 'Resource Load Graph');
     await expect(
       page
         .getByRole('row')
         .filter({ hasText: p + 'CUT' })
         .first(),
     ).toContainText('drum');
-    await page.getByRole('tab', { name: 'Plant planning' }).click();
+    await openScreen(page, 'Plant planning');
     await expect(page.getByLabel('Grouping window (days)')).toHaveValue('0');
 
     // A viewer of this plant sees the schedule but cannot publish or change the policy.
@@ -410,7 +411,7 @@ test('AV-6 scheduler: sequence with protected grouping, drum, timing, load, Gant
       ).status(),
     ).toBe(403);
     await vp.getByRole('button', { name: 'Availability', exact: true }).click();
-    await vp.getByRole('tab', { name: 'Scheduler' }).click();
+    await openScreen(vp, 'Scheduler');
     await expect(vp.getByRole('row').filter({ hasText: p + '-WO1' })).toBeVisible();
     await expect(vp.getByRole('button', { name: /Publish run #/ })).toHaveCount(0);
   } finally {

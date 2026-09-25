@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { livePermissions, selectPermissions } from './permission-selection';
+import { permissionPlacement } from '../../../packages/schema/permissions.mjs';
 type Permission = { code: string; module: string; description: string };
 const columns = ['View', 'Create', 'Edit', 'Delete', 'Other actions'];
 const action = (code: string) =>
@@ -54,7 +55,30 @@ export function PermissionPicker({
       (future || livePermissions.has(p.code)) &&
       `${p.module} ${p.description} ${p.code}`.toLowerCase().includes(query.toLowerCase()),
   );
-  const groups = [...new Set(visible.map((p) => p.module))];
+  // Grouped the way the menu is: within a module, by the screens a permission opens or unlocks.
+  const placement = (p: Permission) => permissionPlacement(p.code, p.module);
+  const groups: { module: string; screens: string; items: Permission[] }[] = [];
+  for (const p of visible) {
+    const { module, screens } = placement(p);
+    const row = groups.find((g) => g.module === module && g.screens === screens);
+    if (row) row.items.push(p);
+    else groups.push({ module, screens, items: [p] });
+  }
+  // Modules in the order of the sidebar, so the matrix reads like the menu it controls.
+  const MODULE_ORDER = [
+    'Overview',
+    'Security',
+    'Plants',
+    'Users',
+    'Roles & permissions',
+    'Availability',
+    'Audit log',
+  ];
+  const rank = (m: string) => {
+    const i = MODULE_ORDER.indexOf(m);
+    return i < 0 ? MODULE_ORDER.length : i;
+  };
+  groups.sort((a, b) => rank(a.module) - rank(b.module) || a.module.localeCompare(b.module));
   const update = (codes: string[], enabled: boolean) =>
     onChange(selectPermissions(selected, codes, enabled, allowed));
   const editable = (items: Permission[]) =>
@@ -128,20 +152,27 @@ export function PermissionPicker({
           </thead>
           <tbody>
             {groups.map((group) => {
-              const items = visible.filter((p) => p.module === group),
+              const items = group.items,
                 codes = editable(items);
               return (
-                <tr key={group} data-permission-module={group}>
+                <tr
+                  key={group.module + group.screens}
+                  data-permission-module={group.module}
+                  data-permission-screen={group.screens}
+                >
                   <th scope="row">
                     <label>
                       <BulkCheck
-                        label={`Select ${group} permissions`}
+                        label={`Select ${group.screens} permissions`}
                         codes={codes}
                         selected={selected}
                         disabled={disabled}
                         onChange={(v) => update(codes, v)}
                       />
-                      {group}
+                      <span className="permission-where">
+                        <small>{group.module}</small>
+                        {group.screens}
+                      </span>
                     </label>
                     <small>
                       {items.filter((p) => selected.includes(p.code)).length}/{items.length}{' '}

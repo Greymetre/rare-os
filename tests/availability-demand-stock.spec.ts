@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -185,7 +186,7 @@ test('AV-3 demand and stock: ledger, reversals, orders, imports, readiness, perm
 
     // Stock locations: UI create, API rules.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Stock locations' }).click();
+    await openScreen(page, 'Stock locations');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plantOne} (${plantOne})` });
     await page.getByRole('button', { name: 'Create location' }).click();
     await page.getByLabel('Location code *').fill(p + 'STORE');
@@ -218,7 +219,7 @@ test('AV-3 demand and stock: ledger, reversals, orders, imports, readiness, perm
     });
 
     // Opening stock through the UI, then ledger rules through the API.
-    await page.getByRole('tab', { name: 'Stock', exact: true }).click();
+    await openScreen(page, 'Stock');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plantOne} (${plantOne})` });
     await page.getByRole('button', { name: 'Post movement' }).click();
     await page.getByLabel('Movement type').selectOption('OPENING');
@@ -346,7 +347,7 @@ test('AV-3 demand and stock: ledger, reversals, orders, imports, readiness, perm
     );
 
     // Customer orders: UI create with a generated number, API rules, edit, stale edit, cancel.
-    await page.getByRole('tab', { name: 'Customer orders' }).click();
+    await openScreen(page, 'Customer orders');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plantOne} (${plantOne})` });
     await page.getByRole('button', { name: 'Create order' }).click();
     await page.getByLabel('Customer code *').fill(p + 'C1');
@@ -763,8 +764,8 @@ test('AV-3 demand and stock: ledger, reversals, orders, imports, readiness, perm
     const storeBatch = await settled((await storeImport.json()).id);
     expect(await errorsOf(storeBatch)).toContain('ADJUSTMENT rows need the');
     await up.getByRole('button', { name: 'Availability', exact: true }).click();
-    await expect(up.getByRole('tab', { name: 'Customer orders' })).toHaveCount(0);
-    await up.getByRole('tab', { name: 'Stock', exact: true }).click();
+    await expect(up.getByRole('tab', { name: 'Customer orders', exact: true })).toHaveCount(0);
+    await openScreen(up, 'Stock');
     await up.getByRole('button', { name: 'Post movement' }).click();
     await expect(up.getByLabel('Movement type').locator('option')).toHaveText(['Receipt', 'Issue']);
     await expect(up.getByRole('button', { name: /^Reverse movement/ })).toHaveCount(0);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Fragment, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { CompanyHub, type Membership } from './companies';
@@ -90,6 +90,14 @@ function App() {
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [filter, setFilter] = useState('');
+  // Availability keeps its screens in the sidebar, under the module, as the handover does.
+  const [availabilityTab, setAvailabilityTab] = useState('Readiness');
+  const [availabilityNav, setAvailabilityNav] = useState<[string, string, string[]][]>([]);
+  const [collapsed, setCollapsed] = useState('');
+  const groupOfTab =
+    availabilityNav.find(([, , screens]) => screens.includes(availabilityTab))?.[0] ?? '';
+  const openGroup = collapsed === groupOfTab ? '' : groupOfTab;
+  const setOpenGroup = (group: string) => setCollapsed(group ? '' : groupOfTab);
   const [requestVersion, setRequestVersion] = useState(0);
   const authError = new URLSearchParams(location.search).get('authError');
   async function loadUser() {
@@ -320,14 +328,52 @@ function App() {
           {nav
             .filter((x) => x[2].split('|').some((p) => user.permissions.includes(p)))
             .map(([label, icon]) => (
-              <button
-                key={label}
-                className={page === label ? 'selected' : ''}
-                onClick={() => setPage(label)}
-              >
-                <span aria-hidden="true">{icon}</span>
-                {label}
-              </button>
+              <Fragment key={label}>
+                <button className={page === label ? 'selected' : ''} onClick={() => setPage(label)}>
+                  <span aria-hidden="true">{icon}</span>
+                  {label}
+                </button>
+                {/* A module's own screens sit under it, one engine open at a time. */}
+                {label === 'Availability' && page === 'Availability' && (
+                  <div className="module-tree">
+                    {availabilityNav.map(([group, engine, screens]) => {
+                      const open = group === openGroup;
+                      return (
+                        <div key={group} className="module-group">
+                          <button
+                            className={'module-group-head' + (open ? ' open' : '')}
+                            aria-expanded={open}
+                            onClick={() =>
+                              open ? setOpenGroup('') : setAvailabilityTab(screens[0] ?? '')
+                            }
+                          >
+                            <span className="caret" aria-hidden="true" />
+                            <span>
+                              {group}
+                              <small>{engine}</small>
+                            </span>
+                          </button>
+                          {open && (
+                            <div role="tablist" aria-label={`${group} screens`}>
+                              {screens.map((screen) => (
+                                <button
+                                  key={screen}
+                                  role="tab"
+                                  aria-selected={availabilityTab === screen}
+                                  className={availabilityTab === screen ? 'selected' : ''}
+                                  onClick={() => setAvailabilityTab(screen)}
+                                >
+                                  {screen}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Fragment>
             ))}
         </nav>
         <div className="phase-card">
@@ -572,6 +618,9 @@ function App() {
                   csrf={csrf}
                   permissions={user.permissions}
                   refreshKey={requestVersion}
+                  tab={availabilityTab}
+                  onTab={setAvailabilityTab}
+                  onNav={setAvailabilityNav}
                 />
               )}
             </>

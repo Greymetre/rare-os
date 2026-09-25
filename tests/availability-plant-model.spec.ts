@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -151,7 +152,7 @@ test('AV-2 plant model: calendars, resources, BOMs, routings, grouped imports, p
 
     // Calendar and resource through the UI; capacity = shift minutes × machines × efficiency.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Calendars' }).click();
+    await openScreen(page, 'Calendars');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plantOne} (${plantOne})` });
     await expect(page.getByText('No calendar for this plant yet.')).toBeVisible();
     await page.getByRole('button', { name: 'Create calendar' }).click();
@@ -174,7 +175,7 @@ test('AV-2 plant model: calendars, resources, BOMs, routings, grouped imports, p
     await expect(calRow).toContainText('Mon, Tue, Wed, Thu, Fri, Sat');
     await expect(calRow.getByRole('cell').nth(4)).toHaveText('480');
 
-    await page.getByRole('tab', { name: 'Resources' }).click();
+    await openScreen(page, 'Capacity & Changeover');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plantOne} (${plantOne})` });
     await page.getByRole('button', { name: 'Create resource' }).click();
     await page.getByLabel('Resource code *').fill(p + 'R1');
@@ -240,7 +241,7 @@ test('AV-2 plant model: calendars, resources, BOMs, routings, grouped imports, p
     ).toBeNull();
 
     // BOMs: a UI save, then parent/unit/decimal/overlap/cycle rules.
-    await page.getByRole('tab', { name: 'BOMs' }).click();
+    await openScreen(page, 'BOMs');
     await page.getByRole('button', { name: 'Create BOM' }).click();
     await page.getByLabel('Parent item code *').fill(p + 'FG1');
     await page.getByLabel('Effective from *').fill('2020-01-01');
@@ -482,7 +483,7 @@ test('AV-2 plant model: calendars, resources, BOMs, routings, grouped imports, p
     expect(plantTwoReadiness.items.find((i: any) => i.key === 'routings').detail).toContain(
       p + 'FG1',
     );
-    await page.getByRole('tab', { name: 'Readiness' }).click();
+    await openScreen(page, 'Readiness');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plantOne} (${plantOne})` });
     await expect(
       page.getByText(`Default calendar ${p}CAL: 480 working minutes per day.`),
@@ -615,7 +616,7 @@ test('AV-2 plant model: calendars, resources, BOMs, routings, grouped imports, p
       ).status(),
     ).toBe(201);
     await up.getByRole('button', { name: 'Availability', exact: true }).click();
-    await up.getByRole('tab', { name: 'Resources' }).click();
+    await openScreen(up, 'Capacity & Changeover');
     await expect(up.getByLabel('Plant').locator('option')).toHaveText([
       `Plant ${plantOne} (${plantOne})`,
     ]);

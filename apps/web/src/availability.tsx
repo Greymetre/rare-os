@@ -7,6 +7,7 @@ import {
   LeadTimeRealityList,
   MaterialsOverview,
   SchedulingOverview,
+  StockAndService,
 } from './overview';
 import {
   Expedites,
@@ -1127,50 +1128,9 @@ function Imports({
   );
 }
 
-export function Availability({
-  csrf,
-  permissions,
-  refreshKey,
-}: {
-  csrf: string;
-  permissions: string[];
-  refreshKey: number;
-}) {
-  const [tab, setTab] = useState('Readiness');
-  const [plantId, setPlantId] = useState<string | null>(null);
-  const canManage = permissions.includes('masters.manage');
-  const [kinds, setKinds] = useState<KindInfo[] | null>(null),
-    [error, setError] = useState('');
-  const call = useApi(csrf);
-  const canRead = permissions.includes('masters.read');
-  useEffect(() => {
-    if (!canRead) return;
-    let live = true;
-    call('masters')
-      .then((d) => live && setKinds(d.kinds))
-      .catch((e) => live && setError(e.message));
-    return () => {
-      live = false;
-    };
-  }, [canRead, refreshKey]);
-  if (!canRead)
-    return (
-      <section className="panel availability">
-        <span className="badge">SETUP IN PROGRESS</span>
-        <h2>Planning results will appear here.</h2>
-        <p>
-          Planning data is being prepared. Ask your company administrator for master data access to
-          view readiness, masters and imports.
-        </p>
-      </section>
-    );
-  if (error)
-    return (
-      <div className="error" role="alert">
-        {error}
-      </div>
-    );
-  if (!kinds) return <p role="status">Loading planning data…</p>;
+// The module's own menu: the two engines of the handover with their screens, then everything the
+// demo keeps in its Masters module. Pure, so the shell can draw it in the sidebar.
+function availabilityMenu(permissions: string[], kinds: KindInfo[]) {
   const order = ['items', 'suppliers', 'item_suppliers', 'customers', 'unit_conversions'];
   const has = (p: string) => permissions.includes(p);
   // The menu follows the Nilkamal simulation handover (21-Sep-2026): Availability is two engines,
@@ -1250,25 +1210,96 @@ export function Availability({
   const groups: [string, string, string[]][] = [
     ['Scheduling & Execution', 'TOC / DBR engine', allowed(SCHEDULING)],
     ['Materials Planning', 'DDMRP engine', allowed(MATERIALS)],
-    ['Plant & masters', 'one dataset behind every screen', allowed(MASTERS)],
+    ['Masters & setup', 'one dataset behind every screen', allowed(MASTERS)],
   ];
+  return { groups, companyWide, order };
+}
+
+// The screen list lives in the shell's sidebar (the handover puts a module's screens under the
+// module). When the shell passes onNav, this component reports its menu upwards and stops drawing
+// its own tab strip; on its own it still works with the tabs, which is what the tests use.
+export function Availability({
+  csrf,
+  permissions,
+  refreshKey,
+  tab: tabProp,
+  onTab,
+  onNav,
+}: {
+  csrf: string;
+  permissions: string[];
+  refreshKey: number;
+  tab?: string;
+  onTab?: (tab: string) => void;
+  onNav?: (groups: [string, string, string[]][]) => void;
+}) {
+  const [ownTab, setOwnTab] = useState('Readiness');
+  const tab = tabProp ?? ownTab;
+  const setTab = onTab ?? setOwnTab;
+  const [plantId, setPlantId] = useState<string | null>(null);
+  const canManage = permissions.includes('masters.manage');
+  const [kinds, setKinds] = useState<KindInfo[] | null>(null),
+    [error, setError] = useState('');
+  const call = useApi(csrf);
+  const canRead = permissions.includes('masters.read');
+  useEffect(() => {
+    if (!canRead) return;
+    let live = true;
+    call('masters')
+      .then((d) => live && setKinds(d.kinds))
+      .catch((e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [canRead, refreshKey]);
+  // The menu is worked out as soon as the master data is known, and reported to the shell, which
+  // draws it in the sidebar. This sits above the early returns: a hook may not be conditional.
+  const menu = kinds ? availabilityMenu(permissions, kinds) : null;
+  const menuKey = menu ? JSON.stringify(menu.groups) : '';
+  useEffect(() => {
+    if (menuKey) onNav?.(JSON.parse(menuKey));
+  }, [menuKey, onNav]);
+  if (!canRead)
+    return (
+      <section className="panel availability">
+        <span className="badge">SETUP IN PROGRESS</span>
+        <h2>Planning results will appear here.</h2>
+        <p>
+          Planning data is being prepared. Ask your company administrator for master data access to
+          view readiness, masters and imports.
+        </p>
+      </section>
+    );
+  if (error)
+    return (
+      <div className="error" role="alert">
+        {error}
+      </div>
+    );
+  if (!kinds) return <p role="status">Loading planning data…</p>;
+  const { groups, companyWide, order } = menu!;
+  const currentGroup = groups.find(([, , list]) => list.includes(tab)) ?? null;
+  const has = (p: string) => permissions.includes(p);
   const current = kinds.find((k) => k.label === tab);
   return (
     <>
-      <nav className="module-nav" aria-label="Availability sections">
-        {groups.map(([group, engine, list]) => (
-          <div key={group} className="subtabs">
-            <span className="subtabs-label">
-              {group}
-              <small>{engine}</small>
-            </span>
-            {/* Tabs wrap inside their own column, so a second line starts under the first tab. */}
-            <div className="subtabs-tabs" role="tablist" aria-label={`Availability ${group}`}>
-              {list.map((t) => (
+      {/* In the shell the screens live in the sidebar; here the engine being worked in is named,
+          with its own screens as chips, exactly one engine at a time. */}
+      {onNav ? (
+        currentGroup && (
+          <nav className="engine-bar" aria-label={`${currentGroup[0]} screens`}>
+            <div className="engine-name">
+              <span>Availability</span>
+              <strong>{currentGroup[0]}</strong>
+              <small>{currentGroup[1]}</small>
+            </div>
+            {/* The same screens as the sidebar, within reach of the content. They are plain
+                buttons: the sidebar is the navigation, this is a shortcut. */}
+            <div className="engine-chips">
+              {currentGroup[2].map((t) => (
                 <button
                   key={t}
-                  role="tab"
-                  aria-selected={tab === t}
+                  aria-current={tab === t ? 'page' : undefined}
                   className={tab === t ? 'selected' : ''}
                   onClick={() => setTab(t)}
                 >
@@ -1276,9 +1307,33 @@ export function Availability({
                 </button>
               ))}
             </div>
-          </div>
-        ))}
-      </nav>
+          </nav>
+        )
+      ) : (
+        <nav className="module-nav" aria-label="Availability sections">
+          {groups.map(([group, engine, list]) => (
+            <div key={group} className="subtabs">
+              <span className="subtabs-label">
+                {group}
+                <small>{engine}</small>
+              </span>
+              <div className="subtabs-tabs" role="tablist" aria-label={`Availability ${group}`}>
+                {list.map((t) => (
+                  <button
+                    key={t}
+                    role="tab"
+                    aria-selected={tab === t}
+                    className={tab === t ? 'selected' : ''}
+                    onClick={() => setTab(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+      )}
       {!companyWide.has(tab) && <PlantPicker csrf={csrf} value={plantId} onChange={setPlantId} />}
       {tab === 'Readiness' && <Readiness csrf={csrf} refreshKey={refreshKey} />}
       {tab === 'Readiness' && plantId && (
@@ -1368,6 +1423,9 @@ export function Availability({
       )}
       {tab === 'Overview' && plantId && (
         <SchedulingOverview key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
+      )}
+      {tab === 'Stock & Service' && plantId && (
+        <StockAndService key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />
       )}
       {tab === 'Materials Overview' && plantId && (
         <MaterialsOverview key={plantId} csrf={csrf} plantId={plantId} refreshKey={refreshKey} />

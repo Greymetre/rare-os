@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -514,7 +515,7 @@ test('AV-8 materials decisions: expedite with maker-checker and supplier evidenc
 
     // Screens.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Scheduler' }).click();
+    await openScreen(page, 'Scheduler');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plant} (${plant})` });
     // The schedule row (the decision history below also names the order).
     const scheduleRow = (pg: any) =>
@@ -529,15 +530,15 @@ test('AV-8 materials decisions: expedite with maker-checker and supplier evidenc
     await page.getByRole('button', { name: 'Close' }).click();
     await page.getByRole('button', { name: `Explore a later date for ${p}-WO1` }).click();
     await expect(page.locator('[data-later="later-0"]')).toBeVisible();
-    await page.getByRole('tab', { name: 'Expedites' }).click();
+    await openScreen(page, 'Material expedites');
     await expect(page.locator('[data-expedite]').first()).toContainText('Rejected');
-    await page.getByRole('tab', { name: 'Pending orders' }).click();
+    await openScreen(page, 'Pending Orders to Plan');
     await expect(page.getByText('No orders awaiting planning.')).toBeVisible();
     // The approver sees Expedites but has no planning buttons on the Scheduler.
     await ap.getByRole('button', { name: 'Availability', exact: true }).click();
-    await ap.getByRole('tab', { name: 'Expedites' }).click();
+    await openScreen(ap, 'Material expedites');
     await expect(ap.locator('[data-expedite]').first()).toContainText('Rejected');
-    await ap.getByRole('tab', { name: 'Scheduler' }).click();
+    await openScreen(ap, 'Scheduler');
     await expect(scheduleRow(ap)).toBeVisible();
     await expect(ap.getByRole('button', { name: /Request material expedite/ })).toHaveCount(0);
   } finally {

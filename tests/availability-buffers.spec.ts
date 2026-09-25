@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -228,7 +229,7 @@ test('AV-4 material buffers: zones from usage, net flow, recompute on order chan
 
     // Buffer profile through the UI.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Buffer profiles' }).click();
+    await openScreen(page, 'Parts & Buffer Profiles');
     await page.getByRole('button', { name: 'Create profile' }).click();
     await page.getByLabel('Profile code *').fill(p + 'BP');
     await page.getByLabel('Profile name *').fill('Half and half');
@@ -266,7 +267,7 @@ test('AV-4 material buffers: zones from usage, net flow, recompute on order chan
       profile: p + 'BP',
       lead_time_days: '5',
     });
-    await page.getByRole('tab', { name: 'Buffer settings' }).first().click();
+    await openScreen(page, 'Workbench');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plantOne} (${plantOne})` });
     await page.getByRole('button', { name: 'Add item' }).click();
     await page.getByLabel('Item code *').fill(p + 'FG2');
@@ -357,7 +358,7 @@ test('AV-4 material buffers: zones from usage, net flow, recompute on order chan
     expect((await rowOf('RM1')).zone).toBe('excess');
 
     // Board in the UI: tiles, the zone pill and the details line.
-    await page.getByRole('tab', { name: 'Buffer board' }).click();
+    await openScreen(page, 'Buffer Board & Exceptions');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plantOne} (${plantOne})` });
     await expect(page.getByText('Up to date')).toBeVisible();
     const fgRow = page
@@ -504,7 +505,7 @@ test('AV-4 material buffers: zones from usage, net flow, recompute on order chan
       ).status(),
     ).toBe(403);
     await vp.getByRole('button', { name: 'Availability', exact: true }).click();
-    await vp.getByRole('tab', { name: 'Buffer board' }).click();
+    await openScreen(vp, 'Buffer Board & Exceptions');
     await expect(
       vp
         .getByRole('row')
@@ -512,7 +513,7 @@ test('AV-4 material buffers: zones from usage, net flow, recompute on order chan
         .first(),
     ).toBeVisible();
     await expect(vp.getByRole('button', { name: 'Run now' })).toHaveCount(0);
-    await vp.getByRole('tab', { name: 'Buffer profiles' }).click();
+    await openScreen(vp, 'Parts & Buffer Profiles');
     await expect(vp.getByRole('button', { name: 'Create profile' })).toHaveCount(0);
   } finally {
     await context?.close();

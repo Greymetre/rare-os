@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -107,7 +108,7 @@ test('AV-0 availability foundation: units, staged CSV imports, duplicates, scale
     // Units master through the UI, with duplicate and stale-edit protection.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Planning data readiness' })).toBeVisible();
-    await page.getByRole('tab', { name: 'Units' }).click();
+    await openScreen(page, 'Units');
     await page.getByRole('button', { name: 'Create unit', exact: true }).click();
     await page.getByLabel('Unit code', { exact: true }).fill(prefix + 'NOS');
     await page.getByLabel('Unit name', { exact: true }).fill('Numbers');
@@ -156,7 +157,7 @@ test('AV-0 availability foundation: units, staged CSV imports, duplicates, scale
     expect((await call('imports/templates/units')).headers()['content-type']).toContain('text/csv');
 
     // File with errors through the UI: preview, error file, and commit refused.
-    await page.getByRole('tab', { name: 'Imports' }).click();
+    await openScreen(page, 'Imports');
     const bad = [
       'code,name,decimals',
       `${prefix}KG,Kilogram,3`,
@@ -363,10 +364,10 @@ test('AV-0 availability foundation: units, staged CSV imports, duplicates, scale
       (await asReader(`imports/${bulkBatch.id}/cancel`, 'POST', { version: 1 })).status(),
     ).toBe(403);
     await up.getByRole('button', { name: 'Availability', exact: true }).click();
-    await up.getByRole('tab', { name: 'Imports' }).click();
+    await openScreen(up, 'Imports');
     await expect(up.getByRole('button', { name: 'Open batch ' + batch.batch_no })).toBeVisible();
     await expect(up.getByRole('heading', { name: 'Import master data' })).toHaveCount(0);
-    await up.getByRole('tab', { name: 'Units' }).click();
+    await openScreen(up, 'Units');
     await expect(up.getByRole('button', { name: 'Create unit' })).toHaveCount(0);
   } finally {
     await context?.close();

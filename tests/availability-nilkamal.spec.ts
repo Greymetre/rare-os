@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 const env = loadTestEnvironment();
 const sql = (query: string) =>
@@ -319,7 +320,7 @@ test('Nilkamal rules: weekly buffers, repeated BOM lines, production orders, pla
 
     // Screens: production orders with their materials, the weekly profile and board details.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Production orders' }).click();
+    await openScreen(page, 'Production orders');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plant} (${plant})` });
     await page.getByRole('button', { name: `Materials for ${p}-WO2` }).click();
     const materials = page.locator('.order-materials');
@@ -327,9 +328,9 @@ test('Nilkamal rules: weekly buffers, repeated BOM lines, production orders, pla
     await expect(materials.getByRole('row').filter({ hasText: 'Tape 12 grams' })).toContainText(
       'not available',
     );
-    await page.getByRole('tab', { name: 'Buffer profiles' }).click();
+    await openScreen(page, 'Parts & Buffer Profiles');
     await expect(page.getByRole('row').filter({ hasText: p + 'NK' })).toContainText('Weekly');
-    await page.getByRole('tab', { name: 'Buffer board' }).click();
+    await openScreen(page, 'Buffer Board & Exceptions');
     await page.getByLabel('Buffer board search').fill((p + 'RM1').toLowerCase());
     await page.getByRole('button', { name: 'Search' }).click();
     await page.getByRole('button', { name: `Details for ${p}RM1` }).click();

@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -131,7 +132,7 @@ test('AV-1 item masters: rules, sourcing, conversions, imports, scale, isolation
 
     // Items through the UI, including a field-level reference error.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Items' }).click();
+    await openScreen(page, 'Items');
     await page.getByRole('button', { name: 'Create item' }).click();
     await page.getByLabel('Item code *').fill(p + 'RM1');
     await page.getByLabel('Name *').fill('Steel sheet');
@@ -480,11 +481,11 @@ test('AV-1 item masters: rules, sourcing, conversions, imports, scale, isolation
       ).status(),
     ).toBe(201);
     await up.getByRole('button', { name: 'Availability', exact: true }).click();
-    await up.getByRole('tab', { name: 'Items' }).click();
+    await openScreen(up, 'Items');
     await expect(up.getByRole('button', { name: 'Create item' })).toHaveCount(0);
-    await up.getByRole('tab', { name: 'Suppliers' }).click();
+    await openScreen(up, 'Suppliers');
     await expect(up.getByRole('button', { name: 'Create supplier' })).toBeVisible();
-    await up.getByRole('tab', { name: 'Imports' }).click();
+    await openScreen(up, 'Imports');
     await expect(up.getByLabel('Import type').locator('option')).toHaveText([
       'Suppliers',
       'Item sourcing',

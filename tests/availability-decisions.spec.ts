@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -428,7 +429,7 @@ test('AV-7 decisions: declub, move, release, insert (catalogue, decline, odd siz
 
     // Screens.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Insert order' }).click();
+    await openScreen(page, 'Insert an order');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plant} (${plant})` });
     await page.getByLabel('Item code').fill(p + 'FG1');
     await page.getByLabel('Quantity').fill('30');
@@ -438,7 +439,7 @@ test('AV-7 decisions: declub, move, release, insert (catalogue, decline, odd siz
     await expect(page.locator('[data-scenario=decline]')).toContainText(
       'Decline and log the quote',
     );
-    await page.getByRole('tab', { name: 'Scheduler' }).click();
+    await openScreen(page, 'Scheduler');
     await expect(page.getByRole('row').filter({ hasText: c1.order }).first()).toBeVisible();
 
     // A viewer previews but cannot insert or change the plan.
@@ -503,7 +504,7 @@ test('AV-7 decisions: declub, move, release, insert (catalogue, decline, odd siz
       ).status(),
     ).toBe(403);
     await vp.getByRole('button', { name: 'Availability', exact: true }).click();
-    await vp.getByRole('tab', { name: 'Insert order' }).click();
+    await openScreen(vp, 'Insert an order');
     await vp.getByLabel('Item code').fill(p + 'FG1');
     await vp.getByLabel('Quantity').fill('30');
     await vp.getByLabel('Need-by date').fill(day(5));

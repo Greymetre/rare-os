@@ -146,3 +146,69 @@ export const livePermissionCodes = [
   'masters.cycle_time',
   'planning.tools',
 ];
+
+// Where a permission is actually felt: the module in the sidebar, and the screens it opens or
+// unlocks. The roles screen groups by this, so granting a role is a question about menu entries
+// ("who may insert an order?") rather than about permission codes.
+export const permissionScreens = {
+  'dashboard.read': ['Overview', 'Workspace overview'],
+  'users.read': ['Users', 'Users'],
+  'users.create': ['Users', 'Users'],
+  'users.update': ['Users', 'Users'],
+  'users.change_status': ['Users', 'Users'],
+  'users.assign_role': ['Users', 'Users'],
+  'users.invite': ['Users', 'Users'],
+  'users.reset_password': ['Users', 'Users'],
+  'users.retry_setup': ['Users', 'Users'],
+  'users.assign_plants': ['Users', 'Users → plant access'],
+  'roles.read': ['Roles & permissions', 'Roles & permissions'],
+  'roles.create': ['Roles & permissions', 'Roles & permissions'],
+  'roles.update': ['Roles & permissions', 'Roles & permissions'],
+  'roles.delete': ['Roles & permissions', 'Roles & permissions'],
+  'sites.read': ['Plants', 'Plants'],
+  'sites.create': ['Plants', 'Plants'],
+  'sites.update': ['Plants', 'Plants'],
+  'sites.change_status': ['Plants', 'Plants'],
+  'sites.read_all': ['Plants', 'Plants → every plant of the company'],
+  'audit.read': ['Audit log', 'Audit log'],
+  'masters.read': ['Availability', 'Every Availability screen'],
+  'masters.manage': [
+    'Availability',
+    'Masters & setup: Units, Items, Calendars, Capacity & Changeover, Product Routing, BOMs, Stock locations',
+  ],
+  'suppliers.manage': ['Availability', 'Masters & setup: Suppliers, Item sourcing'],
+  'customers.manage': ['Availability', 'Masters & setup: Customers'],
+  'imports.create': ['Availability', 'Imports, File import'],
+  'orders.read': ['Availability', 'Customer orders, Production orders, Demand History'],
+  'orders.create': ['Availability', 'Customer orders, Production orders'],
+  'orders.update': ['Availability', 'Customer orders'],
+  'demand.import': ['Availability', 'Demand History'],
+  'inventory.read': ['Availability', 'Stock, Stock & Service'],
+  'inventory.move': ['Availability', 'Stock → receipts and issues'],
+  'inventory.adjust': ['Availability', 'Stock → opening stock, adjustments, reversals'],
+  'planning.read': ['Availability', 'Every planning screen of both engines'],
+  'planning.run': ['Availability', 'Buffer Board & Exceptions → recalculate'],
+  'buffers.manage': ['Availability', 'Parts & Buffer Profiles, Workbench'],
+  'schedule.publish': ['Availability', 'Scheduler → publish the plan'],
+  'schedule.plan': ['Availability', 'Scheduler, Club / date scenarios'],
+  'schedule.insert': ['Availability', 'Insert an order, Pending Orders to Plan'],
+  'production.execute': ['Availability', 'Execution Loop, Work Orders & Downtime'],
+  'masters.cycle_time': ['Availability', 'Master-Data Audit → adopt a corrected cycle time'],
+  'planning.tools': [
+    'Availability',
+    'Events & Seasons, Scheme Intake, Target Mode, Space Mode, Assumptions',
+  ],
+  'purchase.expedite': ['Availability', 'Material expedites'],
+  'purchase.read': ['Availability', 'Proposed Orders, Buffers & POs'],
+  'purchase.create': ['Availability', 'Buffers & POs'],
+  'purchase.approve': ['Availability', 'Proposed Orders → approve or reject'],
+  'work_orders.update': ['Production', 'Work Orders & Downtime'],
+  'downtime.create': ['Production', 'Work Orders & Downtime'],
+  'reports.export': ['Reporting', 'Exports'],
+};
+
+// The module and screens a permission belongs to, falling back to its catalogue module.
+export function permissionPlacement(code, module = '') {
+  const found = permissionScreens[code];
+  return { module: found?.[0] ?? module, screens: found?.[1] ?? module };
+}

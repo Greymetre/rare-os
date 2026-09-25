@@ -435,3 +435,143 @@ export function MaterialsOverview({
     </>
   );
 }
+
+// Materials Planning → Stock & Service (the handover's own screen): what the plant holds now, and
+// what each service setting would hold. Three settings, each a policy choice, priced the same way.
+export function StockAndService({
+  csrf,
+  plantId,
+  refreshKey,
+}: {
+  csrf: string;
+  plantId: string;
+  refreshKey: number;
+}) {
+  const stock = useView(csrf, `plants/${plantId}/overview/materials`, [plantId, refreshKey]);
+  const service = useView(csrf, `plants/${plantId}/tools/recommended-buffers?service=0.9`, [
+    plantId,
+    refreshKey,
+  ]);
+  const data = stock.data,
+    curve = service.data;
+  return (
+    <>
+      <Messages error={stock.error || service.error} notice="" />
+      {data?.empty && <p className="panel-body">{data.empty}</p>}
+      {data && !data.empty && (
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Stock and service</h2>
+              <Calculation c={data.calculation} />
+            </div>
+          </div>
+          <div className="zone-tiles">
+            <div className="zone-tile">
+              <strong>{num(data.buffered)}</strong>
+              <span>Buffer points under the plan</span>
+            </div>
+            <div className="zone-tile">
+              <strong>{num(curve?.counts?.finished)}</strong>
+              <span>Finished goods buffered</span>
+            </div>
+            <div className="zone-tile">
+              <strong>{num(curve?.counts?.components)}</strong>
+              <span>Components buffered</span>
+            </div>
+            <div className={'zone-tile ' + (data.missing ? 'red' : 'green')}>
+              <strong>{num(data.missing)}</strong>
+              <span>Cannot be calculated</span>
+            </div>
+          </div>
+          <p className="panel-body">
+            Stock is shown in its own unit of measure below: a plant holds numbers, kilograms,
+            metres and litres, and adding them together would mean nothing.
+          </p>
+        </section>
+      )}
+      {curve?.curve?.length > 0 && (
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>What each service setting would hold</h2>
+              <p className="panel-sub">
+                Each level is a policy choice: more service is bought with more stock. Fill is what
+                the demand history says that stock would actually serve. Demand read to {curve.asOf}
+                .
+              </p>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Service setting</th>
+                  <th className="num">Average stock</th>
+                  <th className="num">Top of green</th>
+                  <th className="num">Stock value</th>
+                  <th className="num">Fill</th>
+                </tr>
+              </thead>
+              <tbody>
+                {curve.curve.map((c: any) => (
+                  <tr
+                    key={c.service}
+                    data-service={Math.round(c.service * 100)}
+                    className={c.service === curve.service ? 'late' : ''}
+                  >
+                    <td>
+                      {Math.round(c.service * 100)}%
+                      {c.service === curve.service && <div className="cell-sub">in force</div>}
+                    </td>
+                    <td className="num">{num(c.averageStock)}</td>
+                    <td className="num">{num(c.topOfGreen)}</td>
+                    <td className="num">{num(c.stockValue)}</td>
+                    <td className="num">{c.fillPct}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+      {data && !data.empty && (
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Stock on hand, per unit</h2>
+              <p className="panel-sub">Nettable locations of this plant only.</p>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Unit</th>
+                  <th>Item type</th>
+                  <th className="num">Items</th>
+                  <th className="num">On hand</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.onHand.map((r: any) => (
+                  <tr key={r.unit + r.type} data-stock={r.unit + '-' + r.type}>
+                    <td>{r.unit}</td>
+                    <td>{r.type}</td>
+                    <td className="num">{num(r.items)}</td>
+                    <td className="num">{num(r.quantity, 3)}</td>
+                  </tr>
+                ))}
+                {!data.onHand.length && (
+                  <tr>
+                    <td colSpan={4}>No stock recorded in this plant yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </>
+  );
+}

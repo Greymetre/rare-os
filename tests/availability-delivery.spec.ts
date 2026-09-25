@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -246,14 +247,16 @@ test('AV-10 delivery: order OTIF, time buffer, alerts, the planner day and CSV e
 
     // Screens.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Today' }).click();
+    await openScreen(page, 'Planning Priorities');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plant} (${plant})` });
     await expect(page.getByRole('heading', { name: /^Today, / })).toBeVisible();
     await expect(page.locator(`[data-order-today="${p}RM1"]`)).toBeVisible();
     // RM1 has no stock record in this plant, so the release is held on materials.
     await expect(page.locator(`[data-release-today="${p}-WO1"]`)).toContainText('Hold');
+    // The exceptions of the same day are their own entry in the menu.
+    await openScreen(page, 'Alerts');
     await expect(page.locator(`[data-alert="promise:${p}-WO3"]`)).toContainText('Critical');
-    await page.getByRole('tab', { name: 'Delivery' }).click();
+    await openScreen(page, 'Order OTIF');
     await expect(page.getByText('OTIF by order')).toBeVisible();
     await expect(page.locator(`[data-promise="${p}-WO3"]`)).toContainText('Penetrated');
     await page.getByRole('checkbox', { name: 'Late only' }).check();

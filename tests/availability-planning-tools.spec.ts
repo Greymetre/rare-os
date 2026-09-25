@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -459,29 +460,28 @@ test('AV-11 planning tools: month shape, recommended buffers, buffer vs MTO, eve
     ] as const)
       expect((await asViewer(path, method, data)).status(), path).toBe(403);
     await vp.getByRole('button', { name: 'Availability', exact: true }).click();
-    await vp.getByRole('tab', { name: 'Planning tools' }).click();
-    await vp.getByLabel('Tool').selectOption('events');
+    await openScreen(vp, 'Events & Seasons');
     await expect(vp.locator(`[data-event="${p}EV"]`)).toBeVisible();
     await expect(vp.getByRole('button', { name: 'Save event' })).toHaveCount(0);
 
     // Screens.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Planning tools' }).click();
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plant} (${plant})` });
+    await openScreen(page, 'Month Shape');
     await expect(page.getByRole('heading', { name: /The month's shape against/ })).toBeVisible();
-    await page.getByLabel('Tool').selectOption('recommended');
+    await openScreen(page, 'Recommended Buffers');
     await expect(page.locator(`[data-recommended="${p}FG1"]`)).toBeVisible();
-    await page.getByLabel('Tool').selectOption('mto');
+    await openScreen(page, 'Buffer vs MTO');
     await expect(page.locator(`[data-mto="${p}FG1"]`)).toContainText('BUFFER');
-    await page.getByLabel('Tool').selectOption('events');
+    await openScreen(page, 'Events & Seasons');
     await expect(page.locator(`[data-event="${p}EV"]`)).toContainText('+50%');
-    await page.getByLabel('Tool').selectOption('schemes');
+    await openScreen(page, 'Scheme Intake');
     await expect(page.locator(`[data-scheme="${p}SC"]`)).toContainText('accepted');
-    await page.getByLabel('Tool').selectOption('space');
+    await openScreen(page, 'Space Mode');
     await expect(page.getByText('The set against the space')).toBeVisible();
-    await page.getByLabel('Tool').selectOption('assumptions');
+    await openScreen(page, 'Assumptions');
     await expect(page.locator('[data-assumption="club_window_days"]')).toContainText('Confirmed');
-    await page.getByRole('tab', { name: 'Network' }).click();
+    await openScreen(page, 'Network');
     await expect(page.locator(`[data-plant="${plant}"]`)).toContainText(p + 'CUT');
   } finally {
     await context?.close();

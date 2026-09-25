@@ -1,3 +1,4 @@
+import { openScreen } from './helpers/nav';
 import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
@@ -393,7 +394,7 @@ test('AV-5 purchase loop: order to shortage to proposal to approval to purchase 
     second = await ok(`purchase-proposals/${second.id}`);
     expect(Number(second.quantity)).toBe(20);
     await ap.getByRole('button', { name: 'Availability', exact: true }).click();
-    await ap.getByRole('tab', { name: 'Purchase proposals' }).click();
+    await openScreen(ap, 'Proposed Orders');
     await expect(ap.getByRole('tab', { name: /Waiting for approval/ })).toContainText('1');
     await ap.getByLabel(`Select proposal ${second.proposal_no}`).check();
     await ap.getByRole('button', { name: 'Approve selected' }).click();
@@ -480,7 +481,7 @@ test('AV-5 purchase loop: order to shortage to proposal to approval to purchase 
     );
     // The rest through the screen.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Purchase orders' }).click();
+    await openScreen(page, 'Buffers & POs');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plantOne} (${plantOne})` });
     await page.getByRole('button', { name: `Open purchase order ${po.po_no}` }).click();
     await expect(page.getByText('GRN-')).toBeVisible();

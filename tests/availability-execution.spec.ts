@@ -2,6 +2,7 @@ import { loadTestEnvironment } from './helpers/test-environment.mjs';
 import { completeTestMfa } from './helpers/mfa';
 import { withRateLimitRetry } from './helpers/api';
 import { test, expect } from '@playwright/test';
+import { openScreen } from './helpers/nav';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 const env = loadTestEnvironment();
@@ -399,13 +400,13 @@ test('AV-9 execution: make order release, the two events, downtime and at-risk p
 
     // Screens.
     await page.getByRole('button', { name: 'Availability', exact: true }).click();
-    await page.getByRole('tab', { name: 'Execution' }).click();
+    await openScreen(page, 'Execution Loop');
     await page.getByLabel('Plant').selectOption({ label: `Plant ${plant} (${plant})` });
     await expect(page.locator(`[data-work="${p}-WO3"]`)).toContainText('Inside buffer');
     await expect(page.getByText('Schedule adherence')).toBeVisible();
-    await page.getByRole('tab', { name: 'Downtime' }).click();
+    await openScreen(page, 'Work Orders & Downtime');
     await expect(page.locator('[data-downtime]').first()).toContainText('Breakdown');
-    await page.getByRole('tab', { name: 'Cycle time audit' }).click();
+    await openScreen(page, 'Master-Data Audit');
     await expect(page.locator(`[data-audit="${p}FG1"]`)).toContainText('1.2');
 
     // A viewer sees the loop but cannot run it.
@@ -458,7 +459,7 @@ test('AV-9 execution: make order release, the two events, downtime and at-risk p
     ] as const)
       expect((await asViewer(path, 'POST', data)).status(), path).toBe(403);
     await vp.getByRole('button', { name: 'Availability', exact: true }).click();
-    await vp.getByRole('tab', { name: 'Execution' }).click();
+    await openScreen(vp, 'Execution Loop');
     await expect(vp.locator(`[data-work="${p}-WO3"]`)).toBeVisible();
     await expect(vp.getByRole('button', { name: 'Release', exact: true })).toHaveCount(0);
   } finally {

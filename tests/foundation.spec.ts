@@ -105,7 +105,7 @@ test('real Keycloak login, seed UI, worker, permission denial, expiry and logout
   ).toBeVisible();
   await page.getByRole('button', { name: 'Availability', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Planning data readiness' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Imports' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Imports', exact: true })).toBeVisible();
   expect((await page.request.get('/api/audit?limit=101')).status()).toBe(400);
   expect((await page.request.get('/api/audit?cursor=invalid')).status()).toBe(400);
   sql(
