@@ -778,3 +778,34 @@ Sales history jaisi file par naapa hua: **3,00,000 rows (4.8 MB)** → padhna + 
 ### 8. Permissions
 
 File upload/mapping/staging ke liye **imports.create** + us import type ki apni permission chahiye (jaise stock ke liye inventory.move). Sirf `masters.read` wale ko files dikhti hain par upload/stage par 403 milta hai.
+
+---
+
+## Demo ke baaki panels (Batch A)
+
+Ye teen cheezein demo me thi aur ab app me bhi hain.
+
+### 1. Demand History ke upar teen naye panel
+
+**Materials Planning → Demand History**:
+
+1. **"N months of this plant's own demand"** — har mahine kitne units invoice hue (bars), peak mahina laal me; upar likha rehta hai average mahina aur peak. (Nilkamal par: 28 mahine, average 8,593 units, peak 2026-05 = 14,809.)
+2. **"The shape of the year"** — har calendar mahine ka index: 1.00 = average mahina. Dashed line average par hai, uske upar wale mahine laal. (Nilkamal: Feb 1.23 sabse upar, Sep 0.82 sabse neeche.)
+3. **"The order book is not the demand"** — abhi kitne orders/units khule hain, pichhle 12 mahine me kitna invoice hua, aur book usme kitne **din** ki demand hai.
+4. **ABC / XYZ** — A pehle 80% value, B 95% tak, C baaki; X steady, Y beech, Z lumpy. Jab kisi item par cost nahi hoti (Nilkamal me nahi hai) to ranking **units** se hoti hai aur screen ye saaf likhti hai. Neeche top 25 items apni class, units, weeks-with-demand aur variability ke saath.
+
+Sab kuch isi plant ki demand history se banta hai — koi forecast, koi anumaan nahi.
+
+### 2. Release Schedule ab poori book ka
+
+**Scheduling & Execution → Release Schedule** pehle sirf _aaj_ ke releases dikhata tha. Ab poori book: har order apni **release by**, projected finish, promise aur material ke saath, release date ke kram me. Late orders highlight hote hain, aur CSV export bhi wahin hai.
+
+### 3. Feasible clubbing
+
+**Scheduling & Execution → Club / date scenarios** me upar naya panel: kaun se same-item lots back-to-back chalaye ja sakte hain.
+
+- Har row: item, kitne lots, club me kitne aayenge, **kitne setup minutes bachenge**, kitna carry karna padega, kitna pull-forward hoga.
+- Verdict: _can be clubbed_ / _only with an expedite_ / kyun nahi (jaise `material short`, `cannot validate`).
+- **See options** dabane par wahi purana club preview khulta hai jahan se apply hota hai. Yahan se kuch apply nahi hota — ye sirf batata hai kya mumkin hai.
+
+Nilkamal par abhi: **17 items me se 4 club ho sakte hain, 835 setup minutes ki bachat**, 2 sirf expedite ke saath; baaki material ki wajah se nahi.

@@ -33,6 +33,7 @@ import type { PoolClient } from 'pg';
 import { access, scoped, fail } from './core.js';
 import { id, text, body, version, mutate, audit } from './access.controller.js';
 import { requirePlant } from './plants.controller.js';
+import { abcXyz, demandInsight } from '../../../packages/schema/demand-insight-db.mjs';
 import {
   cursorOf,
   encode,
@@ -500,6 +501,25 @@ export class DemandStockController {
       const plant = await requirePlant(db, actor, id(plantId));
       const page = await listDemandHistory(db, plant.id, { q, cursor });
       return { items: page.items, nextCursor: encode(page.nextCursor) };
+    });
+  }
+
+  // What the demand itself says: the months the plant has, the shape of its year, the book against
+  // the demand, and which items carry the value and which move unpredictably.
+  @Get('plants/:plantId/demand-insight') async demandInsightView(
+    @Req() req: Request,
+    @Param('plantId') plantId: string,
+  ) {
+    const actor = await access(req, 'orders.read');
+    return scoped(actor.tenant_id, async (db) => {
+      const plant = await requirePlant(db, actor, id(plantId));
+      const today = (
+        await db.query("SELECT to_char(as_of_date,'YYYY-MM-DD') AS d FROM planning_state")
+      ).rows[0]?.d;
+      return {
+        ...(await demandInsight(db, plant.id, today ?? null)),
+        classes: await abcXyz(db, plant.id),
+      };
     });
   }
 

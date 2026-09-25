@@ -1117,6 +1117,7 @@ export function Scheduler({
     [tick, setTick] = useState(0),
     [open, setOpen] = useState<string | null>(null),
     [club, setClub] = useState<string | null>(null),
+    [candidates, setCandidates] = useState<any>(null),
     [expedite, setExpedite] = useState<string | null>(null),
     [later, setLater] = useState<string | null>(null),
     [plan, setPlan] = useState<any>(null),
@@ -1134,6 +1135,17 @@ export function Scheduler({
     };
   }, [plantId, tick, refreshKey]);
   // A decision: the planning run it was judged on and the plant's decision version.
+  useEffect(() => {
+    if (focus === 'schedule') return;
+    let live = true;
+    setCandidates(null);
+    call(`plants/${plantId}/decisions/club-candidates`)
+      .then((d) => live && setCandidates(d))
+      .catch(() => live && setCandidates({ empty: 'Clubbing could not be worked out yet.' }));
+    return () => {
+      live = false;
+    };
+  }, [plantId, focus, refreshKey, notice]);
   function decide(path: string, payload: any) {
     setBusy(true);
     setError('');
@@ -1547,6 +1559,82 @@ export function Scheduler({
               Next page
             </button>
           </div>
+        </section>
+      )}
+      {focus !== 'schedule' && (
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Feasible clubbing</h2>
+              <p className="panel-sub">
+                Same-item lots this book could run back to back. A club is only offered when the
+                material is there at the earlier release and no promise is pushed out; the rest are
+                listed with the reason they are not. Nothing is grouped until you apply it.
+                {candidates?.counts &&
+                  ` ${candidates.counts.feasible} of ${candidates.counts.candidates} items can be clubbed today, saving ${candidates.counts.savedMinutes} setup minutes; the grouping window is ${candidates.clubWindowDays} day(s).`}
+              </p>
+            </div>
+          </div>
+          {!candidates && (
+            <p className="panel-body" role="status">
+              Working out the clubs…
+            </p>
+          )}
+          {candidates?.items?.length === 0 && (
+            <p className="panel-body">No item has more than one lot in this book.</p>
+          )}
+          {candidates?.items?.length > 0 && (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th className="num">Lots</th>
+                    <th className="num">In the club</th>
+                    <th className="num">Setup saved</th>
+                    <th className="num">Carried</th>
+                    <th className="num">Pulled forward</th>
+                    <th>Verdict</th>
+                    {canPlan && <th className="actions">Options</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.items.map((c: any) => (
+                    <tr key={c.item} data-club={c.item} className={c.feasible ? '' : 'late'}>
+                      <td>
+                        <strong>{c.item}</strong>
+                      </td>
+                      <td className="num">{c.lots}</td>
+                      <td className="num">{c.clubbed}</td>
+                      <td className="num">{Math.round(c.savedMinutes)} min</td>
+                      <td className="num">{Math.round(c.carryUnits)}</td>
+                      <td className="num">{Math.round(c.pullDays * 10) / 10} d</td>
+                      <td>
+                        <span
+                          className={
+                            'status-pill ' + (c.feasible ? 'ok' : c.conditional ? 'pending' : 'off')
+                          }
+                        >
+                          {c.feasible
+                            ? 'can be clubbed'
+                            : c.conditional
+                              ? 'only with an expedite'
+                              : String(c.reason ?? 'separate is better').replace(/_/g, ' ')}
+                        </span>
+                      </td>
+                      {canPlan && (
+                        <td className="actions">
+                          <button className="button" onClick={() => setClub(c.item)}>
+                            See options
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       )}
       {focus !== 'schedule' && plan?.items?.length > 0 && (

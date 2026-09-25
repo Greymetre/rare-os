@@ -345,6 +345,66 @@ export class ScheduleController {
     });
   }
 
+  // Which same-item groups this book could actually run back to back: the question the planner
+  // asks before opening any one of them (Nilkamal simulation handover: "Feasible clubbing").
+  @Get('plants/:plantId/decisions/club-candidates') async clubCandidates(
+    @Req() req: Request,
+    @Param('plantId') plantId: string,
+  ) {
+    const actor = await access(req, 'planning.read');
+    return scoped(actor.tenant_id, async (db) => {
+      const plant = await requirePlant(db, actor, id(plantId));
+      const { dc, runNo } = await freshContext(db, plant.id, null);
+      if (!dc) return { empty: 'No calculated schedule yet.' };
+      // Only items with more than one lot in the book can be clubbed at all.
+      const lots = new Map<string, Set<string>>();
+      for (const u of dc.units) {
+        if (!lots.has(u.itemId)) lots.set(u.itemId, new Set());
+        lots.get(u.itemId)!.add(String(u.oid ?? u.id));
+      }
+      const candidates = [...lots.entries()].filter(([, ids]) => ids.size > 1);
+      const items = candidates
+        .map(([itemId]) => {
+          const c = compareClub(dc.units, dc.plan?.groups ?? [], itemId, dc.ctx);
+          const best = c.scenarios.find((x: any) => x.key === 'recommended') ?? null;
+          const conditional = c.scenarios.find((x: any) => x.key === 'expedite') ?? null;
+          const refused = c.scenarios.find((x: any) => x.key === 'refused') ?? null;
+          const shown = best ?? conditional ?? refused;
+          return {
+            item: dc.codes.get(itemId) ?? itemId,
+            lots: lots.get(itemId)!.size,
+            orders: c.ids,
+            feasible: !!best,
+            conditional: !best && !!conditional,
+            clubbed: shown?.ids?.length ?? 0,
+            savedMinutes: shown?.savedMin ?? 0,
+            carryUnits: shown?.carryUnits ?? 0,
+            pullDays: shown?.pullDays ?? shown?.pull ?? 0,
+            // Why a club is not offered: the first reason the engine gives.
+            reason: best ? null : (shown?.reasons?.[0]?.code ?? 'separate_better'),
+          };
+        })
+        .sort(
+          (a, b) =>
+            Number(b.feasible) - Number(a.feasible) ||
+            b.savedMinutes - a.savedMinutes ||
+            a.item.localeCompare(b.item),
+        );
+      return {
+        runNo,
+        today: dc.today,
+        clubWindowDays: dc.ctx.clubWindowDays,
+        items,
+        counts: {
+          candidates: items.length,
+          feasible: items.filter((i) => i.feasible).length,
+          conditional: items.filter((i) => i.conditional).length,
+          savedMinutes: items.reduce((n, i) => n + (i.feasible ? i.savedMinutes : 0), 0),
+        },
+      };
+    });
+  }
+
   @Post('plants/:plantId/decisions/club-preview') async clubPreview(
     @Req() req: Request,
     @Param('plantId') plantId: string,

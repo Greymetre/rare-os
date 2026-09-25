@@ -253,7 +253,14 @@ test('AV-7 decisions: declub, move, release, insert (catalogue, decline, odd siz
     await refused(
       `plants/${plantId}/decisions/club`,
       'POST',
-      { item: p + 'FG1', key: 'declub', orders: declub.orders, runNo: 1, version: prev.version },
+      // Any run but the current one is refused, whatever number this stack has reached.
+      {
+        item: p + 'FG1',
+        key: 'declub',
+        orders: declub.orders,
+        runNo: prev.runNo - 1,
+        version: prev.version,
+      },
       409,
       /no longer current/,
     );
@@ -441,6 +448,11 @@ test('AV-7 decisions: declub, move, release, insert (catalogue, decline, odd siz
     );
     await openScreen(page, 'Scheduler');
     await expect(page.getByRole('row').filter({ hasText: c1.order }).first()).toBeVisible();
+    // The scenarios screen says which items could be clubbed at all, and what each one saves.
+    await openScreen(page, 'Club / date scenarios');
+    await expect(page.locator(`[data-club="${p}FG1"]`)).toBeVisible();
+    await expect(page.locator(`[data-club="${p}FG1"]`)).toContainText('min');
+    await expect(page.getByText(/items can be clubbed today/)).toBeVisible();
 
     // A viewer previews but cannot insert or change the plan.
     roleId = (

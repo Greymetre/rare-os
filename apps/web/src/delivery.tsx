@@ -95,7 +95,6 @@ export function Today({
   const shows = (part: 'order' | 'release' | 'alerts') =>
     focus === 'all' ||
     (focus === 'priorities' && part !== 'alerts') ||
-    (focus === 'releases' && part === 'release') ||
     (focus === 'alerts' && part === 'alerts');
   return (
     <>
@@ -228,6 +227,79 @@ export function Today({
                         <td colSpan={6}>Nothing to release today.</td>
                       </tr>
                     )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+          {/* The rope, for the whole book: the day each order's material has to be released, not
+              only the ones due today. */}
+          {focus === 'releases' && (
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>Release schedule</h2>
+                  <p className="panel-sub">
+                    Every order in the book by the day it has to start, so the constraint is never
+                    waiting and nothing is released earlier than it needs to be. A hold means its
+                    materials are not ready at that date.
+                  </p>
+                </div>
+              </div>
+              <Exports plantId={plantId} kinds={[['release-schedule', 'release schedule']]} />
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th className="num">#</th>
+                      <th>Order</th>
+                      <th>Item</th>
+                      <th className="num">Quantity</th>
+                      <th>Release by</th>
+                      <th>Projected finish</th>
+                      <th>Promise</th>
+                      <th>Materials</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...data.orders]
+                      .sort((a: any, b: any) =>
+                        String(a.releaseDate ?? '9999').localeCompare(
+                          String(b.releaseDate ?? '9999'),
+                        ),
+                      )
+                      .map((o: any) => (
+                        <tr
+                          key={o.order}
+                          data-release={o.order}
+                          className={o.lateDays > 0 ? 'late' : ''}
+                        >
+                          <td className="num">{o.position}</td>
+                          <td>
+                            <strong>{o.order}</strong>
+                            {o.state !== 'planned' && <div className="cell-sub">{o.state}</div>}
+                          </td>
+                          <td>{o.item}</td>
+                          <td className="num">{o.qty}</td>
+                          <td>{o.releaseDate ?? '—'}</td>
+                          <td>{o.finishDate ?? '—'}</td>
+                          <td>
+                            {o.promise}
+                            {o.lateDays > 0 && (
+                              <div className="cell-sub">{o.lateDays} day(s) late</div>
+                            )}
+                          </td>
+                          <td>
+                            {o.material === 'ready' ? (
+                              'ready'
+                            ) : (
+                              <span className="status-pill pending">
+                                {o.material === 'expedite' ? 'hold: short' : o.material}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               </div>

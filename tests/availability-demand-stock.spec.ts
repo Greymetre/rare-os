@@ -629,6 +629,17 @@ test('AV-3 demand and stock: ledger, reversals, orders, imports, readiness, perm
       [day(-2), 12],
     ]);
 
+    // What the demand itself says: the months, the shape of the year and the classes.
+    const insight = await ok(`plants/${plants[plantOne]}/demand-insight`);
+    expect(insight.months.length).toBeGreaterThan(0);
+    expect(insight.total).toBe(20);
+    expect(insight.book.invoicedLastYear).toBe(20);
+    expect(insight.seasonal.some((x: any) => x.index !== null)).toBe(true);
+    expect(insight.classes.items).toBeGreaterThan(0);
+    expect(Object.values(insight.classes.grid).reduce((a: any, b: any) => a + b, 0)).toBe(
+      insight.classes.items,
+    );
+
     // Plant readiness includes stock locations, opening stock and demand.
     const readiness = Object.fromEntries(
       (await ok(`plants/${plants[plantOne]}/readiness`)).items.map((i: any) => [i.key, i.status]),

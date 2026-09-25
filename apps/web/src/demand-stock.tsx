@@ -1361,6 +1361,204 @@ function GoodsReceipts({
 
 // ---------- Demand history ----------
 
+// Materials Planning → Demand History (Nilkamal simulation handover, 21-Sep-2026): the months the
+// plant actually has, the shape of its year, the order book against the demand, and which items
+// carry the value and which ones move unpredictably. Everything is read from this plant's history.
+function DemandShape({ data }: { data: any }) {
+  if (!data || !data.months?.length) return null;
+  const months = data.months;
+  const max = Math.max(...months.map((m: any) => m.units), 1);
+  const seasonalMax = Math.max(...data.seasonal.map((s: any) => s.index ?? 0), 1.2);
+  const monthName = (n: number) =>
+    ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][n - 1];
+  const classes = data.classes;
+  return (
+    <>
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>{months.length} months of this plant's own demand</h2>
+            <p className="panel-sub">
+              Units invoiced per month, {months[0].month} to {months[months.length - 1].month}. The
+              average month is {data.average.toLocaleString('en-IN')} units; the peak is{' '}
+              {data.peak.month} at {data.peak.units.toLocaleString('en-IN')}.
+            </p>
+          </div>
+        </div>
+        <div className="bars" role="img" aria-label="Units invoiced per month">
+          {months.map((m: any) => (
+            <span
+              key={m.month}
+              className="bar"
+              data-month={m.month}
+              title={`${m.month}: ${m.units.toLocaleString('en-IN')} units from ${m.items} items`}
+            >
+              <i
+                className={'bar-fill' + (m.month === data.peak.month ? ' over' : '')}
+                style={{ height: Math.round((m.units / max) * 100) + '%' }}
+              />
+              <em>{m.month.endsWith('-01') || m.month.endsWith('-07') ? m.month.slice(2) : ''}</em>
+            </span>
+          ))}
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>The shape of the year</h2>
+            <p className="panel-sub">
+              Each calendar month against an average month of this plant: 1.00 is average. Read from
+              the {months.length} months above, so a month seen once counts once.
+            </p>
+          </div>
+        </div>
+        <div className="bars" role="img" aria-label="Seasonal index by calendar month">
+          {data.seasonal.map((sx: any) => (
+            <span
+              key={sx.month}
+              className="bar"
+              data-season={sx.month}
+              title={`${monthName(sx.month)}: ${sx.index} of an average month (${sx.years} year(s))`}
+            >
+              <i
+                className={'bar-fill' + ((sx.index ?? 0) >= 1 ? ' over' : '')}
+                style={{ height: Math.round(((sx.index ?? 0) / seasonalMax) * 100) + '%' }}
+              />
+              <em>{monthName(sx.month)}</em>
+            </span>
+          ))}
+          <span className="bar-line" style={{ bottom: Math.round((1 / seasonalMax) * 100) + '%' }}>
+            average
+          </span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <tbody>
+              <tr>
+                {data.seasonal.map((sx: any) => (
+                  <th key={sx.month}>{monthName(sx.month)}</th>
+                ))}
+              </tr>
+              <tr>
+                {data.seasonal.map((sx: any) => (
+                  <td key={sx.month} className="num">
+                    {sx.index?.toFixed(2)}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>The order book is not the demand</h2>
+            <p className="panel-sub">
+              What is open now, against what this plant actually invoiced in its last twelve months.
+            </p>
+          </div>
+        </div>
+        <div className="zone-tiles">
+          <div className="zone-tile">
+            <strong>{data.book.orders.toLocaleString('en-IN')}</strong>
+            <span>Open production orders</span>
+          </div>
+          <div className="zone-tile">
+            <strong>{data.book.units.toLocaleString('en-IN')}</strong>
+            <span>Units in the open book</span>
+          </div>
+          <div className="zone-tile">
+            <strong>{data.book.invoicedLastYear.toLocaleString('en-IN')}</strong>
+            <span>Units invoiced in twelve months</span>
+          </div>
+          <div className="zone-tile">
+            <strong>{data.book.daysOfDemand ?? '—'}</strong>
+            <span>Days of that demand in the book</span>
+          </div>
+        </div>
+      </section>
+      {classes && classes.items > 0 && (
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>ABC and XYZ, over {classes.weeks} weeks</h2>
+              <p className="panel-sub">
+                A carries the first 80%, B to 95%, C the rest; X moves steadily, Y moves, Z is
+                lumpy.{' '}
+                {classes.uncosted === classes.items
+                  ? 'No item here carries a cost, so the ranking is by units.'
+                  : classes.uncosted > 0
+                    ? `${classes.uncosted} item(s) carry no cost and are ranked by units.`
+                    : 'Ranked by value.'}
+              </p>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th />
+                  <th className="num">X (steady)</th>
+                  <th className="num">Y</th>
+                  <th className="num">Z (lumpy)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {['A', 'B', 'C'].map((a) => (
+                  <tr key={a} data-class={a}>
+                    <th scope="row">{a}</th>
+                    {['X', 'Y', 'Z'].map((x) => (
+                      <td key={x} className="num" data-cell={a + x}>
+                        {classes.grid[a + x]}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <caption>The items that carry this plant</caption>
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Class</th>
+                  <th className="num">Units</th>
+                  <th className="num">Value</th>
+                  <th className="num">Weeks with demand</th>
+                  <th className="num">Variability</th>
+                </tr>
+              </thead>
+              <tbody>
+                {classes.top.map((r: any) => (
+                  <tr key={r.code} data-abc={r.code}>
+                    <td>
+                      <strong>{r.code}</strong>
+                      <div className="cell-sub">{r.name}</div>
+                    </td>
+                    <td>
+                      {r.abc}
+                      {r.xyz}
+                    </td>
+                    <td className="num">{r.units.toLocaleString('en-IN')}</td>
+                    <td className="num">
+                      {r.value === null ? '—' : r.value.toLocaleString('en-IN')}
+                    </td>
+                    <td className="num">{r.activeWeeks}</td>
+                    <td className="num">{r.variability ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
+
 export function DemandHistory({
   csrf,
   plantId,
@@ -1377,9 +1575,22 @@ export function DemandHistory({
     pagePath(`plants/${plantId}/demand-history`, { q, cursor: cursors[cursors.length - 1] }),
     [refreshKey],
   );
+  // The insight view is one object, not a list, so it is fetched on its own.
+  const call = useApi(csrf);
+  const [insight, setInsight] = useState<any>(null);
+  useEffect(() => {
+    let live = true;
+    call(`plants/${plantId}/demand-insight`)
+      .then((d) => live && setInsight(d))
+      .catch(() => live && setInsight(null));
+    return () => {
+      live = false;
+    };
+  }, [plantId, refreshKey]);
   return (
     <>
       <Messages error={list.error} notice="" />
+      <DemandShape data={insight} />
       <div className="toolbar">
         <SearchBox
           label="Demand history search"

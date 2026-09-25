@@ -256,6 +256,10 @@ test('AV-10 delivery: order OTIF, time buffer, alerts, the planner day and CSV e
     // The exceptions of the same day are their own entry in the menu.
     await openScreen(page, 'Alerts');
     await expect(page.locator(`[data-alert="promise:${p}-WO3"]`)).toContainText('Critical');
+    // The release schedule is the whole book, not only the day's releases.
+    await openScreen(page, 'Release Schedule');
+    await expect(page.locator('[data-release]')).toHaveCount(view.orders.length);
+    await expect(page.locator(`[data-release="${p}-WO3"]`)).toBeVisible();
     await openScreen(page, 'Order OTIF');
     await expect(page.getByText('OTIF by order')).toBeVisible();
     await expect(page.locator(`[data-promise="${p}-WO3"]`)).toContainText('Penetrated');
