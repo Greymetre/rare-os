@@ -132,6 +132,37 @@ Events aur schemes Nilkamal data me abhi koi nahi hai; dono khud dalne par hi pl
 - **Planning → Today / Delivery / Buffer board / Scheduler / Insert order / Pending orders / Expedites / Execution / Downtime / Cycle time audit / Planning tools / Network / Gantt / Resource load**, **Setup → Plant planning**.
 - **Buffer profiles**: "Zone method" = Weekly (Nilkamal).
 
+## File import aur cutover (AV-12)
+
+Ab Nilkamal ki apni SAP files app ke andar se padhi ja sakti hain — script ke bina. Barjora par
+poora chain chala kar dekha gaya hai (**Availability → Masters & setup → File import**):
+
+1. **Units** — `A2.xlsx`, sheet `1116`, Base Unit column (rows combine karke): 15 units.
+2. **Items** — wahi sheet, 29,497 rows: material type translate karke (`FERT→FG`, `HALB→SFG`,
+   `ROH/HIBE/ERSA/VERP/UNBW/MOLD→RM`, aur make/buy usi column se) → **29,490 items** committed
+   (29,216 naye, 274 pehle se maujood). **6 codes chhode gaye**: unme `%`, `+` ya space tha, jo
+   item code me nahi chal sakta — inhe SAP me theek karna padega ya aise hi chhodna padega.
+3. **Stock locations** — `1116-Barjora.xlsx` sheet `MB52` ke SLoc column se: **12 locations**.
+4. **Stock** — wahi MB52: quantity = Unrestricted, 128 zero rows rule se hataye, reference
+   **item+location** se banaya (MB52 me reference column hai hi nahi) → **1,075 rows** committed.
+
+Phir file se seedha milaan (app ke bahar se), aur har unit ka total bilkul same:
+
+| Unit |          File |        Import | Rows |
+| ---- | ------------: | ------------: | ---: |
+| KG   |    31,271.527 |    31,271.527 |   48 |
+| L    |     3,226.878 |     3,226.878 |    9 |
+| M    | 9,559,469.898 | 9,559,469.898 |  225 |
+| NOS  |     551,519.4 |     551,519.4 |  793 |
+
+Do baatein yaad rakhne ki:
+
+- **Sales history** (`Sleep Sale…xlsx`, 287,653 rows) me ek din ki kai invoice lines hoti hain;
+  demand history ek din ka ek row leta hai. Mapping me `plant + item + date` par rows jod do,
+  quantity apne aap add ho jaayegi (3,00,000 rows → 250 din, ~7.5 s).
+- **Loader script (`scripts/load-nilkamal.mjs`) ab bhi wahi frozen demo parity ke liye hai.**
+  File import cutover ke liye hai; dono ek doosre ki jagah nahi lete.
+
 ## Abhi baaki (demo mein hai, yahan nahi)
 
 SAP ZMTO lines ka import (abhi odd size screen par family + size se aata hai). Demo ka resource load graph drum ke "nose to tail" model par hai; hamara graph timed schedule se

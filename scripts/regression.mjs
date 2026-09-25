@@ -192,9 +192,12 @@ try {
     '--no-deps',
     'seed',
   ]);
+  // Arguments after the command reach Playwright, so one spec can be run while it is being
+  // written (npm run test:regression -- --grep "AV-12"). CI passes none and runs everything.
   await step('Browser and API regression suite', process.execPath, [
     join(root, 'node_modules/@playwright/test/cli.js'),
     'test',
+    ...process.argv.slice(2),
   ]);
   await step('Database isolation, privileges and indexed audit query', 'docker', [
     'compose',

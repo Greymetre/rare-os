@@ -4,6 +4,7 @@ import {
   columnScore,
   describeFilter,
   rowPasses,
+  translate,
   headerFingerprint,
   isBlankRow,
   mapRow,
@@ -187,6 +188,17 @@ test('a mapping can leave rows out, and says which rule did it', () => {
   assert.equal(rowPasses({ item: '' }, [{ field: 'item', op: 'not_blank' }]).ok, false);
   assert.equal(describeFilter({ field: 'quantity', op: 'not_zero' }), 'quantity not zero');
   assert.deepEqual(rowPasses({ plant: '1116' }), { ok: true }, 'no rules, nothing removed');
+});
+
+test('a value the source writes its own way is translated only when the mapping says so', () => {
+  const types = { FERT: 'FG', HALB: 'SFG', ROH: 'RM' };
+  assert.deepEqual(translate('FERT', types), { value: 'FG', from: 'FERT' });
+  assert.deepEqual(translate('fert', types), { value: 'FG', from: 'fert' }, 'case does not matter');
+  assert.deepEqual(translate(' HALB ', types), { value: 'SFG', from: 'HALB' });
+  // A value with no pair keeps what the file said, so nothing is quietly renamed.
+  assert.deepEqual(translate('HIBE', types), { value: 'HIBE' });
+  assert.deepEqual(translate('', types), { value: '' });
+  assert.deepEqual(translate('FERT'), { value: 'FERT' }, 'no map, no translation');
 });
 
 test('reconciliation accounts for every source row and never adds units together', () => {

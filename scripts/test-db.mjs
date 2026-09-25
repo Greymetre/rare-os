@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { permissions } from '../packages/schema/permissions.mjs';
 import pg from 'pg';
 import assert from 'node:assert/strict';
@@ -1114,6 +1114,95 @@ try {
   );
   console.log(
     'PASS planning tools: events and schemes are planning inputs, windows and uplifts bounded, one space limit per plant, nothing deleted, company isolation',
+  );
+
+  // AV-12: an uploaded export is kept once per company, its sheets are imported one at a time, and
+  // a mapping belongs to the company that saved it.
+  const fileId = randomUUID();
+  const bytes = Buffer.from('PK\u0003\u0004 not really a zip, but bytes all the same');
+  const fileSha = createHash('sha256').update(bytes).digest('hex');
+  await db.query(
+    `INSERT INTO import_files(id,tenant_id,file_no,file_name,file_format,byte_size,sha256,content,sheets)
+     VALUES($1,$2,next_number('import_file'),'MB52.xlsx','xlsx',$3,$4,$5,'[{"name":"MB52"}]')`,
+    [fileId, tenant, bytes.length, fileSha, bytes],
+  );
+  assert.equal(
+    (await db.query('SELECT length(content) AS n FROM import_files WHERE id=$1', [fileId])).rows[0]
+      .n,
+    bytes.length,
+    'the file is kept as it arrived',
+  );
+  await db.query(
+    `INSERT INTO import_mappings(id,tenant_id,code,name,kind,sheet,header_row,columns)
+     VALUES(gen_random_uuid(),$1,'MB52','SAP stock','stock_movements','MB52',2,'{"item":{"by":"position","index":0}}')`,
+    [tenant],
+  );
+  // The same file may feed two sheets of the same import type, but not the same sheet twice.
+  for (const sheet of ['MB52', 'CT'])
+    await db.query(
+      `INSERT INTO import_batches(id,tenant_id,batch_no,kind,file_name,file_sha256,status,file_id,sheet,header_row)
+       VALUES(gen_random_uuid(),$1,next_number('import_batch'),'stock_movements','MB52.xlsx',$2,'committed',$3,$4,2)`,
+      [tenant, fileSha, fileId, sheet],
+    );
+  for (const [label, code, sql] of [
+    [
+      'the same bytes uploaded twice',
+      '23505',
+      `INSERT INTO import_files(id,tenant_id,file_no,file_name,file_format,byte_size,sha256,content)
+       VALUES(gen_random_uuid(),'${tenant}',next_number('import_file'),'copy.xlsx','xlsx',${bytes.length},'${fileSha}','\\x00')`,
+    ],
+    [
+      'the same file, type and sheet committed twice',
+      '23505',
+      `INSERT INTO import_batches(id,tenant_id,batch_no,kind,file_name,file_sha256,status,file_id,sheet)
+       VALUES(gen_random_uuid(),'${tenant}',next_number('import_batch'),'stock_movements','MB52.xlsx','${fileSha}','committed','${fileId}','MB52')`,
+    ],
+    [
+      'a file format the reader does not know',
+      '23514',
+      `INSERT INTO import_files(id,tenant_id,file_no,file_name,file_format,byte_size,sha256,content)
+       VALUES(gen_random_uuid(),'${tenant}',next_number('import_file'),'x.pdf','pdf',10,repeat('a',64),'\\x00')`,
+    ],
+    [
+      'an empty file',
+      '23514',
+      `INSERT INTO import_files(id,tenant_id,file_no,file_name,file_format,byte_size,sha256,content)
+       VALUES(gen_random_uuid(),'${tenant}',next_number('import_file'),'x.xlsx','xlsx',0,repeat('b',64),'\\x00')`,
+    ],
+    [
+      'two mappings with the same code',
+      '23505',
+      `INSERT INTO import_mappings(id,tenant_id,code,name,kind,columns)
+       VALUES(gen_random_uuid(),'${tenant}','mb52','Again','stock_movements','{}')`,
+    ],
+    [
+      'a header row that is not a row',
+      '23514',
+      `INSERT INTO import_mappings(id,tenant_id,code,name,kind,header_row,columns)
+       VALUES(gen_random_uuid(),'${tenant}','ZERO','Zero','stock_movements',0,'{}')`,
+    ],
+  ])
+    await denied(label, code, sql);
+  await db.query('RESET ROLE');
+  await db.query("SELECT set_config('app.tenant_id','',true)");
+  // The other company's file carries its own number: next_number() reads the company from the
+  // session, and this insert runs outside any company.
+  await db.query(
+    `INSERT INTO import_files(id,tenant_id,file_no,file_name,file_format,byte_size,sha256,content)
+     VALUES(gen_random_uuid(),$1,1,'other.xlsx','xlsx',4,$2,'\\x00')`,
+    [other, createHash('sha256').update('other').digest('hex')],
+  );
+  await db.query('SET LOCAL ROLE rare_app');
+  await db.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
+  assert.deepEqual(
+    (await db.query('SELECT file_name FROM import_files ORDER BY file_name')).rows.map(
+      (r) => r.file_name,
+    ),
+    ['MB52.xlsx'],
+    "another company's uploads are not visible",
+  );
+  console.log(
+    'PASS raw imports: the file is kept as it arrived, once per company; one sheet of it per import type; mappings are per company and bounded',
   );
   await db.query("SELECT set_config('app.tenant_id','',true)");
   assert.equal((await db.query('SELECT * FROM import_batches')).rowCount, 0);

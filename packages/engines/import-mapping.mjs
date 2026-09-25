@@ -276,6 +276,17 @@ export function normaliseUnit(text, aliases = {}) {
 
 // Produce our fields from one source row, and say for every value where it came from. Issues are
 // reported, never repaired: a row with an issue is still shown, with its reason.
+// A value the source writes its own way: SAP says FERT, this import says FG. Only the pairs the
+// mapping states are translated, and the row records what the file actually said.
+export function translate(value, map) {
+  const raw = TRIM(value);
+  if (!map || raw === '') return { value: raw };
+  const found = Object.entries(map).find(
+    ([from]) => TRIM(from).toLowerCase() === raw.toLowerCase(),
+  );
+  return found ? { value: TRIM(found[1]), from: raw } : { value: raw };
+}
+
 export function mapRow(resolved, cells, options = {}) {
   const values = {},
     sources = {},
@@ -295,11 +306,13 @@ export function mapRow(resolved, cells, options = {}) {
     else if (transform === 'unit') result = normaliseUnit(cell, options.uomAliases);
     else if (transform === 'upper') result = { value: TRIM(cell).toUpperCase() };
     else result = { value: TRIM(cell) };
-    values[field] = result.value;
+    const read = translate(result.value, options.valueMaps?.[field]);
+    values[field] = read.value;
     sources[field] = {
       column: source.index + 1,
       header: source.name,
       ...(result.alias ? { alias: result.alias } : {}),
+      ...(read.from !== undefined ? { read: read.from } : {}),
     };
     if (result.issue) issues.push({ field, column: source.index + 1, message: result.issue });
   }
@@ -353,6 +366,7 @@ export function reconcile({
   sourceRows = 0,
   rows = [],
   blankSkipped = 0,
+  combined = 0,
   filtered = [],
   quantityField = 'quantity',
   unitField = 'unit',
@@ -394,8 +408,10 @@ export function reconcile({
     failed,
     filtered: (filtered ?? []).slice().sort((a, b) => b.count - a.count),
     removed,
+    // Rows that were added into another row rather than staged on their own.
+    combined,
     // Every data row is accounted for: mapped + blank + removed by a rule + failed.
-    unaccounted: Math.max(0, sourceRows - rows.length - blankSkipped - removed),
+    unaccounted: Math.max(0, sourceRows - rows.length - blankSkipped - removed - combined),
     reasons: [...reasons.entries()]
       .map(([message, count]) => ({ message, count }))
       .sort((a, b) => b.count - a.count)

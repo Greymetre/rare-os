@@ -692,3 +692,89 @@ Kuch save nahi hota — ye sirf keemat batata hai.
 ### 10. Permissions
 
 Viewer (sirf planning.read) ko saare tools dikhte hain, par event/scheme/space/assumption save ke buttons nahi dikhte aur API bhi 403 deti hai.
+
+---
+
+## AV-12 — File import (ERP ki apni .xlsx / .xls file seedha app me)
+
+Ab CSV template banane ki zaroorat nahi: SAP se jo file aati hai wahi upload karo. **Availability → Masters & setup → File import**.
+
+Jo CSV template wala purana raasta hai wo **Imports** tab par waise hi chalta rahega.
+
+### 1. File upload
+
+1. **Workbook** me `.xlsx` ya `.xls` chuno (40 MB tak) → **Upload**.
+2. Neeche "Files uploaded" me aa jaayegi: kitne sheets hain, size, kitne imports us file se hue.
+3. Wahi file dobara upload karoge to nayi copy nahi banegi — likha aayega _"already here as file #N"_.
+4. File import ke baad bhi rehti hai (delete nahi hoti), taaki kisi bhi number ko uski row tak wapas dhoonda ja sake.
+
+### 2. Sheet aur import type
+
+**Choose** → phir **Sheet** (workbook me har plant ka alag sheet ho sakta hai), **Header row** (SAP aksar upar ek title row deta hai, to header row 2 hoti hai) aur **Import type** (Items, Stock movements, Demand history…) → **Read this sheet**.
+
+Upar file ki pehli 20 rows dikhti hain, **har column apne number ke saath**. Agar SAP ne header naam repeat kiya hai (jaise `Unrestricted` do baar, ya `Release`/`Act.finish`) to upar likha aayega ki unhe **number se** chunna padega — naam se nahi.
+
+### 3. Column mapping
+
+Har field ke saamne teen cheezein:
+
+- **Column in the file** — koi column, ya "Same value for every row…" (jaise `movement_type = OPENING`, ya plant code).
+- **Read as** — Text / Number / Date / Unit of measure / Text in capitals.
+- **Date format** — agar file me `03/04/2026` jaisi ambiguous date hai to poochha jaayega (din pehle ya mahina pehle); apne aap maan nahi liya jaata.
+
+Neeche settings:
+
+- **Decimals** — `1,234.56` ya `1.234,56`.
+- **Unit aliases** — `EA=NOS, PC=NOS` (sirf jo aap likho wahi badlega).
+- **Rows that repeat** — kaun se fields do rows ko "ek hi row" banate hain; chaaho to ek number column **jod** bhi sakte ho. (Sales file me ek din ki kai invoice lines hoti hain → `plant + item + date` par jod do, quantity add ho jaayegi.)
+- **Rows to leave out** — rules: `plant is 1116`, `quantity is not zero`, `item is not X`…
+
+Mapping ko **Save this mapping as** se naam de do — agli baar usi shape ki sheet par wahi mapping suggest ho jaayegi.
+
+### 4. Reconciliation (commit se pehle ka hisaab)
+
+**"Read the sheet and check it"** dabate hi neeche batch khulta hai, aur **"What was read from the file"** me poora hisaab:
+
+```
+Rows in the sheet        1,205
+Under the header row     1,204
+Left out by a rule         129   (128 × quantity not zero, 1 × item not equals …)
+Added into another row       0   (jab rows jodi gayi hon)
+Empty rows skipped           0
+Read into this import    1,075
+Ready to commit          1,075
+Rejected                     0   (har ek ki wajah neeche)
+Unaccounted                  0   ← ye hamesha 0 hona chahiye
+```
+
+Saath me **quantity har unit alag** (KG/NOS/M/L kabhi jode nahi jaate) aur rejected rows ki wajah ginti ke saath. Ek bhi row galat ho to **commit nahi hoga** — pehle rule se hatao ya file theek karo.
+
+### 5. Commit
+
+**Commit import** dabane par hi data jaata hai. Us file + sheet + import type ka combination dobara commit nahi ho sakta (409) — yani galti se do baar stock nahi chadhega.
+
+### 6. Cutover ka sahi kram (Nilkamal par chala kar dekha hua)
+
+1. **Units** — A2 ke Base Unit column se (rows combine karke).
+2. **Items** — A2 sheet `1116`: code/name/base unit/family, aur **material type translate**: `FERT→FG`, `HALB→SFG`, `ROH/HIBE/ERSA/VERP/UNBW/MOLD→RM`; saath me `make_buy` usi column se (`FERT/HALB→MAKE`, baaki `BUY`).
+3. **Stock locations** — MB52 ke SLoc column se (combine on code).
+4. **Stock** — MB52: quantity = Unrestricted, zero rows rule se hata do, aur **reference item+location se banao** (MB52 me reference column hota hi nahi; isi se file dobara chadhane par stock dobara post nahi hota).
+
+Asli result: 29,497 material rows me se **29,490 items** committed (6 codes chhode gaye — unme `%`, `+` ya space tha), 12 locations, aur **1,075 stock rows**; phir file se seedha milaya:
+
+| Unit |    File total |    Import hua | Rows |
+| ---- | ------------: | ------------: | ---: |
+| KG   |    31,271.527 |    31,271.527 |   48 |
+| L    |     3,226.878 |     3,226.878 |    9 |
+| M    | 9,559,469.898 | 9,559,469.898 |  225 |
+| NOS  |     551,519.4 |     551,519.4 |  793 |
+
+**Reconciled** — har unit ka total file se bilkul same.
+
+### 7. Bada file (performance)
+
+Sales history jaisi file par naapa hua: **3,00,000 rows (4.8 MB)** → padhna + validate **7.5 s**, commit **2.1 s** (rows jod kar 250 din ke totals bane). Reader akela 287,653 rows (33.6 MB) **9.3 s** me padhta hai. Limit: **3,00,000 data rows** aur **40 MB** per file.
+
+### 8. Permissions
+
+File upload/mapping/staging ke liye **imports.create** + us import type ki apni permission chahiye (jaise stock ke liye inventory.move). Sirf `masters.read` wale ko files dikhti hain par upload/stage par 403 milta hai.

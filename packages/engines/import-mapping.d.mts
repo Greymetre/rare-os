@@ -32,6 +32,10 @@ export function mapRow(
   issues: { field: string; column: number; message: string }[];
 };
 export function isBlankRow(cells: string[]): boolean;
+export function translate(
+  value: unknown,
+  map?: Record<string, string>,
+): { value: string; from?: string };
 export const FILTER_OPERATORS: string[];
 export function describeFilter(filter: { field: string; op: string; value?: string }): string;
 export function rowPasses(

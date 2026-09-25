@@ -72,6 +72,8 @@ export function RawImport({
       skipBlankRows: true,
       aliases: '',
       filters: [] as any[],
+      combine: [] as string[],
+      sum: '',
     }),
     [saveAs, setSaveAs] = useState(''),
     [busy, setBusy] = useState(false),
@@ -166,6 +168,8 @@ export function RawImport({
         .map(([from, to]) => `${from}=${to}`)
         .join(', '),
       filters: mapping.options?.filters ?? [],
+      combine: mapping.options?.combine ?? [],
+      sum: mapping.options?.sum ?? '',
     });
     setNotice(`Mapping ${mapping.code} loaded. Check it against this sheet before staging.`);
   }
@@ -191,6 +195,8 @@ export function RawImport({
         skipBlankRows: options.skipBlankRows,
         uomAliases,
         filters: options.filters.filter((f: any) => f.field && f.op),
+        combine: options.combine.filter((f: string) => columns[f]),
+        sum: options.combine.length ? options.sum : '',
       },
       ...(saveAs ? { saveAs, saveName: saveAs } : {}),
     })
@@ -578,6 +584,55 @@ export function RawImport({
                 Skip empty rows
               </label>
             </div>
+            {/* A sales export has a row per invoice line; a demand history holds one per day. */}
+            <div className="panel-body">
+              <p className="panel-sub">
+                Rows that repeat: choose the fields that make two rows the same row. A column to add
+                up is optional — without one the first row is kept and the repeats are counted.
+                Nothing is combined unless you say so.
+              </p>
+              <div className="toolbar">
+                {preview.fields
+                  .filter((f: string) => columns[f])
+                  .map((field: string) => (
+                    <label className="toolbar" key={field}>
+                      <input
+                        type="checkbox"
+                        checked={options.combine.includes(field)}
+                        onChange={(e) =>
+                          setOptions({
+                            ...options,
+                            combine: e.target.checked
+                              ? [...options.combine, field]
+                              : options.combine.filter((f: string) => f !== field),
+                          })
+                        }
+                      />
+                      {field}
+                    </label>
+                  ))}
+              </div>
+              {options.combine.length > 0 && (
+                <div className="toolbar">
+                  <label>
+                    Add up (optional)
+                    <select
+                      value={options.sum}
+                      onChange={(e) => setOptions({ ...options, sum: e.target.value })}
+                    >
+                      <option value="">Choose…</option>
+                      {preview.fields
+                        .filter((f: string) => columns[f]?.transform === 'number')
+                        .map((field: string) => (
+                          <option key={field} value={field}>
+                            {field}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+            </div>
             <div className="table-wrap">
               <table>
                 <caption>Rows to leave out</caption>
@@ -717,6 +772,7 @@ export function Reconciliation({ batch }: { batch: any }) {
       (r.filtered ?? []).map((f: any) => `${f.count} × ${f.rule}`).join(', '),
     ],
     ['Empty rows skipped', r.blank ?? 0, ''],
+    ['Added into another row', r.combined ?? 0, r.combined ? 'rows that repeat the same key' : ''],
     ['Read into this import', r.staged, ''],
     ['Ready to commit', r.mapped, ''],
     ['Rejected', r.failed, 'each with its reason below'],

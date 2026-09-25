@@ -22,8 +22,10 @@ import {
 } from '../../../packages/engines/import-mapping.mjs';
 
 // The real exports run to tens of megabytes: the sales history alone is 33.6 MB and 287,653 rows.
+// The limit is on the rows an import carries; a sheet may hold a few title rows above its header.
 export const MAX_WORKBOOK_BYTES = 40 * 1024 * 1024;
 export const MAX_WORKBOOK_ROWS = 300000;
+export const MAX_SHEET_ROWS = MAX_WORKBOOK_ROWS + 1000;
 const PREVIEW_ROWS = 20;
 const TRANSFORMS = new Set(['text', 'number', 'date', 'unit', 'upper']);
 const DATE_FORMATS = new Set(['auto', 'dmy', 'mdy', 'ymd', 'serial']);
@@ -83,7 +85,7 @@ async function fileFor(db: PoolClient, fileId: string, withContent = false) {
 // Read one sheet's header and the rows under it, stopping as soon as enough have been seen.
 function readSheet(content: Buffer, sheet: string, headerRow: number, limit: number) {
   try {
-    const workbook = openWorkbook(content, { maxRows: MAX_WORKBOOK_ROWS });
+    const workbook = openWorkbook(content, { maxRows: MAX_SHEET_ROWS });
     const iterator = workbook.rows(sheet || undefined);
     let header: string[] = [];
     const rows: { row: number; cells: string[] }[] = [];
@@ -168,6 +170,69 @@ function readMapping(raw: any, def: any) {
       fail(400, 'VALIDATION_ERROR', `"${op}" is not a rule this import understands.`);
     return { field, op, value: text(f?.value, 'Rule value', 120, false) };
   });
+  // A sales export has one row per invoice line; a demand history holds one per day. The mapping
+  // can say which fields make a row the same row, and which column is added up when they are.
+  const combine = (Array.isArray(rawOptions.combine) ? rawOptions.combine : []).map(
+    (f: unknown) => {
+      const field = String(f ?? '');
+      if (!Object.hasOwn(columns, field))
+        fail(
+          400,
+          'VALIDATION_ERROR',
+          `Rows can only be combined on a column this mapping fills; "${field}" is not one.`,
+        );
+      return field;
+    },
+  );
+  const sum = String(rawOptions.sum ?? '');
+  if (sum && !Object.hasOwn(columns, sum))
+    fail(400, 'VALIDATION_ERROR', `"${sum}" is not a column this mapping fills.`);
+  if (sum && columns[sum]?.transform !== 'number')
+    fail(400, 'VALIDATION_ERROR', `Only a column read as a number can be added up.`);
+  // Combining without a column to add up keeps the first row and counts the repeats: that is how a
+  // master list is read out of a transaction sheet.
+  // A stock sheet has no reference column; the fields that make a row unique become one.
+  const referenceFrom = (
+    Array.isArray(rawOptions.referenceFrom) ? rawOptions.referenceFrom : []
+  ).map((f: unknown) => {
+    const field = String(f ?? '');
+    if (!Object.hasOwn(columns, field))
+      fail(
+        400,
+        'VALIDATION_ERROR',
+        `A reference can only be built from a column this mapping fills; "${field}" is not one.`,
+      );
+    return field;
+  });
+  if (referenceFrom.length && !def.columns.includes('external_ref'))
+    fail(400, 'VALIDATION_ERROR', 'This import type has no reference to build.');
+  // What the source calls a value, and what this import calls it: FERT is FG, ROH is RM.
+  const valueMaps: Record<string, Record<string, string>> = {};
+  for (const [field, pairs] of Object.entries(rawOptions.valueMaps ?? {})) {
+    if (!Object.hasOwn(columns, field))
+      fail(
+        400,
+        'VALIDATION_ERROR',
+        `Values can only be translated for a column this mapping fills; "${field}" is not one.`,
+      );
+    const map: Record<string, string> = {};
+    for (const [from, to] of Object.entries((pairs ?? {}) as Record<string, string>))
+      map[text(from, `Value in the file for ${field}`, 60)] = text(
+        to,
+        `Value for ${field}`,
+        60,
+        false,
+      );
+    if (Object.keys(map).length > 100)
+      fail(400, 'VALIDATION_ERROR', `At most 100 translations for "${field}".`);
+    valueMaps[field] = map;
+  }
+  if (referenceFrom.length && Object.hasOwn(columns, 'external_ref'))
+    fail(
+      400,
+      'VALIDATION_ERROR',
+      'The reference is either taken from a column or built from fields, not both.',
+    );
   return {
     columns,
     options: {
@@ -175,6 +240,10 @@ function readMapping(raw: any, def: any) {
       dateFormat,
       uomAliases,
       filters,
+      combine,
+      sum,
+      referenceFrom,
+      valueMaps,
       skipBlankRows: rawOptions.skipBlankRows !== false,
     },
   };

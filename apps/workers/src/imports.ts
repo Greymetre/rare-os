@@ -200,6 +200,7 @@ async function masterActions(db: PoolClient, kind: string, results: Result[]) {
 // validated. The mapping is applied here rather than in the request, because a real export runs
 // to hundreds of thousands of rows.
 const MAX_WORKBOOK_ROWS = 300000;
+const MAX_SHEET_ROWS = MAX_WORKBOOK_ROWS + 1000;
 async function stageFromFile(db: PoolClient, batch: any) {
   const already = (
     await db.query('SELECT count(*)::int AS n FROM import_rows WHERE batch_id=$1', [batch.id])
@@ -212,9 +213,19 @@ async function stageFromFile(db: PoolClient, batch: any) {
   const headerRow = Number(batch.header_row ?? 1);
   const firstDataRow = Number(mapping.firstDataRow ?? headerRow + 1);
   const options = mapping.options ?? {};
-  const workbook = openWorkbook(file.content, { maxRows: MAX_WORKBOOK_ROWS });
+  const workbook = openWorkbook(file.content, { maxRows: MAX_SHEET_ROWS });
   const filters = mapping.options?.filters ?? [];
   const removedBy = new Map<string, number>();
+  // A sales export carries one row per invoice line; a demand history holds one row per day. When
+  // the mapping says so, rows that repeat the same key are added up here, and the count of what
+  // was combined is reported rather than lost.
+  const combineBy: string[] = mapping.options?.combine ?? [];
+  const sumField: string = mapping.options?.sum ?? '';
+  // Stock rows carry no reference of their own, but the fields that make a row unique do: the
+  // reference is built from them, so the same file imported twice cannot post the same stock twice.
+  const referenceFrom: string[] = mapping.options?.referenceFrom ?? [];
+  const combined = new Map<string, { row: number; values: Record<string, string>; rows: number }>();
+  let combinedAway = 0;
   let resolved: any = null,
     sourceRows = 0,
     dataRows = 0,
@@ -259,17 +270,54 @@ async function stageFromFile(db: PoolClient, batch: any) {
       removedBy.set(passes.rule!, (removedBy.get(passes.rule!) ?? 0) + 1);
       continue;
     }
+    if (referenceFrom.length)
+      // The reference is a key, not a value: the fields are joined with a slash and anything a
+      // reference may not carry becomes an underscore, so it stays the same on every import.
+      mapped.values.external_ref = referenceFrom
+        .map((f) =>
+          String(mapped.values[f] ?? '')
+            .trim()
+            .replace(/[^A-Za-z0-9._-]+/g, '_'),
+        )
+        .join('/')
+        .slice(0, 60);
     const payload: Record<string, unknown> = { ...mapped.values };
     if (mapped.issues.length)
       payload._mappingIssue = mapped.issues
         .map((i: any) => `${i.message} (column ${i.column})`)
         .join(' ');
+    if (combineBy.length && !mapped.issues.length) {
+      const key = combineBy.map((f) => String(mapped.values[f] ?? '').toLowerCase()).join('\u0000');
+      const seen = combined.get(key);
+      if (seen) {
+        seen.rows++;
+        combinedAway++;
+        if (sumField)
+          seen.values[sumField] = String(
+            (Number(seen.values[sumField]) || 0) + (Number(mapped.values[sumField]) || 0),
+          );
+        continue;
+      }
+      combined.set(key, { row: row.row, values: { ...mapped.values }, rows: 1 });
+      continue;
+    }
     lines.push(row.row);
     data.push(JSON.stringify(payload));
     staged++;
     if (lines.length >= CHUNK) await flush();
   }
+  // The combined rows are staged in the order their first source row appeared.
+  for (const entry of combined.values()) {
+    lines.push(entry.row);
+    data.push(JSON.stringify(entry.values));
+    staged++;
+    if (lines.length >= CHUNK) await flush();
+  }
   await flush();
+  if (staged > MAX_WORKBOOK_ROWS)
+    throw Error(
+      `Sheet "${batch.sheet}" carries more than ${MAX_WORKBOOK_ROWS.toLocaleString('en-IN')} rows for this import. Split the export and import it in parts.`,
+    );
   if (!staged)
     throw Error(
       `Sheet "${batch.sheet}" has no data rows under row ${headerRow}. Check the header row and the sheet.`,
@@ -285,6 +333,7 @@ async function stageFromFile(db: PoolClient, batch: any) {
     sheetRows: sourceRows,
     dataRows,
     blankRows,
+    combined: combinedAway,
     filtered: [...removedBy.entries()].map(([rule, count]) => ({ rule, count })),
   };
   return batch.reading;
@@ -370,6 +419,7 @@ export async function validateImport(db: PoolClient, payload: Payload) {
           sourceRows: Number(reading.dataRows ?? results.length),
           rows: results.map((r) => ({ values: r.value ?? {}, errors: r.errors })),
           blankSkipped: Number(reading.blankRows ?? 0),
+          combined: Number(reading.combined ?? 0),
           filtered: reading.filtered ?? [],
           quantityField: columns.includes('quantity') ? 'quantity' : '',
           unitField: columns.includes('unit') ? 'unit' : '',

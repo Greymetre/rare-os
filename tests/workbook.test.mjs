@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deflateRawSync } from 'node:zlib';
+import { xlsxFixture } from './helpers/workbook-fixture.mjs';
 import {
   columnIndex,
   excelDate,
@@ -14,88 +14,6 @@ import {
 // and a fixture built by hand is the only way to know exactly what the reader is being asked to do.
 
 // ---------- a minimal .xlsx (zip of XML parts) ----------
-
-function zip(files) {
-  const chunks = [],
-    central = [];
-  let offset = 0;
-  for (const [name, text] of files) {
-    const data = Buffer.from(text, 'utf8');
-    const deflated = deflateRawSync(data);
-    const nameBytes = Buffer.from(name, 'utf8');
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(8, 8); // deflate
-    local.writeUInt32LE(0, 14); // crc, not checked by the reader
-    local.writeUInt32LE(deflated.length, 18);
-    local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(nameBytes.length, 26);
-    chunks.push(local, nameBytes, deflated);
-    const entry = Buffer.alloc(46);
-    entry.writeUInt32LE(0x02014b50, 0);
-    entry.writeUInt16LE(20, 6);
-    entry.writeUInt16LE(8, 10);
-    entry.writeUInt32LE(deflated.length, 20);
-    entry.writeUInt32LE(data.length, 24);
-    entry.writeUInt16LE(nameBytes.length, 28);
-    entry.writeUInt32LE(offset, 42);
-    central.push(entry, nameBytes);
-    offset += local.length + nameBytes.length + deflated.length;
-  }
-  const directory = Buffer.concat(central);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(files.length, 8);
-  end.writeUInt16LE(files.length, 10);
-  end.writeUInt32LE(directory.length, 12);
-  end.writeUInt32LE(offset, 16);
-  return Buffer.concat([...chunks, directory, end]);
-}
-
-// Two sheets. The first has SAP's habits: a repeated header name, a date as a styled number, a
-// shared string, an inline string, a blank cell in the middle and cells written out of order.
-const xlsxFixture = () =>
-  zip([
-    [
-      'xl/workbook.xml',
-      `<workbook xmlns:r="x"><sheets><sheet name="MB52" sheetId="1" r:id="rId1"/>` +
-        `<sheet name="CT" sheetId="2" r:id="rId2" state="hidden"/></sheets></workbook>`,
-    ],
-    [
-      'xl/_rels/workbook.xml.rels',
-      `<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/>` +
-        `<Relationship Id="rId2" Target="worksheets/sheet2.xml"/></Relationships>`,
-    ],
-    [
-      'xl/sharedStrings.xml',
-      `<sst count="4"><si><t>Material</t></si><si><t>Qty</t></si>` +
-        `<si><r><t>SPRING</t></r><r><t>MATRZ</t></r></si><si><t>Release</t></si></sst>`,
-    ],
-    [
-      'xl/styles.xml',
-      `<styleSheet><numFmts><numFmt numFmtId="166" formatCode="dd.mm.yyyy"/></numFmts>` +
-        `<cellXfs count="3"><xf numFmtId="0"/><xf numFmtId="166"/><xf numFmtId="4"/></cellXfs></styleSheet>`,
-    ],
-    [
-      'xl/worksheets/sheet1.xml',
-      `<worksheet><sheetData>` +
-        // Header: Material, Release, Release again (SAP repeats), Qty, and a name with spaces.
-        `<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>3</v></c>` +
-        `<c r="C1" t="s"><v>3</v></c><c r="D1" t="s"><v>1</v></c>` +
-        `<c r="E1" t="inlineStr"><is><t>  Value  Unrestricted </t></is></c></row>` +
-        // Cells out of order, one missing (C), a styled date, a plain number and a boolean.
-        `<row r="2"><c r="D2"><v>12.5</v></c><c r="A2" t="s"><v>2</v></c>` +
-        `<c r="B2" s="1"><v>46234</v></c><c r="E2" t="b"><v>1</v></c></row>` +
-        `<row r="3"><c r="A3" t="inlineStr"><is><t>R&amp;D &lt;2&gt;</t></is></c>` +
-        `<c r="D3" s="2"><v>1000.5</v></c><c r="E3" t="e"><v>#N/A</v></c></row>` +
-        `</sheetData></worksheet>`,
-    ],
-    [
-      'xl/worksheets/sheet2.xml',
-      `<worksheet><sheetData><row r="1"><c r="A1"><v>7</v></c></row></sheetData></worksheet>`,
-    ],
-  ]);
 
 // ---------- a minimal .xls (OLE2 compound file of BIFF8 records) ----------
 
