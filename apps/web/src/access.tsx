@@ -73,12 +73,14 @@ function Modal({
 export function AccessManagement({
   kind,
   csrf,
+  signedInEmail,
   permissions,
   refreshKey,
   onChanged,
 }: {
   kind: 'roles' | 'users';
   csrf: string;
+  signedInEmail?: string;
   permissions: string[];
   refreshKey: number;
   onChanged: () => void;
@@ -99,7 +101,7 @@ export function AccessManagement({
     [revision, setRevision] = useState(0),
     [filter, setFilter] = useState('');
   const [edit, setEdit] = useState<Role | Account | 'new' | null>(null),
-    [remove, setRemove] = useState<Role | null>(null);
+    [remove, setRemove] = useState<Role | Account | null>(null);
   useEffect(() => {
     let live = true;
     setBusy(true);
@@ -178,17 +180,18 @@ export function AccessManagement({
     setRevision((x) => x + 1);
     onChanged();
   }
-  async function deleteRole() {
+  async function removeRecord() {
     if (!remove) return;
     setBusy(true);
     setError('');
     try {
-      const d = await request<{ message: string }>('roles/' + remove.id, csrf, 'DELETE', {
+      const d = await request<{ message: string }>(kind + '/' + remove.id, csrf, 'DELETE', {
         version: remove.version,
       });
       setRemove(null);
       setNotice(d.message);
       setRevision((x) => x + 1);
+      onChanged();
     } catch (e) {
       setError((e as Error).message);
       setRemove(null);
@@ -401,6 +404,15 @@ export function AccessManagement({
                                     )}
                                   </>
                                 )}
+                            {canDelete && x.email !== signedInEmail && (
+                              <button
+                                className="text-button danger"
+                                aria-label={'Remove user ' + x.name}
+                                onClick={() => setRemove(x)}
+                              >
+                                Remove
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -513,10 +525,24 @@ export function AccessManagement({
         />
       )}
       {remove && (
-        <Modal title="Delete role" onClose={() => !busy && setRemove(null)}>
+        <Modal
+          title={kind === 'roles' ? 'Delete role' : 'Remove user'}
+          onClose={() => !busy && setRemove(null)}
+        >
           <p className="modal-body">
-            Delete <strong>{remove.name}</strong>? A role assigned to any user cannot be deleted.
-            Reassign those users first.
+            {kind === 'roles' ? (
+              <>
+                Delete <strong>{remove.name}</strong>? A role assigned to any user cannot be
+                deleted. Reassign those users first.
+              </>
+            ) : (
+              <>
+                Remove <strong>{remove.name}</strong> ({(remove as Account).email}) for good? Their
+                record and their login both go, and the email becomes free to use again. This cannot
+                be undone — to stop someone signing in while keeping their record, set them to
+                Inactive instead.
+              </>
+            )}
           </p>
           <div className="modal-actions">
             <button className="button" disabled={busy} onClick={() => setRemove(null)}>
@@ -525,9 +551,9 @@ export function AccessManagement({
             <button
               className="button destructive"
               disabled={busy}
-              onClick={() => void deleteRole()}
+              onClick={() => void removeRecord()}
             >
-              Confirm delete
+              {kind === 'roles' ? 'Confirm delete' : 'Confirm remove'}
             </button>
           </div>
         </Modal>

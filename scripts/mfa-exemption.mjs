@@ -9,6 +9,7 @@
 // the login no longer asks for a code) and signs the account out everywhere.
 // remove: ends the exemption and signs the account out; the next login sets up MFA again.
 import pg from 'pg';
+import { keycloakAdmin } from './identity-admin.mjs';
 
 const env = process.env;
 const [command, email, daysText, reason] = process.argv.slice(2);
@@ -21,30 +22,6 @@ const days = Number(daysText);
 if (command === 'add' && (!Number.isInteger(days) || days < 1 || days > 60 || !reason)) {
   console.error(usage);
   process.exit(2);
-}
-
-async function keycloak() {
-  const r = await fetch(env.AUTH_INTERNAL_URL + '/realms/master/protocol/openid-connect/token', {
-    method: 'POST',
-    body: new URLSearchParams({
-      grant_type: 'password',
-      client_id: 'admin-cli',
-      username: 'bootstrap-admin',
-      password: env.KC_ADMIN_PASSWORD,
-    }),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!r.ok) throw Error('Keycloak admin sign-in failed: ' + r.status);
-  const token = (await r.json()).access_token;
-  return async (path, method = 'GET') => {
-    const res = await fetch(env.AUTH_INTERNAL_URL + '/admin/realms/rare-os' + path, {
-      method,
-      headers: { Authorization: 'Bearer ' + token },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) throw Error(`Keycloak ${method} ${path}: ${res.status}`);
-    return res.status === 204 ? null : res.json();
-  };
 }
 
 const db = new pg.Client({ connectionString: env.DATABASE_URL });
@@ -62,7 +39,7 @@ try {
         `${r.email}  until ${r.until} UTC  ${r.active ? 'ACTIVE' : 'expired'}  (${r.reason})`,
       );
   } else {
-    const kc = await keycloak();
+    const kc = await keycloakAdmin();
     const [user] = await kc(`/users?email=${encodeURIComponent(email)}&exact=true`);
     if (!user) throw Error(`No account with email ${email}.`);
     if (command === 'add') {

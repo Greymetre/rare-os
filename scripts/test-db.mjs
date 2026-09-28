@@ -89,6 +89,43 @@ try {
     (e) => e.code === '42501',
   );
   await db.query('ROLLBACK TO SAVEPOINT deniedrole');
+  // Removing a user removes the login behind it, but one login can serve several companies and
+  // row-level security hides the others. Only this function looks across them, and all it gives
+  // back is a count.
+  await db.query('RESET ROLE');
+  const sharedLogin = 'shared-login-' + randomUUID();
+  const otherRole = randomUUID(),
+    otherUser = randomUUID(),
+    ownUser = randomUUID();
+  const ownRole = (await db.query('SELECT id FROM roles WHERE tenant_id=$1 LIMIT 1', [tenant]))
+    .rows[0].id;
+  await db.query('INSERT INTO roles(id,tenant_id,name) VALUES($1,$2,$3)', [
+    otherRole,
+    other,
+    'Isolation role',
+  ]);
+  for (const [user, company, role, email] of [
+    [otherUser, other, otherRole, 'shared@isolation.test'],
+    [ownUser, tenant, ownRole, 'shared@isolation.test'],
+  ])
+    await db.query(
+      'INSERT INTO app_users(id,tenant_id,identity_id,email,name,role_id) VALUES($1,$2,$3,$4,$5,$6)',
+      [user, company, sharedLogin, email, 'Shared login', role],
+    );
+  await db.query('SET LOCAL ROLE rare_app');
+  assert.equal(
+    (await db.query('SELECT * FROM app_users WHERE identity_id=$1', [sharedLogin])).rowCount,
+    1,
+    'the other company stays hidden',
+  );
+  const companiesUsing = async () =>
+    (await db.query('SELECT identity_company_count($1) AS n', [sharedLogin])).rows[0].n;
+  assert.equal(await companiesUsing(), 2, 'but both companies are counted, so the login stays');
+  await db.query('DELETE FROM app_users WHERE id=$1', [ownUser]);
+  assert.equal(await companiesUsing(), 1, 'the last company holding it can take the login too');
+  console.log(
+    'PASS user removal: a login shared with another company is counted across companies, not exposed',
+  );
   // AV-0: availability foundation tables keep company isolation and narrow runtime privileges.
   await db.query('RESET ROLE');
   await db.query("SELECT set_config('app.tenant_id','',true)");

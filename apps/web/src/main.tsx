@@ -550,6 +550,7 @@ function App() {
                   key={page}
                   kind={page === 'Users' ? 'users' : 'roles'}
                   csrf={csrf}
+                  signedInEmail={user.email}
                   permissions={user.permissions}
                   refreshKey={requestVersion}
                   onChanged={() => {

@@ -145,3 +145,27 @@ docker compose run --rm --no-deps seed node scripts/mfa-exemption.mjs remove adm
 ```
 
 Jab tak exemption chalu hai, app ke header mein **MFA OFF UNTIL <date>** dikhta hai. Is dauraan us account ka password mazboot rakho aur kisi se share mat karo.
+
+## User hatana aur login (email) free karna
+
+App mein ab do alag cheezein hain:
+
+- **Inactive karna** — user ka record aur uska login dono rehte hain, bas sign-in band. Jo aadmi wapas aa sakta hai, uske liye yahi sahi hai.
+- **Remove karna** — Users screen par har row mein **Remove** button (permission: `users.delete`). Ye user ka record hata deta hai **aur uske peeche ka login bhi**, isliye wahi email dobara use ho sakti hai. Confirm dialog aata hai, aur audit log mein `user.deleted` record hota hai.
+
+Login tabhi hatta hai jab koi doosri company us login ko use nahi kar rahi (ek login kai companies mein ho sakta hai). Agar account service us waqt reachable nahi hai, to **kuch bhi nahi hataya jaata** — poora remove cancel ho jaata hai aur "Retry shortly" message aata hai. Thodi der baad dobara Remove dabayein.
+
+Apna khud ka account remove nahi kar sakte, aur company ka aakhri active Main Admin bhi nahi.
+
+### Purane bache hue logins (jinke user nahi hain)
+
+Jo users is feature se pehle delete hue the, ya jinka invitation beech mein fail hua tha, unke logins abhi bhi realm mein pade ho sakte hain — aur tab tak wo email dobara use nahi hogi. Inko ek command se dekha aur hataya ja sakta hai:
+
+```bash
+# pehle sirf list (kuch hataata nahi)
+docker compose run --rm --no-deps seed node scripts/identity-sweep.mjs
+# confirm karne ke baad hataana
+docker compose run --rm --no-deps seed node scripts/identity-sweep.mjs --remove
+```
+
+Ye `bootstrap-admin` aur `service-account-rare-os-identity` ko kabhi haath nahi lagata. Nilkamal loader (`scripts/load-nilkamal.mjs`) ab ye kaam khud karta hai: jo companies wo delete karta hai, unke users ke logins bhi hata deta hai aur report mein likh deta hai.

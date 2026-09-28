@@ -4,7 +4,7 @@ import type { Request } from 'express';
 import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { access, accessDb, scoped, pool, fail, env } from './core.js';
-import { syncIdentity, sendActionEmail } from './identity.js';
+import { syncIdentity, sendActionEmail, identity } from './identity.js';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function id(value: unknown) {
   if (typeof value !== 'string' || !uuid.test(value))
@@ -593,6 +593,67 @@ export class AccessController {
       ready: result.ready,
     };
   }
+  // Removing a user for good. Deactivating leaves the record and the login in place, which is
+  // right for someone who may come back; this is for a user who should not exist at all — a wrong
+  // address, a test account — and it frees the email, which is the whole point. The login is
+  // removed first, on purpose: if the account service cannot be reached the whole delete is
+  // abandoned and nothing changes, which is better than a record that is gone while its login
+  // lingers and keeps the email taken.
+  @Delete('users/:id') async removeUser(@Req() req: Request, @Param('id') uid: string) {
+    id(uid);
+    const v = version(body(req, ['version']).version);
+    const removed = await mutate(req, 'users.delete', async (db, actor) => {
+      const target = await account(db, uid);
+      if (target.version !== v)
+        fail(409, 'STALE_RECORD', 'This user changed. Refresh the list and try again.');
+      if (target.id === actor.id)
+        fail(409, 'SELF_ACCESS_CHANGE', 'Ask another Main Admin to remove your own account.');
+      canGrant(actor, (await role(db, target.role_id)).permissions);
+      // The same guard as deactivating: a company is never left without an active Main Admin.
+      await protectAdmin(db, target, target.role_id, false);
+      // The login to remove is the one this user points at — or, when setting it up never
+      // finished, the one left behind in the account service under the same address, which is
+      // exactly what used to keep an email taken for good.
+      const pending = target.identity_id.startsWith('pending:');
+      let subject = pending ? '' : target.identity_id;
+      if (pending) {
+        const found = (await (
+          await identity('/users?exact=true&username=' + encodeURIComponent(target.email))
+        ).json()) as any[];
+        subject = found[0]?.id ?? '';
+      }
+      // One login can serve several companies, and only this count sees across all of them. This
+      // user's own row still counts here, so a login used elsewhere shows more than its own.
+      const elsewhere = subject
+        ? Number((await db.query('SELECT identity_company_count($1) AS n', [subject])).rows[0].n) >
+          (pending ? 0 : 1)
+        : false;
+      const loginRemoved = !!subject && !elsewhere;
+      // 404 means it was already gone, which is the state we wanted anyway.
+      if (loginRemoved) await identity('/users/' + encodeURIComponent(subject), 'DELETE');
+      await db.query('DELETE FROM user_sites WHERE user_id=$1', [uid]);
+      await db.query('DELETE FROM app_users WHERE id=$1', [uid]);
+      await audit(
+        db,
+        actor,
+        'user.deleted',
+        'user',
+        uid,
+        { name: target.name, email: target.email, roleId: target.role_id, active: target.active },
+        { loginRemoved },
+      );
+      return { email: target.email, hadLogin: !!subject, loginRemoved };
+    });
+    return {
+      message: removed.loginRemoved
+        ? `${removed.email} removed, login and all. This email can be used again.`
+        : removed.hadLogin
+          ? `${removed.email} removed from this company. The login stays, because another company still uses it.`
+          : `${removed.email} removed. There was no login to remove, so this email is free to use.`,
+      loginRemoved: removed.loginRemoved,
+    };
+  }
+
   @Post('users/:id/retry') async retry(@Req() req: Request, @Param('id') uid: string) {
     id(uid);
     const actor = await access(req, 'users.retry_setup');

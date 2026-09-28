@@ -314,3 +314,116 @@ test('role/user management, invitations, activation and safe access changes', as
     }
   }
 });
+
+// Deactivating keeps a user and their login; removing gets rid of both. The reason it matters is
+// the last assertion: until the login goes too, the address stays taken and that person can never
+// be invited again.
+test('removing a user takes the login with it and frees the email', async ({ page }) => {
+  test.setTimeout(120000);
+  const emailAddress = `qa.removed.${Date.now()}@example.test`;
+  await login(page);
+  const me = await (await page.request.get('/api/me')).json();
+  const call = (path: string, method = 'GET', data?: unknown) =>
+    page.request.fetch('/api/' + path, {
+      method,
+      headers: { Origin: env.APP_URL, 'X-CSRF-Token': me.csrfToken },
+      data,
+    });
+  const token = await identityToken();
+  const identityStatus = async (subject: string) =>
+    (
+      await fetch(env.AUTH_URL + '/admin/realms/rare-os/users/' + subject, {
+        headers: { Authorization: 'Bearer ' + token },
+      })
+    ).status;
+  const findUser = async () =>
+    (await (await call('users?q=' + encodeURIComponent(emailAddress) + '&at=' + Date.now())).json())
+      .items[0];
+  let userId = '',
+    identityId = '';
+  try {
+    await page.getByRole('button', { name: 'Users', exact: true }).click();
+    await page.getByRole('button', { name: 'Create user', exact: true }).click();
+    const form = page.getByRole('dialog', { name: 'Create user' });
+    await form.getByLabel('Full name').fill('QA Removable User');
+    await form.getByLabel('Email address').fill(emailAddress);
+    await expect(form.getByLabel('Assign role')).toBeEnabled();
+    await form.getByLabel('Assign role').selectOption(mainRole);
+    await form.getByRole('button', { name: 'Create user', exact: true }).click();
+    await expect(form).not.toBeVisible({ timeout: 30000 });
+    const created = await findUser();
+    userId = created.id;
+    identityId = sql(`SELECT identity_id FROM app_users WHERE id='${userId}'`);
+    expect(identityId.startsWith('pending:')).toBe(false);
+    expect(await identityStatus(identityId)).toBe(200);
+
+    // Two refusals before anything is removed: your own account, and a list that has moved on.
+    const admin = await (await call('users/' + adminId)).json();
+    const self = await call('users/' + adminId, 'DELETE', { version: admin.version });
+    expect(self.status()).toBe(409);
+    expect((await self.json()).error.code).toBe('SELF_ACCESS_CHANGE');
+    const stale = await call('users/' + userId, 'DELETE', { version: created.version + 5 });
+    expect(stale.status()).toBe(409);
+    expect((await stale.json()).error.code).toBe('STALE_RECORD');
+    expect(sql(`SELECT count(*) FROM app_users WHERE id='${userId}'`)).toBe('1');
+
+    // Your own row never offers it, so nobody is one click away from locking themselves out.
+    await expect(
+      page
+        .getByRole('row')
+        .filter({ hasText: env.SEED_ADMIN_EMAIL })
+        .getByRole('button', { name: /^Remove user/ }),
+    ).toHaveCount(0);
+
+    // Removed the way an administrator does it, from the screen and behind a confirmation.
+    const row = page.getByRole('row').filter({ hasText: emailAddress });
+    await row.getByRole('button', { name: 'Remove user QA Removable User', exact: true }).click();
+    const confirm = page.getByRole('dialog', { name: 'Remove user' });
+    await expect(confirm).toContainText(emailAddress);
+    await confirm.getByRole('button', { name: 'Confirm remove', exact: true }).click();
+    await expect(page.locator('.access-management > .notice[role="status"]')).toContainText(
+      'This email can be used again.',
+    );
+    await expect(page.getByRole('row').filter({ hasText: emailAddress })).toHaveCount(0);
+    expect(sql(`SELECT count(*) FROM app_users WHERE id='${userId}'`)).toBe('0');
+    expect(sql(`SELECT count(*) FROM user_sites WHERE user_id='${userId}'`)).toBe('0');
+    expect(await identityStatus(identityId)).toBe(404);
+    const audit = await (await call('audit?limit=50')).json();
+    expect(
+      audit.items.some(
+        (x: any) =>
+          x.entity_id === userId &&
+          x.action === 'user.deleted' &&
+          x.details.before.email === emailAddress &&
+          x.details.after.loginRemoved === true,
+      ),
+    ).toBe(true);
+    userId = '';
+    identityId = '';
+
+    // The point of all of it: the same address works again.
+    const again = await call('users', 'POST', {
+      name: 'QA Removable User',
+      email: emailAddress,
+      roleId: mainRole,
+      requestId: randomUUID(),
+    });
+    expect(again.ok()).toBe(true);
+    const remade = await findUser();
+    userId = remade.id;
+    identityId = sql(`SELECT identity_id FROM app_users WHERE id='${userId}'`);
+    expect(identityId).not.toBe('');
+  } finally {
+    // Best-effort tidy-up: whatever the test proved or failed to prove, nothing of it is left.
+    if (userId) {
+      if (identityId && !identityId.startsWith('pending:'))
+        await fetch(env.AUTH_URL + '/admin/realms/rare-os/users/' + identityId, {
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer ' + token },
+        }).catch(() => undefined);
+      sql(
+        `DELETE FROM user_sites WHERE user_id='${userId}'; DELETE FROM app_users WHERE id='${userId}';`,
+      );
+    }
+  }
+});

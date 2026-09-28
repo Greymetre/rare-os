@@ -4,15 +4,15 @@ Role create/edit screen mein module/action matrix hai: View, Create, Edit, Delet
 
 ## Current modules
 
-| Module    | Available actions                                                                                                        |
-| --------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Dashboard | View (workspace entry ke liye required)                                                                                  |
-| Roles     | View, Create, Edit, Delete                                                                                               |
-| Users     | View, Create, Edit; status change, role assignment, invitation, password reset, setup retry, plant assignment separately |
-| Plants    | View, Create, Edit; status change aur all-company-plant visibility separately                                            |
-| Audit log | View                                                                                                                     |
+| Module    | Available actions                                                                                                                |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Dashboard | View (workspace entry ke liye required)                                                                                          |
+| Roles     | View, Create, Edit, Delete                                                                                                       |
+| Users     | View, Create, Edit, Remove; status change, role assignment, invitation, password reset, setup retry, plant assignment separately |
+| Plants    | View, Create, Edit; status change aur all-company-plant visibility separately                                                    |
+| Audit log | View                                                                                                                             |
 
-Users aur Plants ke permanent-delete endpoints nahi hain; unke Delete cells dash hain. Inactive karna status permission se hota hai. Company/platform management separate Platform Admin grant se controlled hai; company role usko grant nahi kar sakta. Security screen apne account ke liye hai, company-wide account administration nahi.
+Plants ka permanent-delete endpoint nahi hai; uska Delete cell dash hai. Users ke liye do alag cheezein hain: status permission se inactive karna (record aur login rehte hain) aur Remove (`users.delete`) se record aur login dono hataana, jisse email dobara use ho sake. Company/platform management separate Platform Admin grant se controlled hai; company role usko grant nahi kar sakta. Security screen apne account ke liye hai, company-wide account administration nahi.
 
 ## Rules
 
@@ -25,6 +25,7 @@ Users aur Plants ke permanent-delete endpoints nahi hain; unke Delete cells dash
 - Users Create/Edit ko Roles View chahiye for role selection/display; Roles View role editing allow nahi karta.
 - User plant assignment ko Users View, Roles View, Plants View aur Access all company plants chahiye. Existing grant-limit check prevents managing a user whose role exceeds actor permissions.
 - Plants Edit assigned plants par hi apply hota hai. All-plant visibility separate permission hai. Limited creator ko apne newly-created plant ka explicit assignment milta hai.
+- User Remove ko sirf Users View chahiye, par grant-limit wahi hai: apne se zyada permissions wale user ko remove nahi kar sakte. Apna account aur company ka aakhri active Main Admin protected hain. Login tabhi hatta hai jab koi doosri company use nahi kar rahi; account service down ho to poora remove cancel ho jaata hai.
 - Password reset shared login ke liye global impact rakhta hai; existing shared-login reset safeguards remain.
 - Main Admin has all current catalog permissions; runtime direct API requests par same action checks karta hai.
 

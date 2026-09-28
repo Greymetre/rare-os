@@ -12,6 +12,7 @@
 // On a server add --on-server. The bundle is client data.
 import fs from 'node:fs';
 import pg from 'pg';
+import { keycloakAdmin, removeIdentities } from './identity-admin.mjs';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000001';
 const SEED_ADMIN_USER = '30000000-0000-4000-8000-000000000001';
@@ -107,13 +108,15 @@ try {
 
   // ---------- Delete every other company and all planning data ----------
   const others = (await q('SELECT id,name FROM tenants WHERE id<>$1', [WORKSPACE])).rows;
+  // Users of the companies about to go, whose login no company keeps. Their logins are removed
+  // once the delete is committed; otherwise the email would stay taken for good.
   const removedUsers = (
     await q(
-      `SELECT DISTINCT u.email FROM app_users u WHERE u.tenant_id=ANY($1::uuid[])
+      `SELECT DISTINCT u.email, u.identity_id FROM app_users u WHERE u.tenant_id=ANY($1::uuid[])
        AND NOT EXISTS (SELECT 1 FROM app_users w WHERE w.tenant_id=$2 AND w.identity_id=u.identity_id)`,
       [others.map((t) => t.id), WORKSPACE],
     )
-  ).rows.map((r) => r.email);
+  ).rows.map((r) => ({ email: r.email, id: r.identity_id }));
   const tables = (
     await q(
       `SELECT c.table_name FROM information_schema.columns c
@@ -419,12 +422,23 @@ try {
     ],
   );
   await q('COMMIT');
+  // Only now, with the records gone for certain, are the logins behind them removed.
+  let freedLogins = [];
+  let loginError = '';
+  if (removedUsers.length)
+    try {
+      freedLogins = await removeIdentities(await keycloakAdmin(), removedUsers);
+    } catch (e) {
+      loginError = e.message;
+    }
   console.log(
     [
       `Deleted ${others.length} other compan${others.length === 1 ? 'y' : 'ies'} (${others.map((t) => t.name).join(', ') || 'none'}) and ${deleted} planning rows.`,
-      removedUsers.length
-        ? `Logins left without a company: ${removedUsers.join(', ')}.`
-        : 'No logins were left without a company.',
+      !removedUsers.length
+        ? 'No logins were left without a company.'
+        : loginError
+          ? `Could not remove the logins of ${removedUsers.map((u) => u.email).join(', ')}: ${loginError}. Their emails stay taken; run scripts/identity-sweep.mjs --remove.`
+          : `Removed ${freedLogins.length} login${freedLogins.length === 1 ? '' : 's'} that no company kept (${freedLogins.join(', ') || 'none'}). These emails can be used again.`,
       `Company "${b.meta.company}" loaded with plant ${b.meta.plant.code} (${b.meta.plant.name}): ${b.items.length} items, ${Object.keys(b.boms).length} BOMs (${bomLines} lines), ${Object.keys(b.routings).length} routings, ${b.resources.length} work centres, ${b.stock.length} opening stock rows, ${pos.size} open POs (${b.purchase_orders.length} lines), ${po.length} production orders, ${b.demand.length} demand days, ${b.buffers.length} buffers.`,
       `Dates moved forward ${shift} days: the demo model day ${b.meta.model_date} is ${modelDay}; demand history ends ${at(b.meta.history_end)}. Planning is fixed on ${modelDay}.`,
       `Sign in as ${admin.email}. Buffers recalculate within a few seconds.`,
