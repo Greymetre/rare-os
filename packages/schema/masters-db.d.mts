@@ -19,7 +19,7 @@ export function listMasters(
   db: Db,
   kind: string,
   options: { q?: string; cursor?: string[] | null; limit?: number },
-): Promise<{ items: any[]; nextCursor: string[] | null }>;
+): Promise<{ items: any[]; nextCursor: string[] | null; total: number }>;
 export function findMaster(db: Db, kind: string, id: string): Promise<any | null>;
 export function updateMaster(
   db: Db,

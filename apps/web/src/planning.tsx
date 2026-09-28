@@ -1,3 +1,4 @@
+import { Pager, usePaging } from './pager';
 import { LeadTimeReality } from './schedule';
 import { useEffect, useState } from 'react';
 import { useApi } from './api-client';
@@ -23,27 +24,6 @@ const pagePath = (base: string, params: Record<string, string | null | undefined
     .join('&');
   return q ? `${base}?${q}` : base;
 };
-
-function Pager({
-  cursors,
-  next,
-  setCursors,
-}: {
-  cursors: string[];
-  next: string | null;
-  setCursors: (c: string[]) => void;
-}) {
-  return (
-    <div className="table-footer">
-      <button className="button" disabled={!cursors.length} onClick={() => setCursors([])}>
-        First page
-      </button>
-      <button className="button" disabled={!next} onClick={() => setCursors([...cursors, next!])}>
-        Next page
-      </button>
-    </div>
-  );
-}
 
 // ---------- Buffer profiles ----------
 
@@ -316,11 +296,15 @@ export function BufferSettings({
     [notice, setNotice] = useState(''),
     [query, setQuery] = useState(''),
     [q, setQ] = useState(''),
-    [cursors, setCursors] = useState<string[]>([]);
+    page = usePaging();
   const profiles = useList(csrf, 'buffer-profiles', [refreshKey]);
   const list = useList(
     csrf,
-    pagePath(`plants/${plantId}/buffer-settings`, { q, cursor: cursors[cursors.length - 1] }),
+    pagePath(`plants/${plantId}/buffer-settings`, {
+      q,
+      cursor: page.cursor,
+      limit: String(page.size),
+    }),
     [revision, refreshKey],
   );
   const activeProfiles = profiles.items.filter((p) => p.active);
@@ -484,7 +468,7 @@ export function BufferSettings({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              setCursors([]);
+              page.setCursors([]);
               setQ(query.trim().toLowerCase());
             }}
           >
@@ -567,7 +551,14 @@ export function BufferSettings({
             <p>Add the materials and products this plant keeps in stock.</p>
           </div>
         )}
-        <Pager cursors={cursors} next={list.next} setCursors={setCursors} />
+        <Pager
+          page={page}
+          next={list.next}
+          total={list.total}
+          shown={list.items.length}
+          busy={list.busy}
+          noun="buffers"
+        />
       </section>
     </>
   );
@@ -610,7 +601,7 @@ export function BufferBoard({
     [zone, setZone] = useState(''),
     [query, setQuery] = useState(''),
     [q, setQ] = useState(''),
-    [cursors, setCursors] = useState<string[]>([]),
+    page = usePaging(),
     [open, setOpen] = useState<string | null>(null),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
@@ -632,7 +623,12 @@ export function BufferBoard({
   };
   const board = useList(
     csrf,
-    pagePath(`plants/${plantId}/buffers`, { zone, q, cursor: cursors[cursors.length - 1] }),
+    pagePath(`plants/${plantId}/buffers`, {
+      zone,
+      q,
+      cursor: page.cursor,
+      limit: String(page.size),
+    }),
     [refreshKey, status?.current?.id],
   );
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -714,7 +710,7 @@ export function BufferBoard({
               className={'zone-tile ' + k + (zone === k ? ' selected' : '')}
               aria-pressed={zone === k}
               onClick={() => {
-                setCursors([]);
+                page.setCursors([]);
                 setZone(zone === k ? '' : k);
               }}
             >
@@ -729,7 +725,7 @@ export function BufferBoard({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              setCursors([]);
+              page.setCursors([]);
               setQ(query.trim().toLowerCase());
             }}
           >
@@ -746,7 +742,7 @@ export function BufferBoard({
             <select
               value={zone}
               onChange={(e) => {
-                setCursors([]);
+                page.setCursors([]);
                 setZone(e.target.value);
               }}
             >
@@ -1001,7 +997,14 @@ export function BufferBoard({
             </p>
           </div>
         )}
-        <Pager cursors={cursors} next={board.next} setCursors={setCursors} />
+        <Pager
+          page={page}
+          next={board.next}
+          total={board.total}
+          shown={board.items.length}
+          busy={board.busy}
+          noun="items"
+        />
       </section>
     </>
   );
@@ -1032,7 +1035,7 @@ export function PurchaseProposals({
   const canChange = permissions.includes('purchase.create');
   const [status, setStatus] = useState('PROPOSED'),
     [revision, setRevision] = useState(0),
-    [cursors, setCursors] = useState<string[]>([]),
+    page = usePaging(),
     [selected, setSelected] = useState<Record<string, number>>({}),
     [editing, setEditing] = useState<any>(null),
     [rejecting, setRejecting] = useState<any>(null),
@@ -1044,7 +1047,8 @@ export function PurchaseProposals({
     csrf,
     pagePath(`plants/${plantId}/purchase-proposals`, {
       status,
-      cursor: cursors[cursors.length - 1],
+      cursor: page.cursor,
+      limit: String(page.size),
     }),
     [revision, refreshKey],
   );
@@ -1120,7 +1124,7 @@ export function PurchaseProposals({
               aria-selected={status === k}
               className={status === k ? 'selected' : ''}
               onClick={() => {
-                setCursors([]);
+                page.setCursors([]);
                 setSelected({});
                 setStatus(k);
               }}
@@ -1396,7 +1400,14 @@ export function PurchaseProposals({
             </p>
           </div>
         )}
-        <Pager cursors={cursors} next={list.next} setCursors={setCursors} />
+        <Pager
+          page={page}
+          next={list.next}
+          total={list.total}
+          shown={list.items.length}
+          busy={list.busy}
+          noun="proposals"
+        />
       </section>
     </>
   );

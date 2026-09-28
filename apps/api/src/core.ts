@@ -144,11 +144,17 @@ async function accessDb(db: PoolClient, req: Request, permission: string) {
     );
   return { ...r.rows[0], actor_subject: req.session.subject, platform_access: false, permissions };
 }
-function pageArgs(req: Request) {
-  const limit = req.query.limit === undefined ? 25 : Number(req.query.limit);
-  const cursor = req.query.cursor === undefined ? undefined : String(req.query.cursor);
+// How many rows a page holds. The screens offer a few sizes to choose from; the range is wider
+// than those because other callers ask for a single row or a whole short list in one request.
+function limitOf(req: Request, fallback = 25) {
+  const limit = req.query.limit === undefined ? fallback : Number(req.query.limit);
   if (!Number.isInteger(limit) || limit < 1 || limit > 100)
     fail(400, 'INVALID_PAGE_SIZE', 'Page size must be a whole number between 1 and 100.');
+  return limit;
+}
+function pageArgs(req: Request) {
+  const limit = limitOf(req);
+  const cursor = req.query.cursor === undefined ? undefined : String(req.query.cursor);
   if (cursor && !/^[1-9][0-9]{0,17}$/.test(cursor))
     fail(
       400,
@@ -176,4 +182,5 @@ export {
   access,
   accessDb,
   pageArgs,
+  limitOf,
 };

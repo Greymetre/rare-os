@@ -217,8 +217,13 @@ export class CompanyController {
   @Get('platform/companies') async list(@Req() req: Request) {
     const { limit, after, q } = pagination(req);
     const rows = await operation(req, 'list', { limit: limit + 1, after, q });
+    const total = (
+      await pool.query('SELECT platform_company_count($1,$2) AS total', [req.session.subject, q])
+    ).rows[0].total;
     return {
       items: rows.slice(0, limit),
+      total,
+      pageSize: limit,
       nextCursor: rows.length > limit ? rows[limit - 1].id : null,
     };
   }

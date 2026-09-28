@@ -14,7 +14,7 @@ import {
 import { validateFields } from '../../../packages/schema/masters.mjs';
 import { Controller, Get, Post, Patch, Req, Param } from '@nestjs/common';
 import type { Request } from 'express';
-import { access, scoped, fail } from './core.js';
+import { access, scoped, fail, limitOf } from './core.js';
 import { id, text, body, version, mutate, audit } from './access.controller.js';
 import { requirePlant } from './plants.controller.js';
 import { invalid, loaded, today } from './plant-model.controller.js';
@@ -63,9 +63,13 @@ export class PurchaseController {
         : /^[1-9][0-9]{0,17}$/.test(String(req.query.cursor))
           ? String(req.query.cursor)
           : fail(400, 'INVALID_CURSOR', 'This page link is invalid. Return to the first page.');
+    const limit = limitOf(req);
     return scoped(actor.tenant_id, async (db) => {
       const plant = await requirePlant(db, actor, id(plantId));
-      return listProposals(db, plant.id, { status, q, cursor });
+      return {
+        ...(await listProposals(db, plant.id, { status, q, cursor, limit })),
+        pageSize: limit,
+      };
     });
   }
 

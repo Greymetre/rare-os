@@ -169,3 +169,15 @@ docker compose run --rm --no-deps seed node scripts/identity-sweep.mjs --remove
 ```
 
 Ye `bootstrap-admin` aur `service-account-rare-os-identity` ko kabhi haath nahi lagata. Nilkamal loader (`scripts/load-nilkamal.mjs`) ab ye kaam khud karta hai: jo companies wo delete karta hai, unke users ke logins bhi hata deta hai aur report mein likh deta hai.
+
+## Tables mein paging
+
+Har data table ke neeche ab ek hi footer hai, aur wo teen cheezein batata hai:
+
+- **Show 10 / 25 / 50 / 100 entries** — ek page par kitni rows. Size badalne par list pehle page se shuru hoti hai.
+- **Showing 1–25 of 29,490 items · Page 1 of 1,180** — kahan ho, list kitni lambi hai, aur kitne page hain.
+- **First page · Previous page · Next page** — pehli baar Previous bhi hai, pehle sirf First/Next the.
+
+Pages number se nahi, cursor se chalte hain (list order mein padhi jaati hai), isliye seedha "page 500 par jao" nahi hai — lekin total aur page number ab dikhte hain. Total wahi rows ginta hai jo list mein hain, search/filter lagne ke baad.
+
+API mein `?limit=` 1 se 100 tak allowed hai (screens 10/25/50/100 hi dete hain); isse zyada maangne par 400 aata hai, taaki ek request se poori table na kheenchi ja sake.

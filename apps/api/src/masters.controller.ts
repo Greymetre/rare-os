@@ -9,7 +9,7 @@ import {
 } from '../../../packages/schema/masters-db.mjs';
 import { Controller, Get, Post, Patch, Req, Param, HttpException } from '@nestjs/common';
 import type { Request } from 'express';
-import { access, scoped, fail } from './core.js';
+import { access, scoped, fail, limitOf } from './core.js';
 import { id, body, version, mutate, audit } from './access.controller.js';
 
 function kindOf(kind: string) {
@@ -54,10 +54,13 @@ export class MastersController {
     const q = req.query.q === undefined ? '' : String(req.query.q).trim().toLowerCase();
     if (q.length > 40) fail(400, 'VALIDATION_ERROR', 'Search must be at most 40 characters.');
     const cursor = cursorOf(req);
+    const limit = limitOf(req);
     return scoped(actor.tenant_id, async (db) => {
-      const page = await listMasters(db, kind, { q, cursor, limit: 25 });
+      const page = await listMasters(db, kind, { q, cursor, limit });
       return {
         items: page.items,
+        total: page.total,
+        pageSize: limit,
         nextCursor: page.nextCursor
           ? Buffer.from(JSON.stringify(page.nextCursor)).toString('base64url')
           : null,

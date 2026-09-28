@@ -10,7 +10,7 @@ type Row = {
   existing?: any;
   action?: string;
 };
-type Page<C> = Promise<{ items: any[]; nextCursor: C | null }>;
+type Page<C> = Promise<{ items: any[]; nextCursor: C | null; total: number }>;
 type Kind = 'sales_orders' | 'purchase_orders';
 export const ORDER_TABLES: Record<Kind, { table: string; lines: string; no: string; noun: string }>;
 export function listStockLocations(db: Db, siteId: string): Promise<any[]>;

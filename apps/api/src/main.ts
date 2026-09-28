@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { countRows } from '../../../packages/schema/paging.mjs';
 import {
   Controller,
   Get,
@@ -375,6 +376,8 @@ class AppController {
       );
       return {
         items: r.rows.slice(0, limit),
+        total: await countRows(db, 'audit_log a', 'true', []),
+        pageSize: limit,
         nextCursor: r.rows.length > limit ? r.rows[limit - 1].id : null,
       };
     });

@@ -1,3 +1,4 @@
+import { Pager, usePaging } from './pager';
 import React, { Fragment, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
@@ -86,6 +87,7 @@ function App() {
     [overview, setOverview] = useState<Overview | null>(null),
     [rows, setRows] = useState<Row[]>([]),
     [cursor, setCursor] = useState<string | null>(null),
+    [auditTotal, setAuditTotal] = useState<number | undefined>(undefined),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
@@ -99,6 +101,7 @@ function App() {
   const openGroup = collapsed === groupOfTab ? '' : groupOfTab;
   const setOpenGroup = (group: string) => setCollapsed(group ? '' : groupOfTab);
   const [requestVersion, setRequestVersion] = useState(0);
+  const auditPage = usePaging();
   const authError = new URLSearchParams(location.search).get('authError');
   async function loadUser() {
     setBoot(true);
@@ -138,16 +141,22 @@ function App() {
     setRows([]);
     setCursor(null);
     setFilter('');
-    const path = page === 'Audit log' ? 'audit' : null;
+    const path =
+      page === 'Audit log'
+        ? 'audit?limit=' + auditPage.size + (auditPage.cursor ? '&cursor=' + auditPage.cursor : '')
+        : null;
     Promise.all([
       api<Overview>('dashboard'),
-      path ? api<{ items: Row[]; nextCursor?: string }>(path) : Promise.resolve(null),
+      path
+        ? api<{ items: Row[]; nextCursor?: string; total?: number }>(path)
+        : Promise.resolve(null),
     ])
       .then(([d, list]) => {
         if (cancelled) return;
         setOverview(d);
         setRows(list?.items || []);
         setCursor(list?.nextCursor || null);
+        setAuditTotal(list?.total);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -164,23 +173,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [user?.email, page, requestVersion]);
-  async function next() {
-    if (!cursor) return;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await api<{ items: Row[]; nextCursor: string | null }>(
-        (page === 'Audit log' ? 'audit?cursor=' : 'users?after=') + encodeURIComponent(cursor),
-      );
-      setRows(result.items);
-      setCursor(result.nextCursor);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  }, [user?.email, page, requestVersion, auditPage.cursor, auditPage.size]);
   async function logout() {
     setBusy(true);
     try {
@@ -604,14 +597,14 @@ function App() {
                     </table>
                   </div>
                   {!rows.length && <div className="empty">No activity yet.</div>}
-                  <div className="table-footer">
-                    <span>{rows.length} records</span>
-                    {cursor && (
-                      <button className="button" onClick={() => void next()}>
-                        Next page →
-                      </button>
-                    )}
-                  </div>
+                  <Pager
+                    page={auditPage}
+                    next={cursor}
+                    total={auditTotal}
+                    shown={rows.length}
+                    busy={busy}
+                    noun="events"
+                  />
                 </section>
               )}
               {page === 'Availability' && (

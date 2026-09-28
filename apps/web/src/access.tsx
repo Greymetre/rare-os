@@ -1,3 +1,4 @@
+import { Pager, usePaging } from './pager';
 import { PermissionPicker } from './permission-picker';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 type Permission = { code: string; module: string; description: string };
@@ -89,8 +90,10 @@ export function AccessManagement({
   const canEdit = permissions.includes(kind + '.update');
   const canDelete = permissions.includes(kind + '.delete');
   const [plantUser, setPlantUser] = useState<Account | null>(null);
+  const page = usePaging();
   const [rows, setRows] = useState<(Role | Account)[]>([]),
     [cursor, setCursor] = useState<string | null>(null),
+    [total, setTotal] = useState<number | undefined>(undefined),
     [query, setQuery] = useState(''),
     [search, setSearch] = useState(''),
     [busy, setBusy] = useState(false),
@@ -106,9 +109,15 @@ export function AccessManagement({
     let live = true;
     setBusy(true);
     setError('');
-    const path = kind + '?q=' + encodeURIComponent(search);
+    const path =
+      kind +
+      '?q=' +
+      encodeURIComponent(search) +
+      '&limit=' +
+      page.size +
+      (page.cursor ? '&after=' + page.cursor : '');
     Promise.all([
-      request<{ items: (Role | Account)[]; nextCursor: string | null }>(path, csrf),
+      request<{ items: (Role | Account)[]; nextCursor: string | null; total: number }>(path, csrf),
       kind === 'roles'
         ? request<{ items: Permission[] }>('permissions', csrf)
         : Promise.resolve(null),
@@ -118,6 +127,7 @@ export function AccessManagement({
         if (!live) return;
         setRows(list.items);
         setCursor(list.nextCursor);
+        setTotal(list.total);
         setCatalog(perms?.items || []);
         setSettings(config);
       })
@@ -130,23 +140,7 @@ export function AccessManagement({
     return () => {
       live = false;
     };
-  }, [kind, csrf, search, revision, refreshKey]);
-  async function next() {
-    if (!cursor) return;
-    setBusy(true);
-    try {
-      const d = await request<{ items: (Role | Account)[]; nextCursor: string | null }>(
-        kind + '?after=' + cursor + '&q=' + encodeURIComponent(search),
-        csrf,
-      );
-      setRows(d.items);
-      setCursor(d.nextCursor);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  }, [kind, csrf, search, revision, refreshKey, page.cursor, page.size]);
   async function open(row: Role | Account) {
     setError('');
     try {
@@ -233,6 +227,7 @@ export function AccessManagement({
           className="search-bar"
           onSubmit={(e) => {
             e.preventDefault();
+            page.setCursors([]);
             setSearch(query.trim());
           }}
         >
@@ -251,6 +246,7 @@ export function AccessManagement({
               type="button"
               className="text-button"
               onClick={() => {
+                page.setCursors([]);
                 setSearch('');
                 setQuery('');
               }}
@@ -430,19 +426,14 @@ export function AccessManagement({
                     : 'No users found in this company.'}
               </div>
             )}
-            <div className="table-footer">
-              <span>{rows.length} records on this page</span>
-              <div className="row-actions">
-                <button className="text-button" onClick={() => setRevision((x) => x + 1)}>
-                  First page
-                </button>
-                {cursor && (
-                  <button className="button" onClick={() => void next()}>
-                    Next page →
-                  </button>
-                )}
-              </div>
-            </div>
+            <Pager
+              page={page}
+              next={cursor}
+              total={total}
+              shown={rows.length}
+              busy={busy}
+              noun={kind === 'roles' ? 'roles' : 'users'}
+            />
           </>
         )}
       </section>

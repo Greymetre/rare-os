@@ -1,3 +1,4 @@
+import { Pager, usePaging } from './pager';
 import { useEffect, useState } from 'react';
 export function Plants({
   csrf,
@@ -10,6 +11,7 @@ export function Plants({
 }) {
   const canCreate = permissions.includes('sites.create');
   const canEdit = permissions.includes('sites.update');
+  const page = usePaging();
   const [rows, setRows] = useState<any[]>([]),
     [form, setForm] = useState<any>(null),
     [busy, setBusy] = useState(false),
@@ -17,8 +19,8 @@ export function Plants({
     [notice, setNotice] = useState(''),
     [search, setSearch] = useState(''),
     [query, setQuery] = useState(''),
-    [after, setAfter] = useState<string | null>(null),
     [next, setNext] = useState<string | null>(null),
+    [total, setTotal] = useState<number | undefined>(undefined),
     [revision, setRevision] = useState(0);
   async function call(path: string, method = 'GET', data?: unknown) {
     const r = await fetch('/api/' + path, {
@@ -34,11 +36,18 @@ export function Plants({
     let cancelled = false;
     setBusy(true);
     setError('');
-    call('plants?q=' + encodeURIComponent(search) + (after ? '&after=' + after : ''))
+    call(
+      'plants?limit=' +
+        page.size +
+        '&q=' +
+        encodeURIComponent(search) +
+        (page.cursor ? '&after=' + page.cursor : ''),
+    )
       .then((d) => {
         if (!cancelled) {
           setRows(d.items);
           setNext(d.nextCursor);
+          setTotal(d.total);
         }
       })
       .catch((e) => {
@@ -50,14 +59,14 @@ export function Plants({
     return () => {
       cancelled = true;
     };
-  }, [search, after, revision, refreshKey]);
+  }, [search, page.cursor, page.size, revision, refreshKey]);
   return (
     <>
       <div className="table-footer">
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            setAfter(null);
+            page.setCursors([]);
             setSearch(query);
           }}
         >
@@ -208,14 +217,14 @@ export function Plants({
               : 'No active plants assigned. Ask your company administrator for plant access.'}
           </div>
         )}
-        <div className="table-footer">
-          <button className="button" disabled={!after || busy} onClick={() => setAfter(null)}>
-            First page
-          </button>
-          <button className="button" disabled={!next || busy} onClick={() => setAfter(next)}>
-            Next page
-          </button>
-        </div>
+        <Pager
+          page={page}
+          next={next}
+          total={total}
+          shown={rows.length}
+          busy={busy}
+          noun="plants"
+        />
       </section>
       <p className="notice">
         {permissions.includes('sites.read_all')

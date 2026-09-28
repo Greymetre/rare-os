@@ -1,3 +1,4 @@
+import { Pager, usePaging } from './pager';
 import { useEffect, useState } from 'react';
 import { useApi } from './api-client';
 import { LineTable, Messages, useList, type Column } from './plant-model';
@@ -17,27 +18,6 @@ const MOVEMENT_LABELS: Record<string, string> = {
   ADJUSTMENT: 'Adjustment',
   REVERSAL: 'Reversal',
 };
-
-function Pager({
-  cursors,
-  next,
-  setCursors,
-}: {
-  cursors: string[];
-  next: string | null;
-  setCursors: (c: string[]) => void;
-}) {
-  return (
-    <div className="table-footer">
-      <button className="button" disabled={!cursors.length} onClick={() => setCursors([])}>
-        First page
-      </button>
-      <button className="button" disabled={!next} onClick={() => setCursors([...cursors, next!])}>
-        Next page
-      </button>
-    </div>
-  );
-}
 
 function SearchBox({
   label,
@@ -313,9 +293,9 @@ export function Stock({
     [notice, setNotice] = useState(''),
     [q, setQ] = useState(''),
     [location, setLocation] = useState(''),
-    [cursors, setCursors] = useState<string[]>([]),
+    balancePage = usePaging(),
     [movementQ, setMovementQ] = useState(''),
-    [movementCursors, setMovementCursors] = useState<string[]>([]);
+    movementPage = usePaging();
   const locations = useList(csrf, `plants/${plantId}/stock-locations`, [refreshKey]);
   const active = locations.items.filter((l) => l.active);
   const balances = useList(
@@ -323,7 +303,8 @@ export function Stock({
     pagePath(`plants/${plantId}/stock`, {
       q,
       location,
-      cursor: cursors[cursors.length - 1],
+      cursor: balancePage.cursor,
+      limit: String(balancePage.size),
     }),
     [revision, refreshKey],
   );
@@ -331,7 +312,8 @@ export function Stock({
     csrf,
     pagePath(`plants/${plantId}/stock/movements`, {
       q: movementQ,
-      cursor: movementCursors[movementCursors.length - 1],
+      cursor: movementPage.cursor,
+      limit: String(movementPage.size),
     }),
     [revision, refreshKey],
   );
@@ -339,8 +321,8 @@ export function Stock({
     setNotice(message);
     setForm(null);
     setReversing(null);
-    setCursors([]);
-    setMovementCursors([]);
+    balancePage.setCursors([]);
+    movementPage.setCursors([]);
     setRevision((x) => x + 1);
   };
   function post() {
@@ -539,7 +521,7 @@ export function Stock({
             label="Stock search"
             placeholder="Item code starts with…"
             onSearch={(v) => {
-              setCursors([]);
+              balancePage.setCursors([]);
               setQ(v);
             }}
           />
@@ -548,7 +530,7 @@ export function Stock({
             <select
               value={location}
               onChange={(e) => {
-                setCursors([]);
+                balancePage.setCursors([]);
                 setLocation(e.target.value);
               }}
             >
@@ -597,7 +579,14 @@ export function Stock({
             {q || location ? 'No stock matches this search.' : 'No stock recorded in this plant.'}
           </div>
         )}
-        <Pager cursors={cursors} next={balances.next} setCursors={setCursors} />
+        <Pager
+          page={balancePage}
+          next={balances.next}
+          total={balances.total}
+          shown={balances.items.length}
+          busy={balances.busy}
+          noun="stock rows"
+        />
       </section>
       <section className="panel table-wrap">
         <div className="panel-heading">
@@ -608,7 +597,7 @@ export function Stock({
             label="Ledger search"
             placeholder="Item code starts with…"
             onSearch={(v) => {
-              setMovementCursors([]);
+              movementPage.setCursors([]);
               setMovementQ(v);
             }}
           />
@@ -673,7 +662,14 @@ export function Stock({
         {!movements.items.length && !movements.busy && (
           <div className="empty">No stock movements in this plant yet.</div>
         )}
-        <Pager cursors={movementCursors} next={movements.next} setCursors={setMovementCursors} />
+        <Pager
+          page={movementPage}
+          next={movements.next}
+          total={movements.total}
+          shown={movements.items.length}
+          busy={movements.busy}
+          noun="movements"
+        />
       </section>
     </>
   );
@@ -717,11 +713,11 @@ function Orders({
     [notice, setNotice] = useState(''),
     [q, setQ] = useState(''),
     [status, setStatus] = useState('OPEN'),
-    [cursors, setCursors] = useState<string[]>([]),
+    page = usePaging(),
     [cancelReason, setCancelReason] = useState<string | null>(null);
   const list = useList(
     csrf,
-    pagePath(config.path, { q, status, cursor: cursors[cursors.length - 1] }),
+    pagePath(config.path, { q, status, cursor: page.cursor, limit: String(page.size) }),
     [revision, refreshKey],
   );
   const noun = config.noun.toLowerCase();
@@ -887,7 +883,7 @@ function Orders({
               label={`${config.noun} search`}
               placeholder={`${config.noun} or ${config.partyLabel.toLowerCase()} code starts with…`}
               onSearch={(v) => {
-                setCursors([]);
+                page.setCursors([]);
                 setQ(v);
               }}
             />
@@ -896,7 +892,7 @@ function Orders({
               <select
                 value={status}
                 onChange={(e) => {
-                  setCursors([]);
+                  page.setCursors([]);
                   setStatus(e.target.value);
                 }}
               >
@@ -979,7 +975,14 @@ function Orders({
                   : `No open ${noun}s in this plant. Create one or import them from Imports.`}
               </div>
             )}
-            <Pager cursors={cursors} next={list.next} setCursors={setCursors} />
+            <Pager
+              page={page}
+              next={list.next}
+              total={list.total}
+              shown={list.items.length}
+              busy={list.busy}
+              noun="orders"
+            />
           </section>
         </>
       )}
@@ -1569,10 +1572,14 @@ export function DemandHistory({
   refreshKey: number;
 }) {
   const [q, setQ] = useState(''),
-    [cursors, setCursors] = useState<string[]>([]);
+    page = usePaging();
   const list = useList(
     csrf,
-    pagePath(`plants/${plantId}/demand-history`, { q, cursor: cursors[cursors.length - 1] }),
+    pagePath(`plants/${plantId}/demand-history`, {
+      q,
+      cursor: page.cursor,
+      limit: String(page.size),
+    }),
     [refreshKey],
   );
   // The insight view is one object, not a list, so it is fetched on its own.
@@ -1596,7 +1603,7 @@ export function DemandHistory({
           label="Demand history search"
           placeholder="Item code starts with…"
           onSearch={(v) => {
-            setCursors([]);
+            page.setCursors([]);
             setQ(v);
           }}
         />
@@ -1632,7 +1639,14 @@ export function DemandHistory({
               : 'No demand history in this plant. Import it from Imports → Demand history (one row per item and day).'}
           </div>
         )}
-        <Pager cursors={cursors} next={list.next} setCursors={setCursors} />
+        <Pager
+          page={page}
+          next={list.next}
+          total={list.total}
+          shown={list.items.length}
+          busy={list.busy}
+          noun="days"
+        />
       </section>
     </>
   );
@@ -1771,7 +1785,7 @@ export function ProductionOrders({
 }) {
   const [q, setQ] = useState(''),
     [status, setStatus] = useState('OPEN'),
-    [cursors, setCursors] = useState<string[]>([]),
+    page = usePaging(),
     [open, setOpen] = useState<string | null>(null),
     [notice, setNotice] = useState(''),
     [revision, setRevision] = useState(0);
@@ -1780,7 +1794,8 @@ export function ProductionOrders({
     pagePath(`plants/${plantId}/production-orders`, {
       q,
       status,
-      cursor: cursors[cursors.length - 1],
+      cursor: page.cursor,
+      limit: String(page.size),
     }),
     [refreshKey, revision],
   );
@@ -1792,7 +1807,7 @@ export function ProductionOrders({
           label="Production order search"
           placeholder="Order number or item starts with…"
           onSearch={(v) => {
-            setCursors([]);
+            page.setCursors([]);
             setQ(v);
           }}
         />
@@ -1801,7 +1816,7 @@ export function ProductionOrders({
           <select
             value={status}
             onChange={(e) => {
-              setCursors([]);
+              page.setCursors([]);
               setStatus(e.target.value);
             }}
           >
@@ -1889,7 +1904,14 @@ export function ProductionOrders({
               : 'No production orders in this plant. Import open orders from Imports → Production orders.'}
           </div>
         )}
-        <Pager cursors={cursors} next={list.next} setCursors={setCursors} />
+        <Pager
+          page={page}
+          next={list.next}
+          total={list.total}
+          shown={list.items.length}
+          busy={list.busy}
+          noun="orders"
+        />
       </section>
     </>
   );

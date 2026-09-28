@@ -1,3 +1,4 @@
+import { Pager, usePaging } from './pager';
 import { useEffect, useState } from 'react';
 import { useApi } from './api-client';
 import { Messages } from './plant-model';
@@ -1106,11 +1107,11 @@ export function Scheduler({
   focus?: 'all' | 'schedule' | 'decisions';
 }) {
   const call = useApi(csrf);
+  const page = usePaging(50);
   const [view, setView] = useState('current'),
     [filter, setFilter] = useState(''),
     [query, setQuery] = useState(''),
     [q, setQ] = useState(''),
-    [cursors, setCursors] = useState<string[]>([]),
     [data, setData] = useState<any>(null),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
@@ -1166,13 +1167,21 @@ export function Scheduler({
     decide('move', { order, target, position });
   useEffect(() => {
     let live = true;
-    call(qs(`plants/${plantId}/schedule`, { view, filter, q, cursor: cursors[cursors.length - 1] }))
+    call(
+      qs(`plants/${plantId}/schedule`, {
+        view,
+        filter,
+        q,
+        cursor: page.cursor,
+        limit: String(page.size),
+      }),
+    )
       .then((d) => live && setData({ ...d, plantId }))
       .catch((e) => live && setError(e.message));
     return () => {
       live = false;
     };
-  }, [plantId, view, filter, q, cursors, tick, refreshKey]);
+  }, [plantId, view, filter, q, page.cursor, page.size, tick, refreshKey]);
   // While a recalculation is pending, check again every few seconds.
   useEffect(() => {
     if (!data?.status || data.status.upToDate) return;
@@ -1210,7 +1219,7 @@ export function Scheduler({
             <ViewSwitch
               view={view}
               setView={(v: string) => {
-                setCursors([]);
+                page.setCursors([]);
                 setView(v);
               }}
               publication={data?.publication}
@@ -1338,7 +1347,7 @@ export function Scheduler({
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                setCursors([]);
+                page.setCursors([]);
                 setQ(query.trim().toLowerCase());
               }}
             >
@@ -1355,7 +1364,7 @@ export function Scheduler({
               <select
                 value={filter}
                 onChange={(e) => {
-                  setCursors([]);
+                  page.setCursors([]);
                   setFilter(e.target.value);
                 }}
               >
@@ -1547,18 +1556,14 @@ export function Scheduler({
           {data && !data.items?.length && (
             <div className="empty">{data.empty ?? 'No orders match this view.'}</div>
           )}
-          <div className="table-footer">
-            <button className="button" disabled={!cursors.length} onClick={() => setCursors([])}>
-              First page
-            </button>
-            <button
-              className="button"
-              disabled={!data?.nextCursor}
-              onClick={() => setCursors([...cursors, data.nextCursor])}
-            >
-              Next page
-            </button>
-          </div>
+          <Pager
+            page={page}
+            next={data?.nextCursor ?? null}
+            total={data?.total}
+            shown={data?.items?.length ?? 0}
+            busy={!data}
+            noun="orders"
+          />
         </section>
       )}
       {focus !== 'schedule' && (

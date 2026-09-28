@@ -1,5 +1,6 @@
 // Database side of the plant model, shared by the API (forms) and the worker (imports).
 // Every function receives a pg client inside a company-scoped (RLS) transaction.
+import { countRows } from './paging.mjs';
 import {
   calendarDayMinutes,
   findCycle,
@@ -523,6 +524,7 @@ export async function writeBom(db, tenantId, doc) {
 export async function listBoms(db, { q = '', cursor = null, limit = 25 }) {
   const params = [q];
   let where = '(starts_with(lower(i.code),$1) OR starts_with(lower(i.name),$1))';
+  const total = await countRows(db, 'boms b JOIN items i ON i.id=b.item_id', where, params);
   if (cursor) {
     params.push(...cursor);
     where += ' AND (lower(i.code),lower(b.revision),b.id::text) > ($2,$3,$4)';
@@ -541,6 +543,7 @@ export async function listBoms(db, { q = '', cursor = null, limit = 25 }) {
     items,
     nextCursor:
       rows.length > limit ? [lc(last.parent_item), lc(last.revision), String(last.id)] : null,
+    total,
   };
 }
 
@@ -705,6 +708,7 @@ export async function writeRouting(db, tenantId, doc) {
 export async function listRoutings(db, siteId, { q = '', cursor = null, limit = 25 }) {
   const params = [siteId, q];
   let where = 'r.site_id=$1 AND (starts_with(lower(i.code),$2) OR starts_with(lower(i.name),$2))';
+  const total = await countRows(db, 'routings r JOIN items i ON i.id=r.item_id', where, params);
   if (cursor) {
     params.push(...cursor);
     where += ' AND (lower(i.code),lower(r.revision),r.id::text) > ($3,$4,$5)';
@@ -724,6 +728,7 @@ export async function listRoutings(db, siteId, { q = '', cursor = null, limit = 
   return {
     items,
     nextCursor: rows.length > limit ? [lc(last.item), lc(last.revision), String(last.id)] : null,
+    total,
   };
 }
 

@@ -692,6 +692,35 @@ td strong {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+/* Page size on the left, where the list is counted; the buttons stay on the right. */
+.table-footer .page-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #5b6373;
+  white-space: nowrap;
+}
+.table-footer .page-size select {
+  padding: 6px 8px;
+  border: 1px solid #d9dde5;
+  border-radius: 8px;
+  background: #fff;
+  color: #333b4c;
+  font-size: 12px;
+}
+.table-footer .page-count {
+  margin: 0;
+  font-size: 12px;
+  color: #5b6373;
+}
+.table-footer .page-buttons {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 .permission-panel {
   margin-top: 24px;

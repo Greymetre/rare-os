@@ -1,6 +1,7 @@
 // Database side of the scheduler (AV-6): plant model inputs, dynamic lead times, the schedule of
 // every planning run, its views and publication. Every function receives a pg client inside a
 // company-scoped (RLS) transaction.
+import { countRows } from './paging.mjs';
 import { calendarDayMinutes, shiftSpan } from '../engines/plant-model.mjs';
 import {
   allocate,
@@ -774,6 +775,12 @@ export async function listSchedule(
   if (filter === 'late') where += ' AND s.late_days > 0';
   else if (filter === 'gated') where += " AND s.material_check IN ('gated','unknown')";
   else if (filter === 'unscheduled') where += " AND s.status='unscheduled'";
+  const total = await countRows(
+    db,
+    'schedule_orders s JOIN production_orders o ON o.id=s.production_order_id JOIN items i ON i.id=o.item_id',
+    where,
+    params,
+  );
   if (cursor) {
     params.push(Number(cursor));
     where += ` AND s.position > $${params.length}`;
@@ -796,6 +803,7 @@ export async function listSchedule(
   return {
     items,
     nextCursor: rows.length > limit ? String(items[items.length - 1].position) : null,
+    total,
   };
 }
 

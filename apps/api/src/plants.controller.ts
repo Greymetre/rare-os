@@ -3,6 +3,7 @@ import type { Request } from 'express';
 import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { access, scoped, fail } from './core.js';
+import { countRows } from '../../../packages/schema/paging.mjs';
 import {
   id,
   text,
@@ -70,6 +71,13 @@ export class PlantsController {
       ).rows;
       return {
         items: rows.slice(0, limit),
+        total: await countRows(
+          db,
+          'sites s',
+          'starts_with(lower(s.name),$1) AND ($2::boolean OR (s.active AND EXISTS(SELECT 1 FROM user_sites us WHERE us.tenant_id=s.tenant_id AND us.site_id=s.id AND us.user_id=$3)))',
+          [q, allPlants(actor), actor.id],
+        ),
+        pageSize: limit,
         nextCursor: rows.length > limit ? rows[limit - 1].id : null,
       };
     });

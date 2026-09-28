@@ -1,5 +1,6 @@
 // Database side of material buffers (AV-4): profiles, buffer settings and versioned planning runs.
 // Every function receives a pg client inside a company-scoped (RLS) transaction.
+import { countRows } from './paging.mjs';
 import { effectiveAdu, effectiveSeries, planPlant } from '../engines/ddmrp.mjs';
 import { eventFactor, schemeDemand } from '../engines/planning-tools.mjs';
 import { conversionFactors } from './demand-stock-db.mjs';
@@ -183,6 +184,7 @@ export async function writeBufferSettings(db, tenantId, values) {
 export async function listBufferSettings(db, siteId, { q = '', cursor = null, limit = 25 }) {
   const params = [siteId, q];
   let where = 'b.site_id=$1 AND (starts_with(lower(i.code),$2) OR starts_with(lower(i.name),$2))';
+  const total = await countRows(db, 'item_buffers b JOIN items i ON i.id=b.item_id', where, params);
   if (cursor) {
     params.push(...cursor);
     where += ' AND (lower(i.code),b.id::text) > ($3,$4)';
@@ -198,7 +200,11 @@ export async function listBufferSettings(db, siteId, { q = '', cursor = null, li
   ).rows;
   const items = rows.slice(0, limit);
   const last = items[items.length - 1];
-  return { items, nextCursor: rows.length > limit ? [lc(last.item), String(last.id)] : null };
+  return {
+    items,
+    nextCursor: rows.length > limit ? [lc(last.item), String(last.id)] : null,
+    total,
+  };
 }
 
 // ---------- Planning runs ----------
@@ -711,7 +717,7 @@ const ZONES = ['breach', 'red', 'yellow', 'green', 'excess'];
 export async function listBoard(db, siteId, { q = '', zone = null, cursor = null, limit = 25 }) {
   const runId = (await db.query('SELECT current_run_id FROM planning_state')).rows[0]
     ?.current_run_id;
-  if (!runId) return { runId: null, items: [], nextCursor: null, counts: {} };
+  if (!runId) return { runId: null, items: [], nextCursor: null, counts: {}, total: 0 };
   const rank = "CASE r.status WHEN 'planned' THEN 0 WHEN 'missing' THEN 1 ELSE 2 END";
   const params = [runId, siteId, q];
   let where =
@@ -723,6 +729,12 @@ export async function listBoard(db, siteId, { q = '', zone = null, cursor = null
     params.push(zone);
     where += ` AND r.zone=$${params.length}`;
   }
+  const total = await countRows(
+    db,
+    'planning_results r JOIN items i ON i.id=r.item_id',
+    where,
+    params,
+  );
   if (cursor) {
     params.push(...cursor);
     const n = params.length;
@@ -760,6 +772,7 @@ export async function listBoard(db, siteId, { q = '', zone = null, cursor = null
       rows.length > limit
         ? [String(last.rank), String(last.priority_pct ?? 0), lc(last.item)]
         : null,
+    total,
   };
 }
 

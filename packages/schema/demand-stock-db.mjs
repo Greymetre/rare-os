@@ -1,5 +1,6 @@
 // Database side of demand and stock (AV-3), shared by the API (forms) and the worker (imports).
 // Every function receives a pg client inside a company-scoped (RLS) transaction.
+import { countRows } from './paging.mjs';
 import { addDecimal, divideDecimal, multiplyDecimal, parseQuantity } from './quantity.mjs';
 import { itemsByCode, plantsByCode, resolvePlant } from './plant-model-db.mjs';
 
@@ -447,6 +448,12 @@ export async function listBalances(
   const params = [siteId, q, locationId];
   let where =
     'b.site_id=$1 AND b.quantity<>0 AND (starts_with(lower(i.code),$2) OR starts_with(lower(i.name),$2)) AND ($3::uuid IS NULL OR b.location_id=$3)';
+  const total = await countRows(
+    db,
+    'stock_balances b JOIN items i ON i.id=b.item_id JOIN stock_locations l ON l.id=b.location_id',
+    where,
+    params,
+  );
   if (cursor) {
     params.push(...cursor);
     where += ' AND (lower(i.code),lower(l.code)) > ($4,$5)';
@@ -462,10 +469,20 @@ export async function listBalances(
   ).rows;
   const items = rows.slice(0, limit);
   const last = items[items.length - 1];
-  return { items, nextCursor: rows.length > limit ? [lc(last.item), lc(last.location)] : null };
+  return {
+    items,
+    nextCursor: rows.length > limit ? [lc(last.item), lc(last.location)] : null,
+    total,
+  };
 }
 
 export async function listMovements(db, siteId, { q = '', cursor = null, limit = 25 }) {
+  const total = await countRows(
+    db,
+    'stock_movements m JOIN items i ON i.id=m.item_id',
+    "m.site_id=$1 AND ($2='' OR starts_with(lower(i.code),$2))",
+    [siteId, q],
+  );
   const rows = (
     await db.query(
       `SELECT m.id,m.movement_no,to_char(m.movement_date,'YYYY-MM-DD') AS movement_date,m.movement_type,l.code AS location,i.code AS item,
@@ -483,6 +500,7 @@ export async function listMovements(db, siteId, { q = '', cursor = null, limit =
   return {
     items,
     nextCursor: rows.length > limit ? String(items[items.length - 1].movement_no) : null,
+    total,
   };
 }
 
@@ -782,6 +800,12 @@ export async function listOrders(
   const t = ORDER_TABLES[kind];
   const params = [siteId, q, status];
   let where = `o.site_id=$1 AND (starts_with(lower(o.${t.no}),$2) OR starts_with(lower(p.code),$2)) AND ($3::text IS NULL OR o.status=$3)`;
+  const total = await countRows(
+    db,
+    `${t.table} o JOIN ${t.party.table} p ON p.id=o.${t.party.column}`,
+    where,
+    params,
+  );
   if (cursor) {
     params.push(...cursor);
     where += ` AND (lower(o.${t.no}),o.id::text) > ($4,$5)`;
@@ -803,7 +827,11 @@ export async function listOrders(
   ).rows;
   const items = rows.slice(0, limit);
   const last = items[items.length - 1];
-  return { items, nextCursor: rows.length > limit ? [lc(last.no), String(last.id)] : null };
+  return {
+    items,
+    nextCursor: rows.length > limit ? [lc(last.no), String(last.id)] : null,
+    total,
+  };
 }
 
 // ---------- Demand history ----------
@@ -899,6 +927,12 @@ export async function writeDemandHistory(db, tenantId, values) {
 export async function listDemandHistory(db, siteId, { q = '', cursor = null, limit = 25 }) {
   const params = [siteId, q];
   let where = 'h.site_id=$1 AND starts_with(lower(i.code),$2)';
+  const total = await countRows(
+    db,
+    'demand_history h JOIN items i ON i.id=h.item_id',
+    where,
+    params,
+  );
   if (cursor) {
     params.push(...cursor);
     where += ' AND (h.demand_date < $3::date OR (h.demand_date = $3::date AND lower(i.code) > $4))';
@@ -914,7 +948,11 @@ export async function listDemandHistory(db, siteId, { q = '', cursor = null, lim
   ).rows;
   const items = rows.slice(0, limit);
   const last = items[items.length - 1];
-  return { items, nextCursor: rows.length > limit ? [last.demand_date, lc(last.item)] : null };
+  return {
+    items,
+    nextCursor: rows.length > limit ? [last.demand_date, lc(last.item)] : null,
+    total,
+  };
 }
 
 // ---------- Production orders ----------
@@ -1028,6 +1066,12 @@ export async function listProductionOrders(
     params.push(status);
     where += ` AND o.status=$${params.length}`;
   }
+  const total = await countRows(
+    db,
+    'production_orders o JOIN items i ON i.id=o.item_id',
+    where,
+    params,
+  );
   if (cursor) {
     params.push(...cursor);
     const n = params.length;
@@ -1049,6 +1093,7 @@ export async function listProductionOrders(
   return {
     items,
     nextCursor: rows.length > limit ? [last.due_date, lc(last.order_no)] : null,
+    total,
   };
 }
 

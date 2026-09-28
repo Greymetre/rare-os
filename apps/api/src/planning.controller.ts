@@ -12,7 +12,7 @@ import {
 } from '../../../packages/schema/planning-db.mjs';
 import { Controller, Get, Post, Patch, Req, Param } from '@nestjs/common';
 import type { Request } from 'express';
-import { access, scoped, fail } from './core.js';
+import { access, scoped, fail, limitOf } from './core.js';
 import { id, body, version, mutate, audit } from './access.controller.js';
 import { requirePlant } from './plants.controller.js';
 import {
@@ -119,11 +119,17 @@ export class PlanningController {
   ) {
     const actor = await access(req, 'planning.read');
     const q = search(req),
-      cursor = cursorOf(req, 2);
+      cursor = cursorOf(req, 2),
+      limit = limitOf(req);
     return scoped(actor.tenant_id, async (db) => {
       const plant = await requirePlant(db, actor, id(plantId));
-      const page = await listBufferSettings(db, plant.id, { q, cursor });
-      return { items: page.items, nextCursor: encode(page.nextCursor) };
+      const page = await listBufferSettings(db, plant.id, { q, cursor, limit });
+      return {
+        items: page.items,
+        total: page.total,
+        pageSize: limit,
+        nextCursor: encode(page.nextCursor),
+      };
     });
   }
 
@@ -230,15 +236,16 @@ export class PlanningController {
   ) {
     const actor = await access(req, 'planning.read');
     const q = search(req),
-      cursor = cursorOf(req, 3);
+      cursor = cursorOf(req, 3),
+      limit = limitOf(req);
     const zone =
       req.query.zone === undefined || req.query.zone === '' ? null : String(req.query.zone);
     if (zone && !BOARD_FILTERS.includes(zone))
       fail(400, 'VALIDATION_ERROR', 'Unknown zone filter.');
     return scoped(actor.tenant_id, async (db) => {
       const plant = await requirePlant(db, actor, id(plantId));
-      const page = await listBoard(db, plant.id, { q, zone, cursor });
-      return { ...page, nextCursor: encode(page.nextCursor) };
+      const page = await listBoard(db, plant.id, { q, zone, cursor, limit });
+      return { ...page, pageSize: limit, nextCursor: encode(page.nextCursor) };
     });
   }
 }

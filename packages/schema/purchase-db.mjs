@@ -1,5 +1,6 @@
 // Database side of the purchase loop (AV-5): proposals from planning (rule AV-01), approval into
 // purchase orders, and goods receipts that post stock. Runs inside a company-scoped transaction.
+import { countRows } from './paging.mjs';
 import { proposalAction, receiptProblems } from '../engines/purchase.mjs';
 import { multiplyDecimal, parseQuantity } from './quantity.mjs';
 import { nextOrderNo, postMovements, writeOrder } from './demand-stock-db.mjs';
@@ -150,6 +151,12 @@ export async function listProposals(
   const params = [siteId, status, q];
   let where =
     'p.site_id=$1 AND ($2::text IS NULL OR p.status=$2) AND (starts_with(lower(i.code),$3) OR starts_with(lower(sup.code),$3))';
+  const total = await countRows(
+    db,
+    PROPOSAL_SELECT.slice(PROPOSAL_SELECT.indexOf(' FROM ') + 6),
+    where,
+    params,
+  );
   if (cursor) {
     params.push(cursor);
     where += ` AND p.proposal_no < $${params.length}::bigint`;
@@ -174,6 +181,7 @@ export async function listProposals(
     items,
     counts,
     nextCursor: rows.length > limit ? String(items[items.length - 1].proposal_no) : null,
+    total,
   };
 }
 

@@ -1,3 +1,4 @@
+import { Pager, usePaging } from './pager';
 import { useEffect, useState } from 'react';
 export type Membership = { tenant_id: string; company: string; code: string };
 export function CompanyHub({
@@ -13,9 +14,10 @@ export function CompanyHub({
   onClose?: () => void;
   onLogout: () => void;
 }) {
+  const page = usePaging();
   const [rows, setRows] = useState<any[]>([]),
-    [after, setAfter] = useState<string | null>(null),
     [next, setNext] = useState<string | null>(null),
+    [total, setTotal] = useState<number | undefined>(undefined),
     [query, setQuery] = useState(''),
     [search, setSearch] = useState(''),
     [revision, setRevision] = useState(0),
@@ -41,14 +43,17 @@ export function CompanyHub({
     setBusy(true);
     setError('');
     call(
-      'platform/companies?limit=25&q=' +
+      'platform/companies?limit=' +
+        page.size +
+        '&q=' +
         encodeURIComponent(search) +
-        (after ? '&after=' + after : ''),
+        (page.cursor ? '&after=' + page.cursor : ''),
     )
       .then((d) => {
         if (!cancelled) {
           setRows(d.items);
           setNext(d.nextCursor);
+          setTotal(d.total);
         }
       })
       .catch((e) => {
@@ -60,7 +65,7 @@ export function CompanyHub({
     return () => {
       cancelled = true;
     };
-  }, [platformAdmin, after, search, revision]);
+  }, [platformAdmin, page.cursor, page.size, search, revision]);
   async function action(fn: () => Promise<void>) {
     setBusy(true);
     setError('');
@@ -140,7 +145,7 @@ export function CompanyHub({
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                setAfter(null);
+                page.setCursors([]);
                 setSearch(query);
               }}
             >
@@ -327,14 +332,14 @@ export function CompanyHub({
               </tbody>
             </table>
             {!rows.length && !busy && <div className="empty">No companies found.</div>}
-            <div className="table-footer">
-              <button className="button" disabled={busy || !after} onClick={() => setAfter(null)}>
-                First page
-              </button>
-              <button className="button" disabled={busy || !next} onClick={() => setAfter(next)}>
-                Next page
-              </button>
-            </div>
+            <Pager
+              page={page}
+              next={next}
+              total={total}
+              shown={rows.length}
+              busy={busy}
+              noun="companies"
+            />
           </section>
           {admin && (
             <section className="panel company-form">

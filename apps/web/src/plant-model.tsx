@@ -1,3 +1,4 @@
+import { Pager, usePaging } from './pager';
 import { useEffect, useState } from 'react';
 import { useApi } from './api-client';
 
@@ -26,6 +27,7 @@ export function useList(csrf: string, path: string | null, deps: unknown[]) {
   const call = useApi(csrf);
   const [items, setItems] = useState<any[]>([]),
     [next, setNext] = useState<string | null>(null),
+    [total, setTotal] = useState<number | undefined>(undefined),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   useEffect(() => {
@@ -38,6 +40,7 @@ export function useList(csrf: string, path: string | null, deps: unknown[]) {
         if (!live) return;
         setItems(d.items);
         setNext(d.nextCursor ?? null);
+        setTotal(d.total);
       })
       .catch((e) => live && setError(e.message))
       .finally(() => live && setBusy(false));
@@ -45,7 +48,7 @@ export function useList(csrf: string, path: string | null, deps: unknown[]) {
       live = false;
     };
   }, [path, ...deps]);
-  return { items, next, busy, error };
+  return { items, next, total, busy, error };
 }
 
 export function PlantPicker({
@@ -811,12 +814,13 @@ function DocumentList({
   emptyText: string;
 }) {
   const [query, setQuery] = useState(''),
-    [search, setSearch] = useState(''),
-    [cursors, setCursors] = useState<string[]>([]);
-  const cursor = cursors[cursors.length - 1];
+    [search, setSearch] = useState('');
+  const page = usePaging();
   const list = useList(
     csrf,
-    `${path}?q=${encodeURIComponent(search)}${cursor ? '&cursor=' + cursor : ''}`,
+    `${path}?limit=${page.size}&q=${encodeURIComponent(search)}${
+      page.cursor ? '&cursor=' + page.cursor : ''
+    }`,
     deps,
   );
   return (
@@ -825,7 +829,7 @@ function DocumentList({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            setCursors([]);
+            page.setCursors([]);
             setSearch(query.toLowerCase());
           }}
         >
@@ -883,18 +887,13 @@ function DocumentList({
         {!list.items.length && !list.busy && (
           <div className="empty">{search ? 'No records match this search.' : emptyText}</div>
         )}
-        <div className="table-footer">
-          <button className="button" disabled={!cursors.length} onClick={() => setCursors([])}>
-            First page
-          </button>
-          <button
-            className="button"
-            disabled={!list.next}
-            onClick={() => setCursors([...cursors, list.next!])}
-          >
-            Next page
-          </button>
-        </div>
+        <Pager
+          page={page}
+          next={list.next}
+          total={list.total}
+          shown={list.items.length}
+          busy={list.busy}
+        />
       </section>
     </>
   );

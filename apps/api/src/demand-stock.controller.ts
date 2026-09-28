@@ -30,7 +30,7 @@ import {
 import { Controller, Get, Post, Patch, Put, Req, Param } from '@nestjs/common';
 import type { Request } from 'express';
 import type { PoolClient } from 'pg';
-import { access, scoped, fail } from './core.js';
+import { access, scoped, fail, limitOf } from './core.js';
 import { id, text, body, version, mutate, audit } from './access.controller.js';
 import { requirePlant } from './plants.controller.js';
 import { abcXyz, demandInsight } from '../../../packages/schema/demand-insight-db.mjs';
@@ -207,11 +207,17 @@ export class DemandStockController {
     const actor = await access(req, 'inventory.read');
     const q = search(req),
       cursor = cursorOf(req, 2);
+    const limit = limitOf(req);
     const location = req.query.location === undefined ? null : id(String(req.query.location));
     return scoped(actor.tenant_id, async (db) => {
       const plant = await requirePlant(db, actor, id(plantId));
-      const page = await listBalances(db, plant.id, { q, locationId: location, cursor });
-      return { items: page.items, nextCursor: encode(page.nextCursor) };
+      const page = await listBalances(db, plant.id, { q, locationId: location, cursor, limit });
+      return {
+        items: page.items,
+        total: page.total,
+        pageSize: limit,
+        nextCursor: encode(page.nextCursor),
+      };
     });
   }
 
@@ -327,13 +333,19 @@ export class DemandStockController {
     const actor = await access(req, ORDERS[kind].read);
     const q = search(req),
       cursor = cursorOf(req, 2);
+    const limit = limitOf(req);
     const status = req.query.status === undefined ? null : String(req.query.status);
     if (status && !['OPEN', 'CANCELLED'].includes(status))
       fail(400, 'VALIDATION_ERROR', 'Status must be OPEN or CANCELLED.');
     return scoped(actor.tenant_id, async (db) => {
       const plant = await requirePlant(db, actor, id(plantId));
-      const page = await listOrders(db, kind, plant.id, { q, status, cursor });
-      return { items: page.items, nextCursor: encode(page.nextCursor) };
+      const page = await listOrders(db, kind, plant.id, { q, status, cursor, limit });
+      return {
+        items: page.items,
+        total: page.total,
+        pageSize: limit,
+        nextCursor: encode(page.nextCursor),
+      };
     });
   }
 
@@ -497,10 +509,16 @@ export class DemandStockController {
     const actor = await access(req, 'orders.read');
     const q = search(req),
       cursor = cursorOf(req, 2);
+    const limit = limitOf(req);
     return scoped(actor.tenant_id, async (db) => {
       const plant = await requirePlant(db, actor, id(plantId));
-      const page = await listDemandHistory(db, plant.id, { q, cursor });
-      return { items: page.items, nextCursor: encode(page.nextCursor) };
+      const page = await listDemandHistory(db, plant.id, { q, cursor, limit });
+      return {
+        items: page.items,
+        total: page.total,
+        pageSize: limit,
+        nextCursor: encode(page.nextCursor),
+      };
     });
   }
 
@@ -531,13 +549,19 @@ export class DemandStockController {
     const actor = await access(req, 'orders.read');
     const q = search(req),
       cursor = cursorOf(req, 2);
+    const limit = limitOf(req);
     const status = req.query.status === undefined ? 'OPEN' : String(req.query.status) || null;
     if (status && !['OPEN', 'CLOSED'].includes(status))
       fail(400, 'VALIDATION_ERROR', 'Unknown production order status.');
     return scoped(actor.tenant_id, async (db) => {
       const plant = await requirePlant(db, actor, id(plantId));
-      const page = await listProductionOrders(db, plant.id, { q, status, cursor });
-      return { items: page.items, nextCursor: encode(page.nextCursor) };
+      const page = await listProductionOrders(db, plant.id, { q, status, cursor, limit });
+      return {
+        items: page.items,
+        total: page.total,
+        pageSize: limit,
+        nextCursor: encode(page.nextCursor),
+      };
     });
   }
 

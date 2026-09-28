@@ -27,7 +27,7 @@ import { scheduleReadiness } from '../../../packages/schema/schedule-db.mjs';
 import { Controller, Get, Post, Patch, Put, Req, Param, HttpException } from '@nestjs/common';
 import type { Request } from 'express';
 import type { PoolClient } from 'pg';
-import { access, scoped, fail } from './core.js';
+import { access, scoped, fail, limitOf } from './core.js';
 import { id, body, version, mutate, audit } from './access.controller.js';
 import { requirePlant } from './plants.controller.js';
 
@@ -291,10 +291,16 @@ export class PlantModelController {
   @Get('boms') async boms(@Req() req: Request) {
     const actor = await access(req, 'masters.read');
     const q = search(req),
-      cursor = cursorOf(req);
+      cursor = cursorOf(req),
+      limit = limitOf(req);
     return scoped(actor.tenant_id, async (db) => {
-      const page = await listBoms(db, { q, cursor });
-      return { items: page.items, nextCursor: encode(page.nextCursor) };
+      const page = await listBoms(db, { q, cursor, limit });
+      return {
+        items: page.items,
+        total: page.total,
+        pageSize: limit,
+        nextCursor: encode(page.nextCursor),
+      };
     });
   }
 
@@ -373,11 +379,17 @@ export class PlantModelController {
   ) {
     const actor = await access(req, 'masters.read');
     const q = search(req),
-      cursor = cursorOf(req);
+      cursor = cursorOf(req),
+      limit = limitOf(req);
     return scoped(actor.tenant_id, async (db) => {
       const plant = await requirePlant(db, actor, id(plantId));
-      const page = await listRoutings(db, plant.id, { q, cursor });
-      return { items: page.items, nextCursor: encode(page.nextCursor) };
+      const page = await listRoutings(db, plant.id, { q, cursor, limit });
+      return {
+        items: page.items,
+        total: page.total,
+        pageSize: limit,
+        nextCursor: encode(page.nextCursor),
+      };
     });
   }
 

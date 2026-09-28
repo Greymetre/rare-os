@@ -8,7 +8,12 @@ export function listProposals(
   db: Db,
   siteId: string,
   options: { status?: string | null; q?: string; cursor?: string | null; limit?: number },
-): Promise<{ items: any[]; counts: Record<string, number>; nextCursor: string | null }>;
+): Promise<{
+  items: any[];
+  counts: Record<string, number>;
+  nextCursor: string | null;
+  total: number;
+}>;
 export function approveProposal(
   db: Db,
   tenantId: string,

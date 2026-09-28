@@ -1,3 +1,4 @@
+import { Pager, usePaging } from './pager';
 import { CycleTimeAudit, Downtime, Execution } from './execution';
 import { Delivery, Today } from './delivery';
 import { Network, PlanningTools } from './planning-tools';
@@ -113,6 +114,7 @@ function Units({
 }) {
   const call = useApi(csrf);
   const canManage = permissions.includes('masters.manage');
+  const page = usePaging();
   const [rows, setRows] = useState<any[]>([]),
     [form, setForm] = useState<any>(null),
     [busy, setBusy] = useState(false),
@@ -120,32 +122,39 @@ function Units({
     [notice, setNotice] = useState(''),
     [query, setQuery] = useState(''),
     [search, setSearch] = useState(''),
-    [after, setAfter] = useState<string | null>(null),
     [next, setNext] = useState<string | null>(null),
+    [total, setTotal] = useState<number | undefined>(undefined),
     [revision, setRevision] = useState(0);
   useEffect(() => {
     let live = true;
     setBusy(true);
     setError('');
-    call('units?q=' + encodeURIComponent(search) + (after ? '&after=' + after : ''))
+    call(
+      'units?limit=' +
+        page.size +
+        '&q=' +
+        encodeURIComponent(search) +
+        (page.cursor ? '&after=' + page.cursor : ''),
+    )
       .then((d) => {
         if (!live) return;
         setRows(d.items);
         setNext(d.nextCursor);
+        setTotal(d.total);
       })
       .catch((e) => live && setError(e.message))
       .finally(() => live && setBusy(false));
     return () => {
       live = false;
     };
-  }, [search, after, revision, refreshKey]);
+  }, [search, page.cursor, page.size, revision, refreshKey]);
   return (
     <>
       <div className="toolbar">
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            setAfter(null);
+            page.setCursors([]);
             setSearch(query);
           }}
         >
@@ -308,14 +317,7 @@ function Units({
                 : 'No units yet. Ask a planner or administrator to add them.'}
           </div>
         )}
-        <div className="table-footer">
-          <button className="button" disabled={!after || busy} onClick={() => setAfter(null)}>
-            First page
-          </button>
-          <button className="button" disabled={!next || busy} onClick={() => setAfter(next)}>
-            Next page
-          </button>
-        </div>
+        <Pager page={page} next={next} total={total} shown={rows.length} busy={busy} noun="units" />
       </section>
     </>
   );
@@ -605,26 +607,31 @@ function MasterTable({
     [notice, setNotice] = useState(''),
     [query, setQuery] = useState(''),
     [search, setSearch] = useState(''),
-    [cursors, setCursors] = useState<string[]>([]),
     [next, setNext] = useState<string | null>(null),
+    [total, setTotal] = useState<number | undefined>(undefined),
     [revision, setRevision] = useState(0);
-  const cursor = cursors[cursors.length - 1];
+  const page = usePaging();
   useEffect(() => {
     let live = true;
     setBusy(true);
     setError('');
-    call(`masters/${info.kind}?q=${encodeURIComponent(search)}${cursor ? '&cursor=' + cursor : ''}`)
+    call(
+      `masters/${info.kind}?limit=${page.size}&q=${encodeURIComponent(search)}${
+        page.cursor ? '&cursor=' + page.cursor : ''
+      }`,
+    )
       .then((d) => {
         if (!live) return;
         setRows(d.items);
         setNext(d.nextCursor);
+        setTotal(d.total);
       })
       .catch((e) => live && setError(e.message))
       .finally(() => live && setBusy(false));
     return () => {
       live = false;
     };
-  }, [info.kind, search, cursor, revision, refreshKey]);
+  }, [info.kind, search, page.cursor, page.size, revision, refreshKey]);
   function open(row: any) {
     setFieldErrors({});
     setError('');
@@ -671,7 +678,7 @@ function MasterTable({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            setCursors([]);
+            page.setCursors([]);
             setSearch(query);
           }}
         >
@@ -817,22 +824,14 @@ function MasterTable({
                 : `No ${info.label.toLowerCase()} yet.`}
           </div>
         )}
-        <div className="table-footer">
-          <button
-            className="button"
-            disabled={!cursors.length || busy}
-            onClick={() => setCursors([])}
-          >
-            First page
-          </button>
-          <button
-            className="button"
-            disabled={!next || busy}
-            onClick={() => setCursors([...cursors, next!])}
-          >
-            Next page
-          </button>
-        </div>
+        <Pager
+          page={page}
+          next={next}
+          total={total}
+          shown={rows.length}
+          busy={busy}
+          noun={info.label.toLowerCase()}
+        />
       </section>
     </>
   );

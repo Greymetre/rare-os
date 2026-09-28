@@ -34,7 +34,7 @@ import {
 import { Controller, Get, Post, Put, Req, Param } from '@nestjs/common';
 import type { Request } from 'express';
 import type { PoolClient } from 'pg';
-import { access, scoped, fail } from './core.js';
+import { access, scoped, fail, limitOf } from './core.js';
 import { id, body, mutate, audit } from './access.controller.js';
 import { requirePlant } from './plants.controller.js';
 import { search, today } from './plant-model.controller.js';
@@ -592,13 +592,14 @@ export class ScheduleController {
     const cursor = req.query.cursor === undefined ? null : String(req.query.cursor);
     if (cursor !== null && !/^[1-9][0-9]{0,8}$/.test(cursor))
       fail(400, 'VALIDATION_ERROR', 'Invalid page cursor.');
+    const limit = limitOf(req, 50);
     return scoped(actor.tenant_id, async (db) => {
       const plant = await requirePlant(db, actor, id(plantId));
       const r = await runFor(db, plant.id, view);
       const status = await planningStatus(db);
-      if (!r.runId) return { ...r, status, items: [], nextCursor: null };
-      const page = await listSchedule(db, plant.id, r.runId, { q, filter, cursor });
-      return { ...r, status, ...page };
+      if (!r.runId) return { ...r, status, items: [], total: 0, pageSize: limit, nextCursor: null };
+      const page = await listSchedule(db, plant.id, r.runId, { q, filter, cursor, limit });
+      return { ...r, status, ...page, pageSize: limit };
     });
   }
 

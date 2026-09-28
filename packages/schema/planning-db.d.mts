@@ -19,7 +19,7 @@ export function listBufferSettings(
   db: Db,
   siteId: string,
   options: { q?: string; cursor?: string[] | null; limit?: number },
-): Promise<{ items: any[]; nextCursor: string[] | null }>;
+): Promise<{ items: any[]; nextCursor: string[] | null; total: number }>;
 export function queueRun(
   db: Db,
   tenantId: string,
@@ -40,5 +40,6 @@ export function listBoard(
   items: any[];
   counts: Record<string, number>;
   nextCursor: string[] | null;
+  total: number;
 }>;
 export function bufferReadiness(db: Db, siteId: string): Promise<any>;

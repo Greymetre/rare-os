@@ -1,5 +1,6 @@
 // Database side of planning masters, shared by the API (single records) and the worker (imports).
 // Every function receives a pg client already inside a company-scoped (RLS) transaction.
+import { countRows, DEFAULT_PAGE_SIZE } from './paging.mjs';
 import { MASTER_KINDS, masterKind } from './masters.mjs';
 import { parseQuantity } from './quantity.mjs';
 
@@ -354,11 +355,13 @@ export async function upsertMasters(db, kind, tenantId, values) {
 }
 
 // Keyset pagination in code order: cursor is the last row's sort values plus its id.
-export async function listMasters(db, kind, { q = '', cursor = null, limit = 25 }) {
+export async function listMasters(db, kind, { q = '', cursor = null, limit = DEFAULT_PAGE_SIZE }) {
   const s = sqlFor(kind);
   const sortKeys = [...s.sort, 'x.id'];
   const params = [q];
   let where = s.search.replaceAll('$q', '$1');
+  // Counted before the cursor narrows anything: the reader wants the size of the whole list.
+  const total = await countRows(db, s.select.slice(s.select.indexOf(' FROM ') + 6), where, params);
   if (cursor) {
     params.push(...cursor);
     where += ` AND (${sortKeys.map((k, n) => (n < s.sort.length ? `${k}` : 'x.id::text')).join(',')}) > (${cursor
@@ -378,7 +381,7 @@ export async function listMasters(db, kind, { q = '', cursor = null, limit = 25 
     result.length > limit
       ? [...s.sort.map((k) => sortValue(kind, k, last)), String(last.id)]
       : null;
-  return { items, nextCursor };
+  return { items, nextCursor, total };
 }
 
 function sortValue(kind, expr, row) {

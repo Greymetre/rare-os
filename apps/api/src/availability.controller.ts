@@ -10,7 +10,8 @@ import { Controller, Get, Post, Patch, Req, Res, Param } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import type { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'node:crypto';
-import { access, scoped, fail } from './core.js';
+import { access, scoped, fail, limitOf } from './core.js';
+import { countRows } from '../../../packages/schema/paging.mjs';
 import { id, text, body, version, pagination, mutate, audit } from './access.controller.js';
 import { plantScope } from '../../../packages/schema/plant-model-db.mjs';
 
@@ -198,6 +199,13 @@ export class AvailabilityController {
       ).rows;
       return {
         items: rows.slice(0, limit),
+        total: await countRows(
+          db,
+          'units',
+          '(starts_with(lower(code),$1) OR starts_with(lower(name),$1))',
+          [q],
+        ),
+        pageSize: limit,
         nextCursor: rows.length > limit ? rows[limit - 1].id : null,
       };
     });
@@ -372,6 +380,7 @@ export class AvailabilityController {
 
   @Get('imports') async batches(@Req() req: Request) {
     const actor = await access(req, 'masters.read');
+    const limit = limitOf(req);
     const before =
       req.query.before === undefined
         ? null
@@ -381,13 +390,15 @@ export class AvailabilityController {
     return scoped(actor.tenant_id, async (db) => {
       const rows = (
         await db.query(
-          'SELECT id,batch_no,kind,file_name,status,total_rows,valid_rows,error_rows,summary,error,created_at,validated_at,committed_at,version FROM import_batches WHERE ($1::bigint IS NULL OR batch_no<$1::bigint) ORDER BY batch_no DESC LIMIT 26',
+          `SELECT id,batch_no,kind,file_name,status,total_rows,valid_rows,error_rows,summary,error,created_at,validated_at,committed_at,version FROM import_batches WHERE ($1::bigint IS NULL OR batch_no<$1::bigint) ORDER BY batch_no DESC LIMIT ${limit + 1}`,
           [before],
         )
       ).rows;
       return {
-        items: rows.slice(0, 25).map(present),
-        nextCursor: rows.length > 25 ? rows[24].batch_no : null,
+        items: rows.slice(0, limit).map(present),
+        total: await countRows(db, 'import_batches', 'true', []),
+        pageSize: limit,
+        nextCursor: rows.length > limit ? rows[limit - 1].batch_no : null,
       };
     });
   }
@@ -399,6 +410,8 @@ export class AvailabilityController {
 
   @Get('imports/:id/rows') async rows(@Req() req: Request, @Param('id') batchId: string) {
     const actor = await access(req, 'masters.read');
+    // Staged rows are read fifty at a time; a reader checking an import wants a long page.
+    const limit = limitOf(req, 50);
     const afterLine = req.query.afterLine === undefined ? 0 : Number(req.query.afterLine);
     if (!Number.isInteger(afterLine) || afterLine < 0 || afterLine > MAX_IMPORT_ROWS + 10)
       fail(400, 'INVALID_CURSOR', 'This page link is invalid. Return to the first page.');
@@ -407,13 +420,20 @@ export class AvailabilityController {
       await batchFor(db, id(batchId));
       const rows = (
         await db.query(
-          `SELECT line_no,data,value,errors,action FROM import_rows WHERE batch_id=$1 AND line_no>$2 ${errorsOnly ? "AND errors<>'[]'" : ''} ORDER BY line_no LIMIT 51`,
+          `SELECT line_no,data,value,errors,action FROM import_rows WHERE batch_id=$1 AND line_no>$2 ${errorsOnly ? "AND errors<>'[]'" : ''} ORDER BY line_no LIMIT ${limit + 1}`,
           [batchId, afterLine],
         )
       ).rows;
       return {
-        items: rows.slice(0, 50),
-        nextCursor: rows.length > 50 ? rows[49].line_no : null,
+        items: rows.slice(0, limit),
+        total: await countRows(
+          db,
+          'import_rows',
+          `batch_id=$1 ${errorsOnly ? "AND errors<>'[]'" : ''}`,
+          [batchId],
+        ),
+        pageSize: limit,
+        nextCursor: rows.length > limit ? rows[limit - 1].line_no : null,
       };
     });
   }

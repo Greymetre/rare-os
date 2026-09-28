@@ -26,7 +26,7 @@ export function listSchedule(
   siteId: string,
   runId: string,
   options: { q?: string; filter?: string | null; cursor?: string | null; limit?: number },
-): Promise<{ items: any[]; nextCursor: string | null }>;
+): Promise<{ items: any[]; nextCursor: string | null; total: number }>;
 export function scheduleResources(db: Db, siteId: string, runId: string): Promise<any[]>;
 export function scheduleBlocks(
   db: Db,

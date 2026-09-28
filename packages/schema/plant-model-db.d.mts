@@ -38,7 +38,7 @@ export function writeBom(db: Db, tenantId: string, doc: Doc): Promise<string>;
 export function listBoms(
   db: Db,
   options: { q?: string; cursor?: string[] | null; limit?: number },
-): Promise<{ items: any[]; nextCursor: string[] | null }>;
+): Promise<{ items: any[]; nextCursor: string[] | null; total: number }>;
 export function checkRoutings(db: Db, docs: Doc[], scope: Set<string> | null): Promise<Doc[]>;
 export function routingDetail(db: Db, id: string): Promise<any | null>;
 export function routingAction(db: Db, doc: Doc): Promise<'create' | 'update' | 'unchanged'>;
@@ -47,5 +47,5 @@ export function listRoutings(
   db: Db,
   siteId: string,
   options: { q?: string; cursor?: string[] | null; limit?: number },
-): Promise<{ items: any[]; nextCursor: string[] | null }>;
+): Promise<{ items: any[]; nextCursor: string[] | null; total: number }>;
 export function plantReadiness(db: Db, siteId: string, today: string): Promise<any[]>;

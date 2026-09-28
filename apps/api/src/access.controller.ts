@@ -1,4 +1,5 @@
 import { requiredPermissions } from '../../../packages/schema/permissions.mjs';
+import { countRows } from '../../../packages/schema/paging.mjs';
 import { Controller, Get, Post, Patch, Delete, Req, Param, HttpException } from '@nestjs/common';
 import type { Request } from 'express';
 import type { PoolClient } from 'pg';
@@ -323,6 +324,8 @@ export class AccessController {
       );
       return {
         items: rows.rows.slice(0, limit).map((r) => ({ ...r, is_own: r.id === actor.role_id })),
+        total: await countRows(db, 'roles r', 'starts_with(lower(r.name),$1)', [q]),
+        pageSize: limit,
         nextCursor: rows.rows.length > limit ? rows.rows[limit - 1].id : null,
       };
     });
@@ -440,6 +443,8 @@ export class AccessController {
       );
       return {
         items: rows.rows.slice(0, limit),
+        total: await countRows(db, 'app_users u', 'starts_with(lower(u.email),$1)', [q]),
+        pageSize: limit,
         nextCursor: rows.rows.length > limit ? rows.rows[limit - 1].id : null,
       };
     });
