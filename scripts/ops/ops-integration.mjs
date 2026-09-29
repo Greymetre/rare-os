@@ -60,18 +60,32 @@ function expectStatus(result, status, label) {
   return result;
 }
 
+// The inbox is polled twice a second for a minute at a time. Mailpit closes idle connections, so a
+// kept-alive one can be reused exactly as it goes away; that is a transport hiccup, not an answer,
+// and the only thing to do with it is ask again.
+async function inbox(path) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await (await fetch(process.env.MAILPIT_URL + path)).json();
+    } catch (failure) {
+      if (attempt >= 3) throw failure;
+      await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
+    }
+  }
+}
 async function alerts() {
-  const list = await (await fetch(process.env.MAILPIT_URL + '/api/v1/messages?limit=200')).json();
+  const list = await inbox('/api/v1/messages?limit=200');
   // Mailpit lists newest first; tests reason about the latest alert, so order oldest → newest.
   const mine = (list.messages || [])
     .filter((m) => m.To?.some((to) => to.Address === alertTo))
     .sort((a, b) => Date.parse(a.Created) - Date.parse(b.Created));
-  return Promise.all(
-    mine.map(async (m) => {
-      const full = await (await fetch(process.env.MAILPIT_URL + '/api/v1/message/' + m.ID)).json();
-      return { subject: full.Subject, text: full.Text };
-    }),
-  );
+  // One message at a time: a burst of twenty parallel reads is what finds the closing connection.
+  const found = [];
+  for (const m of mine) {
+    const full = await inbox('/api/v1/message/' + m.ID);
+    found.push({ subject: full.Subject, text: full.Text });
+  }
+  return found;
 }
 async function waitForAlerts(count) {
   for (let i = 0; i < 30; i++) {
