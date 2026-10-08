@@ -1,5 +1,5 @@
 import { Pager, usePaging } from './pager';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApi } from './api-client';
 import { Messages } from './plant-model';
 
@@ -1727,20 +1727,70 @@ export function Gantt({
   const x = (t: number) => `${(Math.max(0, Math.min(t1, t) - t0) / (t1 - t0)) * 100}%`;
   const w = (a: number, b: number) =>
     `${Math.max(0.15, ((Math.min(t1, b) - Math.max(t0, a)) / (t1 - t0)) * 100)}%`;
+  const blocks = new Map<string, any[]>();
+  // Where each machine sits in the process, taken from the work actually scheduled on it: the
+  // mean operation number of its blocks. Rows in that order make a product's route read straight
+  // down the chart. Ordered by load instead, the same route zig-zags between unrelated rows.
+  const step = new Map<string, { sum: number; n: number }>();
+  for (const b of data?.blocks ?? []) {
+    const k = b.resource_id + '|' + b.machine;
+    if (!blocks.has(k)) blocks.set(k, []);
+    blocks.get(k)!.push(b);
+    const at = step.get(b.resource_id) ?? { sum: 0, n: 0 };
+    step.set(b.resource_id, { sum: at.sum + Number(b.sequence), n: at.n + 1 });
+  }
+  // A machine with nothing in this window has no place in the flow, so it goes last.
+  const place = (id: string) => {
+    const at = step.get(id);
+    return at ? at.sum / at.n : 1e9;
+  };
+  const ordered = [...(data?.resources ?? [])].sort(
+    (a, b) =>
+      place(a.resource_id) - place(b.resource_id) || String(a.code).localeCompare(String(b.code)),
+  );
   const lanes: { key: string; resource: any; machine: number }[] = [];
-  for (const r of data?.resources ?? []) {
+  for (const r of ordered) {
     if (resource && r.resource_id !== resource) continue;
     if (!resource && Number(r.run_min) === 0) continue;
     for (let m = 1; m <= r.machines; m++)
       lanes.push({ key: r.resource_id + '|' + m, resource: r, machine: m });
   }
-  const blocks = new Map<string, any[]>();
-  for (const b of data?.blocks ?? []) {
-    const k = b.resource_id + '|' + b.machine;
-    if (!blocks.has(k)) blocks.set(k, []);
-    blocks.get(k)!.push(b);
-  }
   const lastDay = Math.max(0, (h?.dates?.length ?? 1) - 1);
+  // One order crosses several machines, and on a machine Gantt its operations sit rows apart with
+  // other orders in between. Hovering one of them traces the whole route: every operation of that
+  // order is lit up and a line is drawn through them in route order, so the path a product takes
+  // through the plant can be read off the chart.
+  const chart = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<any>(null);
+  const [trail, setTrail] = useState<{ x: number; y: number }[]>([]);
+  const [tip, setTip] = useState<{ x: number; y: number; right: boolean } | null>(null);
+  useEffect(() => {
+    const root = chart.current;
+    if (!hover || !root) {
+      setTrail([]);
+      setTip(null);
+      return;
+    }
+    const box = root.getBoundingClientRect();
+    // Measured rather than calculated: lane heights and the horizontal scroll are the browser's
+    // to decide, and the line has to land on the blocks wherever they actually are.
+    const marks = [...root.querySelectorAll<HTMLElement>('[data-order]')]
+      .filter((n) => n.dataset.order === hover.production_order_id)
+      .map((n) => {
+        const r = n.getBoundingClientRect();
+        return {
+          seq: Number(n.dataset.seq),
+          own: n.dataset.seq === String(hover.sequence),
+          x: r.left + r.width / 2 - box.left,
+          y: r.top + r.height / 2 - box.top,
+        };
+      })
+      .sort((a, b) => a.seq - b.seq);
+    setTrail(marks.map(({ x, y }) => ({ x, y })));
+    const here = marks.find((m) => m.own) ?? marks[0];
+    if (here) setTip({ x: here.x, y: here.y, right: here.x > box.width * 0.55 });
+  }, [hover]);
+  const lane = (id: string) => (data?.resources ?? []).find((r: any) => r.resource_id === id);
   return (
     <>
       <Messages error={error} notice="" />
@@ -1749,8 +1799,9 @@ export function Gantt({
           <div>
             <h2>Gantt, machine level</h2>
             <p className="panel-sub">
-              Every operation on its machine, in plant working time. Hatched blocks are changeovers.
-              Hover a block for the order, item, quantity and times.
+              Every operation on its machine, in plant working time, with machines stacked in
+              process order. Hatched blocks are changeovers. Hover a block to trace its order: every
+              operation of that order lights up and a line joins them, top to bottom.
             </p>
           </div>
           <ViewSwitch view={view} setView={setView} publication={data?.publication} />
@@ -1760,7 +1811,7 @@ export function Gantt({
             Resource
             <select value={resource} onChange={(e) => setResource(e.target.value)}>
               <option value="">All loaded resources</option>
-              {(data?.resources ?? []).map((r: any) => (
+              {ordered.map((r: any) => (
                 <option key={r.resource_id} value={r.resource_id}>
                   {r.code} — {r.name}
                   {r.drum ? ' (drum)' : ''}
@@ -1799,64 +1850,99 @@ export function Gantt({
         {data && !h?.day_minutes && <div className="empty">{data.empty ?? 'No schedule.'}</div>}
         {h?.day_minutes > 0 && (
           <div className="gantt" role="img" aria-label="Machine Gantt chart">
-            <div className="gantt-row gantt-axis">
-              <div className="gantt-label" />
-              <div className="gantt-track">
-                {Array.from({ length: span }, (_, i) => (
-                  <span
-                    key={i}
-                    className="gantt-day"
-                    style={{ left: `${(i / span) * 100}%`, width: `${100 / span}%` }}
-                  >
-                    {h.dates[from + i] ?? ''}
-                  </span>
-                ))}
-              </div>
-            </div>
-            {lanes.map((l) => (
-              <div key={l.key} className={'gantt-row' + (l.resource.drum ? ' drum' : '')}>
-                <div className="gantt-label">
-                  <strong>{l.resource.code}</strong> #{l.machine}
-                  {l.resource.drum && l.machine === 1 && <span className="chip">drum</span>}
-                </div>
+            <div className="gantt-chart" ref={chart} onMouseLeave={() => setHover(null)}>
+              <div className="gantt-row gantt-axis">
+                <div className="gantt-label" />
                 <div className="gantt-track">
                   {Array.from({ length: span }, (_, i) => (
-                    <span key={i} className="gantt-grid" style={{ left: `${(i / span) * 100}%` }} />
+                    <span
+                      key={i}
+                      className="gantt-day"
+                      style={{ left: `${(i / span) * 100}%`, width: `${100 / span}%` }}
+                    >
+                      {h.dates[from + i] ?? ''}
+                    </span>
                   ))}
-                  {(blocks.get(l.key) ?? []).flatMap((b: any) => {
-                    const eff = Number(b.efficiency_pct) / 100;
-                    const start = Number(b.start_min),
-                      finish = Number(b.finish_min),
-                      chg = Number(b.changeover_min) / eff;
-                    const out = [];
-                    if (chg > 0 && start > t0)
-                      out.push(
-                        <span
-                          key={b.order_no + b.operation_code + 'c'}
-                          className="gantt-block changeover"
-                          style={{ left: x(start - chg), width: w(start - chg, start) }}
-                          title={`Changeover to ${b.item}: ${num(b.changeover_min, 0)} min`}
-                        />,
-                      );
-                    out.push(
-                      <span
-                        key={b.order_no + b.operation_code}
-                        className="gantt-block"
-                        style={{
-                          left: x(start),
-                          width: w(start, finish),
-                          background: `hsl(${hue(b.item)},45%,48%)`,
-                        }}
-                        title={`${b.order_no} · ${b.item} × ${num(b.quantity)} · ${b.operation_code}\n${clock(h, start)} → ${clock(h, finish)}`}
-                      >
-                        {b.order_no}
-                      </span>,
-                    );
-                    return out;
-                  })}
                 </div>
               </div>
-            ))}
+              {lanes.map((l) => (
+                <div key={l.key} className={'gantt-row' + (l.resource.drum ? ' drum' : '')}>
+                  <div className="gantt-label">
+                    <strong>{l.resource.code}</strong> #{l.machine}
+                    {l.resource.drum && l.machine === 1 && <span className="chip">drum</span>}
+                  </div>
+                  <div className="gantt-track">
+                    {Array.from({ length: span }, (_, i) => (
+                      <span
+                        key={i}
+                        className="gantt-grid"
+                        style={{ left: `${(i / span) * 100}%` }}
+                      />
+                    ))}
+                    {(blocks.get(l.key) ?? []).flatMap((b: any) => {
+                      const eff = Number(b.efficiency_pct) / 100;
+                      const start = Number(b.start_min),
+                        finish = Number(b.finish_min),
+                        chg = Number(b.changeover_min) / eff;
+                      const out = [];
+                      if (chg > 0 && start > t0)
+                        out.push(
+                          <span
+                            key={b.order_no + b.operation_code + 'c'}
+                            className="gantt-block changeover"
+                            style={{ left: x(start - chg), width: w(start - chg, start) }}
+                            title={`Changeover to ${b.item}: ${num(b.changeover_min, 0)} min`}
+                          />,
+                        );
+                      const linked = hover?.production_order_id === b.production_order_id;
+                      out.push(
+                        <span
+                          key={b.order_no + b.operation_code}
+                          className={
+                            'gantt-block' +
+                            (linked ? ' linked' : '') +
+                            (linked && hover.sequence === b.sequence ? ' focus' : '')
+                          }
+                          data-order={b.production_order_id}
+                          data-seq={b.sequence}
+                          style={{
+                            left: x(start),
+                            width: w(start, finish),
+                            background: `hsl(${hue(b.item)},45%,48%)`,
+                          }}
+                          onMouseEnter={() => setHover(b)}
+                        >
+                          {b.order_no}
+                        </span>,
+                      );
+                      return out;
+                    })}
+                  </div>
+                </div>
+              ))}
+              {trail.length > 1 && (
+                <svg className="gantt-trail" aria-hidden="true">
+                  <polyline points={trail.map((p) => `${p.x},${p.y}`).join(' ')} />
+                  {trail.map((p, i) => (
+                    <circle key={i} cx={p.x} cy={p.y} r="3.5" />
+                  ))}
+                </svg>
+              )}
+              {hover && tip && (
+                <div
+                  className={'gantt-tip' + (tip.right ? ' left' : '')}
+                  role="status"
+                  style={{ left: tip.x, top: tip.y }}
+                >
+                  <strong>{hover.order_no}</strong> · {hover.item} × {num(hover.quantity)} ·{' '}
+                  {lane(hover.resource_id)?.code} {lane(hover.resource_id)?.name} M/c{' '}
+                  {hover.machine} · {num(hover.run_min, 0)} min (
+                  {num(Number(hover.run_min) / Number(hover.quantity))} min/u) ·{' '}
+                  {clock(h, hover.start_min)} to {clock(h, hover.finish_min)}
+                  {hover.promise_date ? ` · promised ${hover.promise_date}` : ''}
+                </div>
+              )}
+            </div>
             {data.truncated && (
               <p className="cell-sub">
                 Too many operations in this window: choose one resource or fewer days.

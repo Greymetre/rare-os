@@ -252,6 +252,9 @@ test('AV-6 scheduler: sequence with protected grouping, drum, timing, load, Gant
     const gantt = await ok(`plants/${plantId}/schedule/gantt?days=3&resource=${cut.resource_id}`);
     expect(gantt.blocks.map((b: any) => b.order_no)).toEqual([p + '-WO1', p + '-WO3', p + '-WO2']);
     expect(Number(gantt.blocks[2].changeover_min)).toBe(60);
+    // A block carries what it takes to find the rest of its order and to describe itself.
+    expect(gantt.blocks[0]).toMatchObject({ sequence: 10, promise_date: expect.any(String) });
+    expect(gantt.blocks[0].production_order_id).toBeTruthy();
 
     // Readiness reports the order without a routing.
     const readiness = await ok(`plants/${plantId}/readiness`);
@@ -259,27 +262,33 @@ test('AV-6 scheduler: sequence with protected grouping, drum, timing, load, Gant
       status: 'missing',
     });
 
-    // Publish exactly the reviewed calculation, once.
+    // Publish exactly the reviewed calculation, once. A calculation that has been overtaken
+    // cannot be published, so the run reviewed above is first made stale by a fresh one; asking
+    // for a fixed run number would only test this while the fixture happened to produce two runs.
+    const stale = Number(status.current.run_no);
+    await ok('planning/runs', 'POST', {});
+    const fresh = await recalculated();
+    expect(Number(fresh.current.run_no)).toBeGreaterThan(stale);
     await refused(
       `plants/${plantId}/schedule/publish`,
       'POST',
-      { runNo: 1 },
+      { runNo: stale },
       409,
       /no longer current/,
     );
     await ok(`plants/${plantId}/schedule/publish`, 'POST', {
-      runNo: status.current.run_no,
+      runNo: fresh.current.run_no,
       note: 'Shift plan',
     });
     await refused(
       `plants/${plantId}/schedule/publish`,
       'POST',
-      { runNo: status.current.run_no },
+      { runNo: fresh.current.run_no },
       409,
       /already the published schedule/,
     );
     expect((await schedule('published')).publication).toMatchObject({
-      run_no: Number(status.current.run_no),
+      run_no: Number(fresh.current.run_no),
       note: 'Shift plan',
       current: true,
     });
@@ -347,6 +356,36 @@ test('AV-6 scheduler: sequence with protected grouping, drum, timing, load, Gant
         .filter({ hasText: p + 'CUT' })
         .first(),
     ).toBeVisible();
+    // Machines are stacked in process order, so cutting comes above packing and a route reads
+    // straight down instead of jumping between rows.
+    await expect(page.locator('.gantt-row:not(.gantt-axis) .gantt-label').first()).toContainText(
+      p + 'CUT',
+    );
+    await expect(page.locator('.gantt-row:not(.gantt-axis) .gantt-label').last()).toContainText(
+      p + 'PACK',
+    );
+    // WO1 is made of FG1, which is cut and then packed, so it appears on two machines. Hovering
+    // either one traces the route: both light up, a line joins them, and the block says its piece.
+    const wo1 = page.locator('.gantt-block', { hasText: p + '-WO1' });
+    await expect(wo1).toHaveCount(2);
+    await expect(page.locator('.gantt-trail')).toHaveCount(0);
+    await wo1.first().hover();
+    await expect(page.locator('.gantt-block.linked')).toHaveCount(2);
+    await expect(page.locator('.gantt-block.focus')).toHaveCount(1);
+    await expect(page.locator('.gantt-trail polyline')).toBeVisible();
+    const tip = page.locator('.gantt-tip');
+    await expect(tip).toContainText(p + '-WO1');
+    await expect(tip).toContainText('min/u');
+    await expect(tip).toContainText('promised');
+    // WO2 is a different order on the same machine, and it is not part of this route.
+    await expect(page.locator('.gantt-block.linked').filter({ hasText: p + '-WO2' })).toHaveCount(
+      0,
+    );
+    await page.screenshot({ path: '.local/gantt-route-trace.png', fullPage: true });
+    // Leaving the chart puts it back the way it was.
+    await page.locator('.panel-heading').first().hover();
+    await expect(page.locator('.gantt-block.linked')).toHaveCount(0);
+    await expect(page.locator('.gantt-trail')).toHaveCount(0);
     await openScreen(page, 'Resource Load Graph');
     await expect(
       page

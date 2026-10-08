@@ -836,9 +836,13 @@ export async function scheduleBlocks(
   const rows = (
     await db.query(
       `SELECT x.resource_id,x.machine,x.operation_code,x.changeover_min,x.run_min,x.start_min,x.finish_min,
-         o.order_no,i.code AS item,o.quantity,res.efficiency_pct
+         x.production_order_id,x.sequence,
+         o.order_no,i.code AS item,o.quantity,res.efficiency_pct,
+         to_char(so.promise_date,'DD-Mon') AS promise_date
        FROM schedule_operations x JOIN production_orders o ON o.id=x.production_order_id JOIN items i ON i.id=o.item_id
        JOIN resources res ON res.id=x.resource_id
+       LEFT JOIN schedule_orders so ON so.run_id=x.run_id AND so.site_id=x.site_id
+         AND so.production_order_id=x.production_order_id
        WHERE ${where} ORDER BY x.resource_id,x.machine,x.start_min LIMIT $${params.length}`,
       params,
     )
