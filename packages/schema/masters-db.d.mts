@@ -1,7 +1,12 @@
 type Db = {
   query(text: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
 };
-type Row = { line?: number; value: any; errors: { column: string; message: string }[] };
+type Row = {
+  id?: string;
+  line?: number;
+  value: any;
+  errors: { column: string; message: string }[];
+};
 export function resolveReferences(db: Db, kind: string, rows: Row[]): Promise<Row[]>;
 export function existingRecords(db: Db, kind: string, rows: Row[]): Promise<Map<string, any>>;
 export function decideAction(
@@ -28,3 +33,11 @@ export function updateMaster(
   value: any,
   active: boolean,
 ): Promise<void>;
+export function removalBlockers(db: Db, kind: string, id: string): Promise<string[]>;
+export function removeMaster(
+  db: Db,
+  kind: string,
+  id: string,
+  actorId: string | null,
+  reason: string,
+): Promise<boolean>;

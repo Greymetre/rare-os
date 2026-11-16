@@ -9,6 +9,7 @@ x-app-env: &app-env
   SESSION_SECRET: ${SESSION_SECRET}
   OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
   IDENTITY_CLIENT_SECRET: ${IDENTITY_CLIENT_SECRET:?Run setup or add IDENTITY_CLIENT_SECRET}
+  FILE_STORE_DIR: /var/lib/rare-os/files
   EMAIL_ENABLED: 'true'
   LOCAL_EMAIL: 'true'
   COOKIE_SECURE: 'false'
@@ -118,6 +119,8 @@ services:
     <<: *security
     build: { context: ., dockerfile: infra/docker/Dockerfile, target: runtime }
     environment: *app-env
+    # Photos and documents (RCH-0): bytes on a volume, only their handles in the database.
+    volumes: [filedata:/var/lib/rare-os/files]
     depends_on:
       seed: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -200,9 +203,12 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-no-reply@rareos.local}
-    volumes: [opsstate:/state]
+      FILE_STORE_DIR: /files
+    # Read-only: the backup job reads the photo volume, it never writes to it.
+    volumes: [opsstate:/state, 'filedata:/files:ro']
     logging: *logging
 volumes:
   pgdata:
   redisdata:
   opsstate:
+  filedata:

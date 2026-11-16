@@ -1080,6 +1080,129 @@ footer span {
 .access-note {
   margin-top: 20px;
 }
+/* RCH-1: the numbers above the customer register — what the reader should look at first. */
+.tile-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  background: var(--line);
+}
+.tile {
+  flex: 1 1 140px;
+  background: white;
+  padding: 14px 16px;
+}
+.tile strong {
+  display: block;
+  font-size: 22px;
+  line-height: 1.2;
+}
+.tile span {
+  color: #566d9e;
+  font-size: 12px;
+}
+/* A filter that sits in a toolbar beside the search box rather than stacked in a form. */
+.inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #566d9e;
+}
+.inline-field select {
+  width: auto;
+}
+/* One section of a customer's own form, as its type groups the questions. */
+.form-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px 14px;
+  margin: 12px 0 0;
+  grid-column: 1 / -1;
+}
+.form-section legend {
+  padding: 0 6px;
+  color: #566d9e;
+  font-size: 12px;
+}
+.answer-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px 20px;
+  margin: 8px 0 0;
+}
+.answer-list dt {
+  color: #566d9e;
+  font-size: 12px;
+}
+.answer-list dd {
+  margin: 0;
+}
+/* The location panel: the plane beside the controls, stacking on a narrow screen. */
+.geo-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 20px;
+  padding: 16px;
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .geo-layout {
+    grid-template-columns: 1fr;
+  }
+}
+.geo-plane {
+  margin: 0;
+}
+.geo-plane svg {
+  width: 100%;
+  height: auto;
+  background: #f2f1ec;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.geo-plane figcaption {
+  color: #566d9e;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.geo-plane line {
+  stroke: #d8d5cc;
+  stroke-width: 1;
+}
+.geo-radius {
+  fill: rgba(86, 109, 158, 0.12);
+  stroke: #566d9e;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+.geo-tag {
+  fill: #20264a;
+}
+.geo-neighbour {
+  fill: #b97f1e;
+}
+.geo-pending {
+  fill: white;
+  stroke: #b33d31;
+  stroke-width: 2;
+}
+.geo-move {
+  stroke: #b33d31;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+/* RCH-0: a field rep's photo, shown at whatever size it was taken without stretching the dialog. */
+.rep-photo {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  margin: 0 auto 16px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #f2f1ec;
+}
 .access-note a {
   text-decoration: underline;
   color: inherit;

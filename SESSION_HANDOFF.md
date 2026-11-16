@@ -1,3 +1,143 @@
+# Current handoff — 16 November 2026 (RCH-1 customers and beats, Claude Code)
+
+RCH-0 and RCH-1 are both in this change, pushed together on the user's instruction. Live was
+`542760e` with 28 migrations; this adds migrations 029 and 030.
+
+## What RCH-1 added
+
+- **Migration `030_reach_customers.sql`**: `reach_settings` (the distances that decide a location
+  tag), `customer_types`, `customer_form_fields` and `customer_form_rules`, `beats`,
+  `trade_customers`, `beat_outlets`, `beat_assignments`, `customer_geo_log`. Row-level scoped and
+  soft-deleted like the rest; `beat_outlets` is the one table the runtime role may DELETE from,
+  because a stop leaving a round is not a record to keep.
+- **A customer form that each type defines for itself.** `customer_form_fields` holds the fields
+  and `customer_form_rules` says, per type, whether each one is required, optional or not asked
+  (R/O/X). `packages/engines/customer-form.mjs` turns those rows into field descriptors that
+  `validateFields` already understands, so one matrix drives the form, the validation and the CSV.
+  A value sent for a field the type does not ask for is refused rather than quietly stored.
+- **Beats and rounds.** A beat carries its frequency, run days and week parity, with a check that
+  only a fortnightly beat may pick odd or even weeks. Stops are ordered 1..500 under a
+  `DEFERRABLE INITIALLY IMMEDIATE` unique constraint, so a reorder can swap two stops past each
+  other inside one transaction instead of tripping over itself. Assignments are dated spells with
+  one open spell per beat.
+- **Location tagging.** `packages/engines/geo.mjs` is pure: haversine distance in metres and one
+  decision — whether a tag counts as verified, and whether moving an existing customer needs
+  approval. Beyond the retag distance the change is held as `PENDING` in `customer_geo_log` until
+  someone decides it; duplicates within the configured radius are surfaced before a new customer
+  is accepted.
+- **Approvals and settings** screens, plus the customer register with tiles, search, filters, CSV,
+  the per-type form, status changes and removal with a reason — `reach-customers.controller.ts`
+  (20 routes) and `reach-customers.tsx`.
+
+## Defect found and fixed
+
+The create handler read the customer back **before** `syncBeatMembership` wrote the beat row, so a
+new customer on a beat was confirmed with "at stop null" rather than its stop number. The record is
+now read again after the sync. The row itself was always correct — only the message was wrong —
+but it is exactly the kind of ordering mistake the browser regression exists to catch, and it was
+the one assertion failing in `tests/reach-customers.spec.ts`.
+
+## Tests
+
+- Unit: `tests/reach-customers.test.mjs`, `tests/geo.test.mjs`, and RCH-1 assertions in
+  `tests/security-baseline.test.mjs` (row-level scoping of the new tables, the deferrable stop
+  constraint, one pending retag per customer, coordinate and enum validation at the controller).
+- Browser/API + VAPT: `tests/reach-customers.spec.ts` — the per-type form, a beat round and its
+  reorder, the three kinds of location tag, the retag approval flow, duplicate detection, plus
+  permission denial and cross-company invisibility.
+- Manual steps in `docs/REACH_TEST_GUIDE_HINGLISH.md` (12 RCH-1 sections); coverage rows in
+  `docs/REGRESSION_TESTING_HINGLISH.md`.
+
+## Before any push
+
+Regression `mwk98d4x-ac990cda`: **PASSED** — all eleven steps, 34/34 browser scenarios, 171 unit
+tests, database isolation and privileges, the demo seeder, application and identity restore, and
+the offsite backup and restore drill.
+
+Three assertions in `tests/reach-foundation.spec.ts` had to be loosened first. RCH-0 was written
+when Reach held nothing else, so it pinned the readiness checklist to six rows, the import picker
+to five kinds and the master catalogue to five Reach masters. RCH-1 legitimately adds five of each,
+and the spec read those as failures. Each now looks for the rows, kinds and masters this milestone
+owns rather than pinning the whole list, so RCH-2..RCH-8 will not break it again. No product code
+changed for any of the three.
+
+Nothing to change in `.env`. After deploying, `Reach > Readiness` should show every RCH-0 and RCH-1
+row ready; the customer register starts empty until customer types and a form are set up under
+`Reach > Customer setup`.
+
+---
+
+# Current handoff — 28 October 2026 (RCH-0 Reach foundation, Claude Code)
+
+Reach milestone plan (`RARE_OS_Reach_Milestone_Plan.pdf`, 9 milestones RCH-0..RCH-8) was produced
+from the client's 27-Oct-2026 developer handover; the client message asking for approval was
+drafted. On the user's instruction, RCH-0 was then built **locally only**. Nothing committed,
+pushed or deployed. Live stays at `542760e` with 28 migrations.
+
+## What RCH-0 added
+
+- **Migration `029_reach_foundation.sql`** (applied to the local stack; live still has 28):
+  `territories`, `rep_grades`, `leave_types`, `field_reps`, `holidays`, `stored_files`. All
+  row-level scoped per company. Soft delete via `deleted_at`/`deleted_by`/`delete_reason`; every
+  uniqueness rule is a partial index over live rows, so a removed code is free again. The runtime
+  role is granted SELECT/INSERT/UPDATE only — **never DELETE** on field data.
+- **Five field masters registered in `MASTER_KINDS`**, so forms, validation, paging, CSV template,
+  import and audit come from the machinery Availability already uses. Each kind now carries
+  `module`, `readPermission`, `deletePermission` and `softDelete`; `masters.controller` gained a
+  `DELETE` route, per-kind read permission and a catalogue filtered to what the caller may read.
+  Territories are two levels at most (no self parent, no parent that has a parent, no new level
+  under a territory that already has children); a field rep is a master first and a login second,
+  linked by the login's email and allowed to stay blank.
+- **Photo and document storage on a disk volume**, not in the database: `packages/engines/file-bytes.mjs`
+  decides what may be stored from the bytes themselves (type allowlist, declared-type match, 8 MB
+  cap, 10,000-pixel cap), `apps/api/src/file-store.ts` does the disk side with a path derived from
+  the file's own sha256. New permissions `reach.read`, `reach.manage`, `reach.delete`, `files.read`,
+  `files.upload`. `apps/api/src/reach.controller.ts` has the readiness checklist, upload, serve
+  (stored type, `nosniff`, PDF as attachment), removal and a rep's photo.
+- **Web**: `Reach` in the sidebar with its own screen tree, mirroring Availability. `MasterTable`,
+  `Modal` and the import screens were extracted into `master-table.tsx`, `modal.tsx` and
+  `imports.tsx` so both modules draw the same screens; the import screens take a `module` and show
+  only their own kinds. The browser scales a photo to 1600 px before upload.
+- **Backup**: the photo volume gets its own restic snapshot, tag `rare-os-files`. The ops image
+  joins group 1000 (`appdata`) to read the volume as a non-root user; the mount is read-only. The
+  files directory is `2750` and setgid so every photo directory inherits the group.
+
+## Defects found and fixed while building
+
+1. The upload wrote bytes to disk **before** the permission check, so any signed-in person could
+   fill the volume with refused requests. Moved inside `mutate`. Regression now asserts a refused
+   upload leaves the disk unchanged.
+2. The staging filename was built from the storage key, which carries directory separators, so
+   every real upload failed with a 503. Now built from the file's basename. Found only by the
+   browser regression — the local checks had never performed an actual upload.
+3. The ops container (uid 10001) could not read the volume, so **photos were silently not being
+   backed up**. Fixed with the shared group above and locked down in `security-baseline.test.mjs`.
+4. Two holidays on one date produced identical `Remove holiday <date>` labels. Row labels now
+   carry the date and the name.
+5. `npm audit` reported 6 new upstream advisories that blocked `verify:quick` (multer, vite,
+   `@nestjs/*`, express, plus transitive qs/body-parser/ip-address). Bumped to multer 2.5.0,
+   vite 8.3.5, NestJS 12.3.2, express 5.3.0 — **0 vulnerabilities**.
+
+## Tests
+
+- Unit: `tests/reach-masters.test.mjs`, `tests/file-bytes.test.mjs`, plus new RCH-0 assertions in
+  `tests/security-baseline.test.mjs` and the master-kind invariants in `tests/masters.test.mjs`.
+- Browser/API + VAPT: `tests/reach-foundation.spec.ts` — the milestone's own acceptance (rep master
+  from a file, selfie uploaded and served back, a removed record off the list but in the database)
+  plus permission denial per permission, cross-company invisibility of field records and files,
+  upload refusals, and the CSRF rejection.
+- Coverage guide rows added to `docs/REGRESSION_TESTING_HINGLISH.md`; manual steps in
+  `docs/REACH_TEST_GUIDE_HINGLISH.md`; photo restore in `docs/OPERATIONS_HINGLISH.md`.
+
+## Before any push
+
+Nothing to change in `.env`: `FILE_STORE_DIR` has a default and the `filedata` volume is created by
+compose. After deploying, `Reach > Readiness` should show "Photo and document storage" ready. The
+offsite backup will start taking a second snapshot tagged `rare-os-files` once the volume exists.
+MFA exemption for `admin@rareos.local` runs to **25 Dec 2026** on local and live.
+
+---
+
 # Current handoff — 16 September 2026 (evening, Claude Code)
 
 Point 5 operations (ops image, offsite restic backups, restore drill, monitor, alerts, systemd timers) and Point 4 rollback (`scripts/deploy/rollback.sh` + full local rehearsal) are implemented and verified locally; worker healthcheck defect fixed. Final regression `mu45c9k8-c28461ab` PASSED. Details: docs/VALIDATION.md (last section), runbook docs/OPERATIONS_HINGLISH.md. Still no commit/push/live deployment.

@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -30,6 +31,10 @@ const stateDir = env.OPS_STATE_DIR || '/state';
 const site = env.OPS_SITE || (env.APP_URL ? new URL(env.APP_URL).host : 'rare-os');
 const workDir = '/tmp/rare-os-backup';
 const restoreDir = '/tmp/rare-os-drill';
+// RCH-0: photos and documents live on a volume, not in the database, so they need a snapshot of
+// their own. It carries its own tag, which keeps the database snapshot and the restore drill —
+// which restores a whole snapshot — exactly as they were.
+const filesDir = env.FILE_STORE_DIR || '';
 
 function run(program, args, { input, cwd } = {}) {
   const r = spawnSync(program, args, {
@@ -172,15 +177,44 @@ async function backup() {
       })
       .find((x) => x.message_type === 'summary');
     if (!summary?.snapshot_id) throw Error('Backup finished without a snapshot id');
+    // The uploaded files, when this deployment has the volume. No volume means no photos yet, so
+    // there is nothing to snapshot; a volume that is there and fails to snapshot fails the backup.
+    let filesSnapshotId = null;
+    if (filesDir && existsSync(filesDir)) {
+      const filesOutput = run('restic', [
+        'backup',
+        '--json',
+        '--tag',
+        'rare-os-files',
+        '--host',
+        'rare-os',
+        filesDir,
+      ]);
+      filesSnapshotId =
+        filesOutput
+          .split('\n')
+          .map((line) => {
+            try {
+              return JSON.parse(line);
+            } catch {
+              return {};
+            }
+          })
+          .find((x) => x.message_type === 'summary')?.snapshot_id ?? null;
+      if (!filesSnapshotId) throw Error('File backup finished without a snapshot id');
+    }
     run('restic', retentionArgs(config));
     writeState('backup', {
       ...state,
       lastSuccessAt: new Date().toISOString(),
       snapshotId: summary.snapshot_id,
+      filesSnapshotId,
       bytes: manifest.files.reduce((sum, f) => sum + f.bytes, 0),
     });
     console.log(
-      `PASS offsite encrypted backup ${summary.snapshot_id.slice(0, 8)}; retention applied.`,
+      `PASS offsite encrypted backup ${summary.snapshot_id.slice(0, 8)}${
+        filesSnapshotId ? ' and files ' + filesSnapshotId.slice(0, 8) : ''
+      }; retention applied.`,
     );
   } catch (error) {
     const message = redact(error.message, env);

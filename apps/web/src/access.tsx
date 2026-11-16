@@ -1,5 +1,6 @@
 import { Pager, usePaging } from './pager';
 import { PermissionPicker } from './permission-picker';
+import { Modal } from './modal';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 type Permission = { code: string; module: string; description: string };
 type Role = {
@@ -36,40 +37,6 @@ async function request<T>(path: string, csrf: string, method = 'GET', body?: unk
   const data = await res.json();
   if (!res.ok) throw Error(data.error?.message || 'Request failed. Please retry.');
   return data;
-}
-function Modal({
-  title,
-  children,
-  onClose,
-}: {
-  title: string;
-  children: React.ReactNode;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    ref.current?.showModal();
-    return () => ref.current?.close();
-  }, []);
-  return (
-    <dialog
-      ref={ref}
-      className="access-dialog"
-      aria-label={title}
-      onCancel={(e) => {
-        e.preventDefault();
-        onClose();
-      }}
-    >
-      <div className="modal-title">
-        <h2>{title}</h2>
-        <button type="button" className="text-button" aria-label="Close form" onClick={onClose}>
-          ✕
-        </button>
-      </div>
-      {children}
-    </dialog>
-  );
 }
 export function AccessManagement({
   kind,

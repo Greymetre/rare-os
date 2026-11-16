@@ -8,6 +8,7 @@ import { Plants } from './plants';
 import { AccessManagement } from './access';
 import { isLocalHost } from './environment';
 import { Availability } from './availability';
+import { Reach } from './reach';
 type User = { name: string; email: string; company: string; role: string; permissions: string[] };
 type Permission = { code: string; module: string; description: string };
 type Overview = {
@@ -92,12 +93,23 @@ function App() {
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [filter, setFilter] = useState('');
-  // Availability keeps its screens in the sidebar, under the module, as the handover does.
+  // A module keeps its own screens in the sidebar, under the module, as the handover does.
   const [availabilityTab, setAvailabilityTab] = useState('Readiness');
   const [availabilityNav, setAvailabilityNav] = useState<[string, string, string[]][]>([]);
+  const [reachTab, setReachTab] = useState('Readiness');
+  const [reachNav, setReachNav] = useState<[string, string, string[]][]>([]);
   const [collapsed, setCollapsed] = useState('');
+  // Every module with screens of its own, so the sidebar draws them all the same way.
+  const modules: Record<
+    string,
+    { nav: [string, string, string[]][]; tab: string; setTab: (tab: string) => void }
+  > = {
+    Availability: { nav: availabilityNav, tab: availabilityTab, setTab: setAvailabilityTab },
+    Reach: { nav: reachNav, tab: reachTab, setTab: setReachTab },
+  };
+  const openModule = modules[page];
   const groupOfTab =
-    availabilityNav.find(([, , screens]) => screens.includes(availabilityTab))?.[0] ?? '';
+    openModule?.nav.find(([, , screens]) => screens.includes(openModule.tab))?.[0] ?? '';
   const openGroup = collapsed === groupOfTab ? '' : groupOfTab;
   const setOpenGroup = (group: string) => setCollapsed(group ? '' : groupOfTab);
   const [requestVersion, setRequestVersion] = useState(0);
@@ -310,6 +322,7 @@ function App() {
     ['Users', '♙', 'users.read'],
     ['Roles & permissions', '◇', 'roles.read'],
     ['Availability', '▤', 'masters.read|planning.read'],
+    ['Reach', '◎', 'reach.read'],
     ['Audit log', '≡', 'audit.read'],
   ];
   return (
@@ -326,10 +339,10 @@ function App() {
                   <span aria-hidden="true">{icon}</span>
                   {label}
                 </button>
-                {/* A module's own screens sit under it, one engine open at a time. */}
-                {label === 'Availability' && page === 'Availability' && (
+                {/* A module's own screens sit under it, one group open at a time. */}
+                {page === label && modules[label] && (
                   <div className="module-tree">
-                    {availabilityNav.map(([group, engine, screens]) => {
+                    {modules[label].nav.map(([group, engine, screens]) => {
                       const open = group === openGroup;
                       return (
                         <div key={group} className="module-group">
@@ -337,7 +350,7 @@ function App() {
                             className={'module-group-head' + (open ? ' open' : '')}
                             aria-expanded={open}
                             onClick={() =>
-                              open ? setOpenGroup('') : setAvailabilityTab(screens[0] ?? '')
+                              open ? setOpenGroup('') : modules[label].setTab(screens[0] ?? '')
                             }
                           >
                             <span className="caret" aria-hidden="true" />
@@ -352,9 +365,9 @@ function App() {
                                 <button
                                   key={screen}
                                   role="tab"
-                                  aria-selected={availabilityTab === screen}
-                                  className={availabilityTab === screen ? 'selected' : ''}
-                                  onClick={() => setAvailabilityTab(screen)}
+                                  aria-selected={modules[label].tab === screen}
+                                  className={modules[label].tab === screen ? 'selected' : ''}
+                                  onClick={() => modules[label].setTab(screen)}
                                 >
                                   {screen}
                                 </button>
@@ -615,6 +628,16 @@ function App() {
                   tab={availabilityTab}
                   onTab={setAvailabilityTab}
                   onNav={setAvailabilityNav}
+                />
+              )}
+              {page === 'Reach' && (
+                <Reach
+                  csrf={csrf}
+                  permissions={user.permissions}
+                  refreshKey={requestVersion}
+                  tab={reachTab}
+                  onTab={setReachTab}
+                  onNav={setReachNav}
                 />
               )}
             </>

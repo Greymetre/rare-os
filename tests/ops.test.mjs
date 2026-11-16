@@ -33,11 +33,14 @@ test('offsite backup refuses missing, weak or on-server repository settings', ()
   for (const repo of ['/var/backups/rare', 'local:/srv/backup'])
     assert.throws(() => backupConfig({ ...good, RESTIC_REPOSITORY: repo }), /off-server/);
   assert.throws(() => backupConfig({ ...good, BACKUP_KEEP_DAILY: '0' }), /positive/);
-  assert.deepEqual(retentionArgs(backupConfig({ ...good, BACKUP_KEEP_MONTHLY: '12' })).slice(-3), [
-    '--keep-monthly',
-    '12',
-    '--prune',
-  ]);
+  const retention = retentionArgs(backupConfig({ ...good, BACKUP_KEEP_MONTHLY: '12' }));
+  assert.deepEqual(retention.slice(-3), ['--keep-monthly', '12', '--prune']);
+  // Both snapshot kinds are pruned: the databases and the photo volume. A snapshot kind left out
+  // here would pile up in the offsite repository for ever.
+  assert.deepEqual(
+    retention.filter((a, i) => retention[i - 1] === '--tag'),
+    ['rare-os', 'rare-os-files'],
+  );
 });
 
 test('host facts become container and disk checks; missing facts are a failure', () => {

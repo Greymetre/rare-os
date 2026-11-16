@@ -135,16 +135,39 @@ assert.match(expectStatus(ops(['backup']), 0, 'offsite backup').out, /PASS offsi
 const snapshots = JSON.parse(
   expectStatus(restic(['snapshots', '--json', '--no-lock']), 0, 'list snapshots').stdout,
 );
-const days = snapshots.map((x) => x.time.slice(0, 10));
-assert.ok(snapshots.length < 21 && snapshots.length <= 17, `retention kept ${snapshots.length}`);
+// Two kinds of snapshot share the repository: the databases, and the photo and document volume
+// (RCH-0). restic keeps a retention window per kind, so they are counted apart.
+const dbSnapshots = snapshots.filter((x) => x.tags?.includes('rare-os'));
+const fileSnapshots = snapshots.filter((x) => x.tags?.includes('rare-os-files'));
+const days = dbSnapshots.map((x) => x.time.slice(0, 10));
+assert.ok(
+  dbSnapshots.length < 21 && dbSnapshots.length <= 17,
+  `retention kept ${dbSnapshots.length}`,
+);
 for (const i of [0, 1, 2, 3, 4, 5])
   assert.ok(days.includes(backdated[i].slice(0, 10)), 'recent daily snapshots must be kept');
 assert.ok(
   backdated.slice(7, 13).some((t) => !days.includes(t.slice(0, 10))),
   'older mid-week snapshots must be pruned',
 );
-assert.ok(snapshots.every((x) => x.tags?.includes('rare-os') && x.hostname === 'rare-os'));
-console.log(`PASS retention pruned 21 snapshots to ${snapshots.length}`);
+assert.ok(
+  snapshots.every(
+    (x) =>
+      x.hostname === 'rare-os' &&
+      (x.tags?.includes('rare-os') || x.tags?.includes('rare-os-files')),
+  ),
+  'every snapshot must belong to this application',
+);
+// The photo volume has to have been snapshotted, and that snapshot has to be inside the same
+// retention policy, or the offsite repository would grow for ever.
+assert.equal(
+  fileSnapshots.length,
+  1,
+  'the photo and document volume must have exactly one snapshot after retention',
+);
+console.log(
+  `PASS retention pruned 21 snapshots to ${dbSnapshots.length}, plus 1 for the photo volume`,
+);
 
 // Data is encrypted: the wrong password cannot open the repository.
 const wrong = restic(['snapshots', '--no-lock'], ['RESTIC_PASSWORD=' + secret()]);

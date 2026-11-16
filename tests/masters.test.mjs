@@ -116,8 +116,22 @@ test('unit conversions: positive factor and different units', () => {
 
 test('every master kind maps to a permission, table and unique key', () => {
   for (const [kind, def] of Object.entries(MASTER_KINDS)) {
-    assert.match(def.permission, /^(masters|suppliers|customers)\.manage$/, kind);
+    // Maintaining a master is one of these; nothing maintains a master under a read permission.
+    assert.ok(
+      [
+        'masters.manage',
+        'suppliers.manage',
+        'customers.manage',
+        'reach.manage',
+        'reach.setup',
+      ].includes(def.permission),
+      `${kind}: ${def.permission}`,
+    );
     assert.equal(def.table, kind);
     assert.equal(typeof def.key, 'function');
+    // The module decides which screens offer this master and which imports list it.
+    assert.ok(['Availability', 'Reach'].includes(def.module), kind);
+    // A kind that can be removed says so in both places, or in neither.
+    assert.equal(!!def.softDelete, !!def.deletePermission, kind);
   }
 });

@@ -83,6 +83,119 @@ test('database privilege boundaries retain RLS and hardened security-definer fun
     assert.match(migrations, new RegExp(`REVOKE ALL ON FUNCTION[^;]*\\b${name}\\(`, 'i'));
 });
 
+test('RCH-0 uploads and field data keep their boundaries in the source itself', () => {
+  const migration = read('db/migrations/029_reach_foundation.sql');
+  const reachTables = [
+    'territories',
+    'rep_grades',
+    'leave_types',
+    'field_reps',
+    'holidays',
+    'stored_files',
+  ];
+  // Removal is a stamp, so the runtime role must never hold DELETE on field data.
+  const grants = [...migration.matchAll(/GRANT ([^;]*?) ON ([^;]*?) TO rare_app/gi)];
+  assert.ok(grants.length, 'the migration grants nothing to the runtime role');
+  for (const [, privileges, tables] of grants)
+    if (reachTables.some((t) => tables.includes(t)))
+      assert.doesNotMatch(privileges, /\bDELETE\b/i, `DELETE granted on ${tables.trim()}`);
+  // Every one of them is row-level scoped to a company, and keeps removed rows out of its
+  // uniqueness rule so a removed code can be used again.
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/);
+  for (const table of reachTables)
+    assert.ok(
+      new RegExp(`'${table}'`).test(migration),
+      `${table} is not in the row-level-security list`,
+    );
+  // The path a file is read from is derived from its own checksum and checked every time, and the
+  // bytes are never put in the database.
+  const store = read('apps/api/src/file-store.ts');
+  assert.match(store, /isStorageKey\(key\)/);
+  assert.match(store, /full\.startsWith\(root \+ sep\)/);
+  assert.doesNotMatch(store, /req\.(?:query|params|headers|body)/);
+  assert.doesNotMatch(migration, /content bytea/);
+  // What may be stored is decided from the bytes, with an allowlist, a size cap and a pixel cap.
+  const rules = read('packages/engines/file-bytes.mjs');
+  for (const required of [
+    'FILE_TYPE_MISMATCH',
+    'UNSUPPORTED_FILE_TYPE',
+    'FILE_TOO_LARGE',
+    'IMAGE_TOO_LARGE',
+  ])
+    assert.ok(rules.includes(required), `upload rules are missing ${required}`);
+  // Uploads arrive as bytes on one route only, typed and capped.
+  assert.match(
+    read('apps/api/src/main.ts'),
+    /app\.use\('\/api\/files', raw\(\{ type: UPLOAD_TYPES, limit: MAX_FILE_BYTES \}\)\)/,
+  );
+  // A file is served with the type it was stored as, never sniffed, and a PDF is a download.
+  const controller = read('apps/api/src/reach.controller.ts');
+  assert.match(controller, /'X-Content-Type-Options', 'nosniff'/);
+  assert.match(controller, /shown \? 'inline' : 'attachment'/);
+  // Only the application's user writes to the volume. The directory is setgid and group-readable
+  // so the backup job can read it as a member of that group rather than as root, and the backup
+  // job's mount is read-only, so it cannot change a photo.
+  assert.match(read('infra/docker/Dockerfile'), /chmod 2750 \/var\/lib\/rare-os\/files/);
+  const opsImage = read('infra/ops/Ops.Dockerfile');
+  assert.match(opsImage, /addgroup -g 1000 appdata/);
+  assert.match(opsImage, /addgroup ops appdata/);
+  assert.match(opsImage, /USER ops/);
+  const ops = read('compose.yaml');
+  assert.match(ops, /volumes: \[opsstate:\/state, 'filedata:\/files:ro'\]/);
+  assert.doesNotMatch(ops, /filedata:\/files(?!:ro)/);
+});
+
+test('RCH-1 customers, tags and rounds keep their boundaries in the source itself', () => {
+  const migration = read('db/migrations/030_reach_customers.sql');
+  const keepers = [
+    'reach_settings',
+    'customer_types',
+    'customer_form_fields',
+    'customer_form_rules',
+    'beats',
+    'trade_customers',
+    'beat_assignments',
+    'customer_geo_log',
+  ];
+  // A customer, a decision and a tag are records to keep: the runtime role never gets DELETE on
+  // them. A beat's stops are the one exception, because a round has to stay a clean 1..n.
+  for (const [, privileges, tables] of migration.matchAll(
+    /GRANT ([^;]*?) ON ([^;]*?) TO rare_app/gi,
+  ))
+    if (keepers.some((t) => new RegExp(`\\b${t}\\b`).test(tables)))
+      assert.doesNotMatch(privileges, /\bDELETE\b/i, `DELETE granted on ${tables.trim()}`);
+  assert.match(migration, /GRANT SELECT, INSERT, UPDATE, DELETE ON beat_outlets TO rare_app/);
+  for (const table of [...keepers, 'beat_outlets'])
+    assert.ok(new RegExp(`'${table}'`).test(migration), `${table} is not row-level scoped`);
+  // A position in a round is unique, and the check is deferred only so a re-order can swap past
+  // itself inside one transaction — it is never dropped.
+  assert.match(migration, /beat_outlets_order_uniq UNIQUE \(tenant_id, beat_id, sequence\)/);
+  assert.match(migration, /DEFERRABLE INITIALLY IMMEDIATE/);
+  // One pending move per shop, so two reps cannot queue conflicting re-tags.
+  assert.match(migration, /customer_geo_log_pending_idx[\s\S]{0,160}WHERE status = 'PENDING'/);
+
+  const controller = read('apps/api/src/reach-customers.controller.ts');
+  // A coordinate off the planet is a typo somebody has to see, not a number to round.
+  assert.match(controller, /function coordinate\(/);
+  assert.match(controller, /coordinate\(raw\.latitude, 'Latitude', 90\)/);
+  assert.match(controller, /coordinate\(raw\.longitude, 'Longitude', 180\)/);
+  // Filters are an allowlist, so a hand-made link cannot widen what a reader sees.
+  assert.match(controller, /STATUSES\.includes\(status\)/);
+  assert.match(controller, /GEO_FILTERS\.includes\(geo\)/);
+  assert.match(controller, /GEO_SOURCES\.includes\(raw\.source\)/);
+  // Deciding is its own permission, and a rejection has to carry a reason.
+  for (const required of [
+    "mutate(req, 'reach.approve'",
+    "mutate(req, 'reach.setup'",
+    "mutate(req, 'reach.delete'",
+    'REASON_REQUIRED',
+  ])
+    assert.ok(controller.includes(required), `the controller is missing ${required}`);
+  // Answers are judged against the type's own form, and an unasked key is refused rather than
+  // stored where no screen would ever show it.
+  assert.match(read('packages/schema/customers-db.mjs'), /This customer type is not asked for/);
+});
+
 test('production gateways and images retain baseline VAPT hardening', () => {
   const nginx = read('infra/docker/nginx.conf');
   for (const required of [

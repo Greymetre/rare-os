@@ -28,7 +28,14 @@ export type MasterField = {
 export type MasterKind = {
   label: string;
   singular: string;
+  // Which module maintains this master, so a module's screens offer only its own.
+  module: string;
   permission: string;
+  // Reading and removing can need their own permissions; without them, reading falls back to
+  // masters.read and the kind cannot be removed at all.
+  readPermission?: string;
+  deletePermission?: string;
+  softDelete?: boolean;
   table: string;
   fields: MasterField[];
   key(value: any): string;

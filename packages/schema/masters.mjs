@@ -38,7 +38,7 @@ const parsers = {
   },
   int(raw, f) {
     const v = blank(raw) ? '' : String(raw).trim();
-    if (!v) return f.required ? { error: `${f.label} is required.` } : { value: null };
+    if (!v) return f.required ? { error: `${f.label} is required.` } : { value: f.default ?? null };
     if (!/^\d+$/.test(v) || Number(v) < f.min || Number(v) > f.max)
       return { error: `${f.label} must be a whole number from ${f.min} to ${f.max}.` };
     return { value: Number(v) };
@@ -93,11 +93,71 @@ const parsers = {
       ? { value: v }
       : { error: `${f.label} must be 1-20 letters or numbers (dot, hyphen, underscore allowed).` };
   },
+  // A PAN: five letters, four digits, one letter. The fourth letter says what kind of holder it
+  // is, so it is checked too — a typo there is a different taxpayer, not a formatting slip.
+  pan(raw, f) {
+    const v = blank(raw) ? '' : String(raw).trim().toUpperCase().replace(/\s/g, '');
+    if (!v) return f.required ? { error: `${f.label} is required.` } : { value: '' };
+    if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v))
+      return { error: `${f.label} must be ten characters like ABCDE1234F.` };
+    if (!'ABCFGHJLPT'.includes(v[3]))
+      return {
+        error: `${f.label}: the fourth letter is ${v[3]}, which is not a kind of PAN holder.`,
+      };
+    return { value: v };
+  },
+  // A GSTIN: a state code, a PAN, an entity number, a Z, and a check digit over the other 14.
+  gstin(raw, f) {
+    const v = blank(raw) ? '' : String(raw).trim().toUpperCase().replace(/\s/g, '');
+    if (!v) return f.required ? { error: `${f.label} is required.` } : { value: '' };
+    if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(v))
+      return { error: `${f.label} must be fifteen characters like 27AAPFU0939F1ZV.` };
+    const state = Number(v.slice(0, 2));
+    if (state < 1 || state > 38)
+      return { error: `${f.label}: ${v.slice(0, 2)} is not a state code (01 to 38).` };
+    const codes = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    let sum = 0;
+    for (let i = 0; i < 14; i++) {
+      const product = codes.indexOf(v[i]) * (i % 2 === 0 ? 1 : 2);
+      sum += Math.floor(product / 36) + (product % 36);
+    }
+    if (codes[(36 - (sum % 36)) % 36] !== v[14])
+      return { error: `${f.label}: the last character does not check out. Read it again.` };
+    return { value: v };
+  },
+  // A storage key: lowercase, starts with a letter, underscores only. Used for the key an answer
+  // to a customer form question is stored under, which a company chooses and we then live with.
+  key(raw, f) {
+    const v = blank(raw) ? '' : String(raw).trim().toLowerCase();
+    if (!v) return { error: `${f.label} is required.` };
+    return /^[a-z][a-z0-9_]{0,39}$/.test(v)
+      ? { value: v }
+      : {
+          error: `${f.label} must be 1-40 characters: a lowercase letter first, then letters, numbers or underscores.`,
+        };
+  },
+  // The days of the week something runs on, in any order and any case, kept in week order so two
+  // ways of writing the same round read the same: "thu, mon" becomes MON,THU.
+  weekdays(raw, f) {
+    const v = blank(raw) ? '' : String(raw).trim();
+    if (!v) return f.required ? { error: `${f.label} is required.` } : { value: f.default ?? '' };
+    const week = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+    const given = v
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map((d) => d.toUpperCase().slice(0, 3));
+    const unknown = given.filter((d) => !week.includes(d));
+    if (unknown.length)
+      return { error: `${f.label}: ${unknown[0]} is not a day. Use MON TUE WED THU FRI SAT SUN.` };
+    const days = week.filter((d) => given.includes(d));
+    return { value: days.join(',') };
+  },
   // References are codes here; the database layer resolves them to ids and checks they are active.
   ref(raw, f) {
     const v = blank(raw) ? '' : String(raw).trim();
     if (!v) return f.required ? { error: `${f.label} is required.` } : { value: null };
-    if (v.length > 40 || control.test(v)) return { error: `${f.label} code is invalid.` };
+    if (v.length > (f.max ?? 40) || control.test(v))
+      return { error: `${f.label} code is invalid.` };
     return { value: v };
   },
 };
@@ -111,6 +171,7 @@ export const MASTER_KINDS = {
   items: {
     label: 'Items',
     singular: 'item',
+    module: 'Availability',
     permission: 'masters.manage',
     table: 'items',
     fields: [
@@ -146,6 +207,7 @@ export const MASTER_KINDS = {
   suppliers: {
     label: 'Suppliers',
     singular: 'supplier',
+    module: 'Availability',
     permission: 'suppliers.manage',
     table: 'suppliers',
     fields: [
@@ -168,6 +230,7 @@ export const MASTER_KINDS = {
   customers: {
     label: 'Customers',
     singular: 'customer',
+    module: 'Availability',
     permission: 'customers.manage',
     table: 'customers',
     fields: [
@@ -190,6 +253,7 @@ export const MASTER_KINDS = {
   item_suppliers: {
     label: 'Item sourcing',
     singular: 'item source',
+    module: 'Availability',
     permission: 'suppliers.manage',
     table: 'item_suppliers',
     fields: [
@@ -230,6 +294,7 @@ export const MASTER_KINDS = {
   unit_conversions: {
     label: 'Unit conversions',
     singular: 'unit conversion',
+    module: 'Availability',
     permission: 'masters.manage',
     table: 'unit_conversions',
     fields: [
@@ -264,6 +329,346 @@ export const MASTER_KINDS = {
       `${v.from_unit.toLowerCase()}|${v.to_unit.toLowerCase()}|${(v.item ?? '').toLowerCase()}`,
     title: (v) => `1 ${v.from_unit} = ${v.factor} ${v.to_unit}${v.item ? ' for ' + v.item : ''}`,
   },
+  // ---------- Reach field masters (RCH-0) ----------
+  // Read and maintained under the Reach permissions rather than the planning ones, and removable:
+  // a record taken off a list keeps its row in the database.
+  territories: {
+    label: 'Territories',
+    singular: 'territory',
+    module: 'Reach',
+    permission: 'reach.manage',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'territories',
+    fields: [
+      code('Territory code'),
+      name,
+      // A zone holds territories. Blank means this is a zone, or the company has one level only.
+      { name: 'parent', label: 'Parent territory', type: 'ref', ref: 'territories' },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Territory ${v.code}`,
+  },
+  rep_grades: {
+    label: 'Rep grades',
+    singular: 'rep grade',
+    module: 'Reach',
+    permission: 'reach.manage',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'rep_grades',
+    fields: [
+      code('Grade code'),
+      name,
+      { name: 'rank', label: 'Seniority rank', type: 'int', min: 1, max: 99, default: 1 },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Rep grade ${v.code}`,
+  },
+  field_reps: {
+    label: 'Field reps',
+    singular: 'field rep',
+    module: 'Reach',
+    permission: 'reach.manage',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'field_reps',
+    fields: [
+      code('Rep code'),
+      name,
+      { name: 'grade', label: 'Grade code', type: 'ref', ref: 'rep_grades', required: true },
+      {
+        name: 'territory',
+        label: 'Territory code',
+        type: 'ref',
+        ref: 'territories',
+        required: true,
+      },
+      // The rep's login, when there is one. A rep list arrives from a spreadsheet long before
+      // anyone issues logins, so this is addressed by the login's email and may stay blank.
+      { name: 'user', label: 'Login email', type: 'ref', ref: 'users', max: 254 },
+      email,
+      phone,
+      { name: 'joined_on', label: 'Joined on', type: 'date' },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Field rep ${v.code}`,
+  },
+  leave_types: {
+    label: 'Leave types',
+    singular: 'leave type',
+    module: 'Reach',
+    permission: 'reach.manage',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'leave_types',
+    fields: [
+      code('Leave code'),
+      name,
+      { name: 'paid', label: 'Paid leave', type: 'bool', default: true },
+      // Half days are why this is not a whole number.
+      {
+        name: 'annual_quota',
+        label: 'Days a year',
+        type: 'decimal',
+        decimals: 1,
+        maxValue: 999,
+        default: '0',
+      },
+      { name: 'carry_forward', label: 'Carries forward', type: 'bool', default: false },
+      { name: 'requires_approval', label: 'Needs approval', type: 'bool', default: true },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Leave type ${v.code}`,
+  },
+  holidays: {
+    label: 'Holidays',
+    singular: 'holiday',
+    module: 'Reach',
+    permission: 'reach.manage',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'holidays',
+    fields: [
+      { name: 'holiday_date', label: 'Date', type: 'date', required: true, immutable: true },
+      name,
+      {
+        name: 'holiday_type',
+        label: 'Holiday type',
+        type: 'enum',
+        options: ['NATIONAL', 'REGIONAL', 'OPTIONAL'],
+        default: 'NATIONAL',
+      },
+      // Blank territory means the whole company is off that day.
+      {
+        name: 'territory',
+        label: 'Territory code',
+        type: 'ref',
+        ref: 'territories',
+        immutable: true,
+      },
+    ],
+    key: (v) => `${v.holiday_date}|${(v.territory ?? '').toLowerCase()}`,
+    title: (v) => `${v.name} on ${v.holiday_date}`,
+  },
+  // ---------- Reach customers and beats (RCH-1) ----------
+  // The shape of a customer is config, not code: a type decides which questions are asked, how
+  // close a check-in must be, whether it sits on a beat plan and whether a new account waits for
+  // approval. Setup owns all of it, under its own permission.
+  customer_types: {
+    label: 'Customer types',
+    singular: 'customer type',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'customer_types',
+    fields: [
+      code('Type code'),
+      name,
+      { name: 'tier', label: 'Tier', type: 'int', min: 1, max: 20, default: 1 },
+      { name: 'prefix', label: 'Code prefix', type: 'text', max: 10 },
+      { name: 'geo_required', label: 'Needs a location tag', type: 'bool', default: true },
+      {
+        name: 'checkin_radius_m',
+        label: 'Check-in radius (m)',
+        type: 'int',
+        min: 10,
+        max: 5000,
+        default: 100,
+      },
+      {
+        name: 'min_visit_minutes',
+        label: 'Shortest useful visit (minutes)',
+        type: 'int',
+        min: 0,
+        max: 480,
+        default: 5,
+      },
+      {
+        name: 'visit_norm_per_month',
+        label: 'Visits a month',
+        type: 'int',
+        min: 0,
+        max: 60,
+        default: 4,
+      },
+      { name: 'on_beat_plan', label: 'Sits on a beat plan', type: 'bool', default: true },
+      { name: 'needs_approval', label: 'New account needs approval', type: 'bool', default: false },
+      { name: 'kyc_before_order', label: 'KYC before ordering', type: 'bool', default: false },
+      {
+        name: 'order_route',
+        label: 'Order route',
+        type: 'enum',
+        options: ['ERP', 'DISTRIBUTOR', 'NONE'],
+        default: 'NONE',
+      },
+      { name: 'credit_limit', label: 'Credit limit', type: 'decimal', decimals: 2 },
+      { name: 'credit_days', label: 'Credit days', type: 'int', min: 0, max: 365 },
+      { name: 'hold_days', label: 'Hold orders after overdue days', type: 'int', min: 0, max: 365 },
+      { name: 'loyalty', label: 'Earns loyalty points', type: 'bool', default: false },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Customer type ${v.code}`,
+  },
+  customer_form_fields: {
+    label: 'Customer form fields',
+    singular: 'form field',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'customer_form_fields',
+    fields: [
+      // The key an answer is stored under. It cannot change later: answers already carry it.
+      { name: 'field_key', label: 'Field key', type: 'key', required: true, immutable: true },
+      { ...name, label: 'Label on the form', max: 120 },
+      {
+        name: 'input',
+        label: 'Input',
+        type: 'enum',
+        required: true,
+        options: [
+          'text',
+          'textarea',
+          'number',
+          'select',
+          'date',
+          'phone',
+          'email',
+          'gstin',
+          'pan',
+          'bool',
+        ],
+      },
+      { name: 'section', label: 'Section', type: 'text', max: 60, default: 'Details' },
+      { name: 'display_order', label: 'Order', type: 'int', min: 1, max: 9999, default: 100 },
+      // One choice per line in the form; stored and imported pipe-separated.
+      { name: 'options', label: 'Choices (a | between each)', type: 'text', max: 1000 },
+      { name: 'help', label: 'Help text', type: 'text', max: 200 },
+      { name: 'default_value', label: 'Default answer', type: 'text', max: 200 },
+    ],
+    key: (v) => v.field_key,
+    title: (v) => `Form field ${v.field_key}`,
+  },
+  customer_form_rules: {
+    label: 'Customer form by type',
+    singular: 'form rule',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'customer_form_rules',
+    fields: [
+      {
+        name: 'type',
+        label: 'Type code',
+        type: 'ref',
+        ref: 'customer_types',
+        required: true,
+        immutable: true,
+      },
+      {
+        name: 'field',
+        label: 'Field key',
+        type: 'ref',
+        ref: 'customer_form_fields',
+        required: true,
+        immutable: true,
+      },
+      // R asked and required, O asked and optional, X not asked of this type.
+      {
+        name: 'requirement',
+        label: 'Asked',
+        type: 'enum',
+        options: ['R', 'O', 'X'],
+        default: 'O',
+      },
+      { name: 'label_override', label: 'Wording for this type', type: 'text', max: 120 },
+    ],
+    key: (v) => `${v.type.toLowerCase()}|${v.field.toLowerCase()}`,
+    title: (v) => `${v.field} on ${v.type}`,
+  },
+  beats: {
+    label: 'Beats',
+    singular: 'beat',
+    module: 'Reach',
+    permission: 'reach.manage',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'beats',
+    fields: [
+      code('Beat code'),
+      name,
+      {
+        name: 'territory',
+        label: 'Territory code',
+        type: 'ref',
+        ref: 'territories',
+        required: true,
+      },
+      {
+        name: 'frequency',
+        label: 'How often',
+        type: 'enum',
+        options: ['WEEKLY', 'FORTNIGHTLY'],
+        default: 'WEEKLY',
+      },
+      { name: 'run_days', label: 'Days it runs', type: 'weekdays', required: true },
+      // A fortnightly beat runs in one half of the fortnight; a weekly beat runs in both.
+      {
+        name: 'week_parity',
+        label: 'Which week',
+        type: 'enum',
+        options: ['ALL', 'ODD', 'EVEN'],
+        default: 'ALL',
+      },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Beat ${v.code}`,
+  },
+  beat_assignments: {
+    label: 'Beat assignments',
+    singular: 'beat assignment',
+    module: 'Reach',
+    permission: 'reach.manage',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'beat_assignments',
+    fields: [
+      {
+        name: 'beat',
+        label: 'Beat code',
+        type: 'ref',
+        ref: 'beats',
+        required: true,
+        immutable: true,
+      },
+      {
+        name: 'rep',
+        label: 'Rep code',
+        type: 'ref',
+        ref: 'field_reps',
+        required: true,
+        immutable: true,
+      },
+      { name: 'from_date', label: 'From', type: 'date', required: true, immutable: true },
+      // Left blank, the rep holds the beat until someone else takes it over.
+      { name: 'to_date', label: 'Until', type: 'date' },
+    ],
+    key: (v) => `${v.beat.toLowerCase()}|${v.from_date}`,
+    title: (v) => `${v.beat} to ${v.rep} from ${v.from_date}`,
+  },
 };
 
 // Validates any field list with the same parsers (used by the plant model rulebook too).
@@ -292,6 +697,28 @@ export function validateMaster(kind, raw) {
       value.from_unit.toLowerCase() === value.to_unit.toLowerCase()
     )
       errors.push({ column: 'to_unit', message: 'From unit and to unit must be different.' });
+    if (kind === 'beats') {
+      // A weekly beat has no half of the fortnight to choose; a fortnightly one must choose.
+      if (value.frequency === 'WEEKLY' && value.week_parity !== 'ALL')
+        errors.push({
+          column: 'week_parity',
+          message: 'A weekly beat runs every week. Choose ALL, or make it fortnightly.',
+        });
+      if (value.frequency === 'FORTNIGHTLY' && value.week_parity === 'ALL')
+        errors.push({
+          column: 'week_parity',
+          message:
+            'A fortnightly beat runs in one half of the fortnight. Choose ODD or EVEN weeks.',
+        });
+    }
+    // A choice list with no choices would leave an unanswerable question on the form.
+    if (kind === 'customer_form_fields' && value.input === 'select' && !value.options)
+      errors.push({
+        column: 'options',
+        message: 'A choice list needs its choices. Separate them with a | between each.',
+      });
+    if (kind === 'beat_assignments' && value.to_date && value.to_date < value.from_date)
+      errors.push({ column: 'to_date', message: 'Until cannot be earlier than From.' });
     if (kind === 'item_suppliers' && value.moq !== null && value.lot_multiple !== null) {
       // MOQ must itself be orderable: a whole number of order multiples.
       const moq = Number(value.moq),

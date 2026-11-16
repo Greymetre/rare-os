@@ -3,14 +3,20 @@ import {
   existingRecords,
   findMaster,
   listMasters,
+  removalBlockers,
+  removeMaster,
   resolveReferences,
   updateMaster,
   upsertMasters,
 } from '../../../packages/schema/masters-db.mjs';
-import { Controller, Get, Post, Patch, Req, Param, HttpException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Req, Param, HttpException } from '@nestjs/common';
 import type { Request } from 'express';
 import { access, scoped, fail, limitOf } from './core.js';
-import { id, body, version, mutate, audit } from './access.controller.js';
+import { id, text, body, version, mutate, audit } from './access.controller.js';
+
+// Planning masters are read with masters.read. The Reach field masters name their own permission,
+// so a field supervisor can keep the rep list without being given the planning screens.
+const readPermissionOf = (def: { readPermission?: string }) => def.readPermission ?? 'masters.read';
 
 function kindOf(kind: string) {
   const def = masterKind(kind);
@@ -49,8 +55,8 @@ function cursorOf(req: Request) {
 @Controller('api')
 export class MastersController {
   @Get('masters/:kind') async list(@Req() req: Request, @Param('kind') kind: string) {
-    kindOf(kind);
-    const actor = await access(req, 'masters.read');
+    const def = kindOf(kind);
+    const actor = await access(req, readPermissionOf(def));
     const q = req.query.q === undefined ? '' : String(req.query.q).trim().toLowerCase();
     if (q.length > 40) fail(400, 'VALIDATION_ERROR', 'Search must be at most 40 characters.');
     const cursor = cursorOf(req);
@@ -122,7 +128,11 @@ export class MastersController {
       for (const f of def.fields) if (f.immutable) merged[f.name] = old[f.name] || null;
       const checked = validateMaster(kind, merged);
       if (checked.errors.length) invalid(checked.errors);
-      const [row] = await resolveReferences(db, kind, [{ value: checked.value, errors: [] }]);
+      // The record's own id goes along, because a rule can need it: a territory may not become
+      // its own parent, nor move under another one while it has territories of its own.
+      const [row] = await resolveReferences(db, kind, [
+        { id: recordId, value: checked.value, errors: [] },
+      ]);
       if (row.errors.length) invalid(row.errors);
       await updateMaster(db, kind, recordId, row.value, true);
       await audit(db, actor, `${kind}.updated`, kind, recordId, old, {
@@ -133,24 +143,70 @@ export class MastersController {
     });
   }
 
+  // Removal is a stamp, not a DELETE: the row stays in the table so a field record is never lost,
+  // and the code it held is free to use again.
+  @Delete('masters/:kind/:id') async remove(
+    @Req() req: Request,
+    @Param('kind') kind: string,
+    @Param('id') recordId: string,
+  ) {
+    const def = kindOf(kind);
+    id(recordId);
+    if (!def.deletePermission)
+      fail(
+        409,
+        'NOT_REMOVABLE',
+        `This ${def.singular} cannot be removed. Mark it inactive instead, so everything that refers to it still reads.`,
+      );
+    const raw = body(req, ['version', 'reason']);
+    const v = version(raw.version);
+    const reason = raw.reason === undefined ? '' : text(raw.reason, 'Reason', 0, 200);
+    return mutate(req, def.deletePermission!, async (db, actor) => {
+      const old = await findMaster(db, kind, recordId);
+      if (!old)
+        fail(404, 'RECORD_NOT_FOUND', `This ${def.singular} was not found in your company.`);
+      if (old.version !== v)
+        fail(409, 'STALE_RECORD', `This ${def.singular} changed elsewhere. Refresh and try again.`);
+      const blockers = await removalBlockers(db, kind, recordId);
+      if (blockers.length)
+        fail(
+          409,
+          'RECORD_IN_USE',
+          `This ${def.singular} cannot be removed: ${blockers.join(', ')}. Move them first.`,
+        );
+      if (!(await removeMaster(db, kind, recordId, actor.id, reason)))
+        fail(409, 'STALE_RECORD', `This ${def.singular} was already removed.`);
+      await audit(db, actor, `${kind}.removed`, kind, recordId, old, { removed: true, reason });
+      return { message: `${def.title(old)} removed. It is off the list but kept in the records.` };
+    });
+  }
+
+  // Every master the signed-in person may read, with what they may do to it. A person who holds
+  // neither the planning nor the Reach read permission gets an empty list rather than a refusal:
+  // the screens ask this question to build their own menus.
   @Get('masters') async catalog(@Req() req: Request) {
-    const actor = await access(req, 'masters.read');
+    const actor = await access(req, 'dashboard.read');
     return {
-      kinds: Object.entries(MASTER_KINDS).map(([kind, def]) => ({
-        kind,
-        label: def.label,
-        singular: def.singular,
-        canManage: actor.permissions.includes(def.permission),
-        fields: def.fields.map(({ name, label, type, required, immutable, options, max }) => ({
-          name,
-          label,
-          type,
-          required: !!required,
-          immutable: !!immutable,
-          options,
-          max,
+      kinds: Object.entries(MASTER_KINDS)
+        .filter(([, def]) => actor.permissions.includes(readPermissionOf(def)))
+        .map(([kind, def]) => ({
+          kind,
+          label: def.label,
+          singular: def.singular,
+          module: def.module,
+          canManage: actor.permissions.includes(def.permission),
+          canRemove: !!def.deletePermission && actor.permissions.includes(def.deletePermission),
+          removable: !!def.softDelete,
+          fields: def.fields.map(({ name, label, type, required, immutable, options, max }) => ({
+            name,
+            label,
+            type,
+            required: !!required,
+            immutable: !!immutable,
+            options,
+            max,
+          })),
         })),
-      })),
     };
   }
 }

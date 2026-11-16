@@ -56,6 +56,13 @@ export const permissions = [
   ['work_orders.update', 'Production', 'Record production progress'],
   ['downtime.create', 'Production', 'Record resource downtime'],
   ['reports.export', 'Reporting', 'Export authorised records'],
+  ['reach.read', 'Reach', 'View Reach field masters and readiness'],
+  ['reach.manage', 'Reach', 'Maintain Reach field masters'],
+  ['reach.delete', 'Reach', 'Remove a Reach record (it stays in the database)'],
+  ['files.read', 'Reach', 'View uploaded photos and documents'],
+  ['files.upload', 'Reach', 'Upload photos and documents'],
+  ['reach.approve', 'Reach', 'Approve new customer accounts and location re-tags'],
+  ['reach.setup', 'Reach', 'Change customer types, customer forms and Reach settings'],
 ];
 
 export const requiredPermissions = {
@@ -100,6 +107,13 @@ export const requiredPermissions = {
   'buffers.manage': ['planning.read'],
   // Each import type also requires its own maintain permission, checked by the API.
   'imports.create': ['masters.read'],
+  'reach.manage': ['reach.read'],
+  // Removing is a step beyond editing, so it needs both.
+  'reach.delete': ['reach.read', 'reach.manage'],
+  'files.upload': ['files.read'],
+  'reach.approve': ['reach.read'],
+  // Setup changes the shape of every customer form, so it is read plus maintain plus this.
+  'reach.setup': ['reach.read', 'reach.manage'],
 };
 export const livePermissionCodes = [
   'dashboard.read',
@@ -148,6 +162,13 @@ export const livePermissionCodes = [
   'production.execute',
   'masters.cycle_time',
   'planning.tools',
+  'reach.read',
+  'reach.manage',
+  'reach.delete',
+  'files.read',
+  'files.upload',
+  'reach.approve',
+  'reach.setup',
 ];
 
 // Where a permission is actually felt: the module in the sidebar, and the screens it opens or
@@ -209,6 +230,16 @@ export const permissionScreens = {
   'work_orders.update': ['Production', 'Work Orders & Downtime'],
   'downtime.create': ['Production', 'Work Orders & Downtime'],
   'reports.export': ['Reporting', 'Exports'],
+  'reach.read': ['Reach', 'Every Reach screen'],
+  'reach.manage': [
+    'Reach',
+    'Field masters: Territories, Rep grades, Field reps, Leave types, Holidays',
+  ],
+  'reach.delete': ['Reach', 'Field masters → remove a record'],
+  'files.read': ['Reach', 'Photos and documents: selfie, KYC, receipt, shelf photo'],
+  'files.upload': ['Reach', 'Photos and documents → upload'],
+  'reach.approve': ['Reach', 'Approvals: new customer accounts, location re-tags'],
+  'reach.setup': ['Reach', 'Setup: customer types, customer form, Reach settings'],
 };
 
 // The module and screens a permission belongs to, falling back to its catalogue module.

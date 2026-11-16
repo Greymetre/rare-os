@@ -24,11 +24,16 @@ export function backupConfig(env) {
   };
 }
 
+// Retention covers both snapshot kinds: the databases and, since RCH-0, the photo and document
+// volume. restic groups by host, paths and tags, so each kind keeps its own dailies/weeklies
+// rather than one crowding out the other. A tag with no snapshots yet is simply not matched.
 export function retentionArgs(config) {
   return [
     'forget',
     '--tag',
     'rare-os',
+    '--tag',
+    'rare-os-files',
     '--host',
     'rare-os',
     '--keep-daily',

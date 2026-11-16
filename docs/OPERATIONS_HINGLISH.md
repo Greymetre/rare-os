@@ -4,13 +4,13 @@ Ye Point 5 (production operations) aur Point 4 (rollback) ka runbook hai. Code l
 
 ## Kya bana hai
 
-| Kaam           | Kab chalta hai                            | Kya karta hai                                                                                                                                                                 |
-| -------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Offsite backup | Har 6 ghante (00:15, 06:15, 12:15, 18:15) | App DB + Keycloak DB ka `pg_dump`, data check, SHA-256 manifest, **restic se encrypted** upload server ke bahar (S3/R2), phir retention. Fail hone par email alert.           |
-| Retention      | Har backup ke baad                        | Last 7 daily, 4 weekly, 6 monthly snapshots rakhta hai (`BACKUP_KEEP_*` se badal sakte hain).                                                                                 |
-| Restore drill  | Har Sunday 03:30                          | Latest offsite snapshot download → checksum → temporary databases mein restore → companies/users, migrations, RLS aur Keycloak realm check → temp DB delete → `restic check`. |
-| Monitor        | Har 5 minute                              | Containers (db, redis, keycloak, api, worker, web), disk %, website/API/login URLs, SSL expiry, last backup age (8h) aur last restore drill age (8 din).                      |
-| Alerts         | Problem aane par                          | Email: nayi problem par turant (website/container ke liye 2 baar lagatar fail hone par), har 6 ghante reminder, theek hone par "RECOVERED" email.                             |
+| Kaam           | Kab chalta hai                            | Kya karta hai                                                                                                                                                                                                                              |
+| -------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Offsite backup | Har 6 ghante (00:15, 06:15, 12:15, 18:15) | App DB + Keycloak DB ka `pg_dump`, data check, SHA-256 manifest, **restic se encrypted** upload server ke bahar (S3/R2), phir retention. Saath hi photo/document volume ka apna snapshot (tag `rare-os-files`). Fail hone par email alert. |
+| Retention      | Har backup ke baad                        | Last 7 daily, 4 weekly, 6 monthly snapshots rakhta hai (`BACKUP_KEEP_*` se badal sakte hain).                                                                                                                                              |
+| Restore drill  | Har Sunday 03:30                          | Latest offsite snapshot download → checksum → temporary databases mein restore → companies/users, migrations, RLS aur Keycloak realm check → temp DB delete → `restic check`.                                                              |
+| Monitor        | Har 5 minute                              | Containers (db, redis, keycloak, api, worker, web), disk %, website/API/login URLs, SSL expiry, last backup age (8h) aur last restore drill age (8 din).                                                                                   |
+| Alerts         | Problem aane par                          | Email: nayi problem par turant (website/container ke liye 2 baar lagatar fail hone par), har 6 ghante reminder, theek hone par "RECOVERED" email.                                                                                          |
 
 Deploy ke dauraan monitor apne aap skip hota hai, taaki planned downtime par alert na aaye. Passwords/keys alert email aur logs mein `[redacted]` hote hain.
 
@@ -101,6 +101,26 @@ docker compose --profile ops run --rm --no-deps -T --entrypoint sh ops -c \
 ```
 
 Restore hamesha pehle **temporary database** mein karke verify karein (restore drill yahi karta hai), phir planned cutover mein live DB banayein. Live database ke upar seedha restore na karein.
+
+Photos aur documents (selfie, KYC, receipt, shelf photo) database mein nahi hain — wo `filedata`
+volume par hain aur unka apna snapshot hai, tag `rare-os-files`. Database restore karne ke baad
+unhe alag se wapas laayein, warna records dikhenge par photo "recorded but its contents are not on
+the server" kahegi:
+
+```bash
+# pehle dekhein kaunse file snapshots hain
+docker compose --profile ops run --rm --no-deps -T --entrypoint restic ops \
+  snapshots --tag rare-os-files
+# phir latest ko volume par wapas (volume container ke andar /files par mounted hai, read-only —
+# restore ke liye ek baar read-write mount chahiye)
+docker compose run --rm --no-deps -T --entrypoint sh \
+  -v rare-os_filedata:/restore api -c 'echo "mount ready"; ls /restore | head'
+```
+
+Volume read-only mount hai, isliye restore ke waqt ops service ka `:ro` hata kar ek baar chalayein,
+ya `restic restore --target` se kisi temp folder mein nikaal kar `docker cp` se volume mein daalein.
+Restore ke baad Reach > Readiness par "Photo and document storage" ready dikhna chahiye aur ek rep
+ki photo khul jani chahiye.
 
 ## Rollback (Point 4)
 

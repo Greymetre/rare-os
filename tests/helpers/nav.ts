@@ -1,8 +1,8 @@
 import type { Page } from '@playwright/test';
 
-// Availability lists the screens of one engine at a time, the way the handover's own menu does, so
-// a screen in another engine needs that engine opened first. An engine that is already open is
-// left alone: clicking its heading would close it again.
+// A module lists the screens of one group at a time, the way the handover's own menu does, so a
+// screen in another group needs that group opened first. A group that is already open is left
+// alone: clicking its heading would close it again. Works for any module with a screen tree.
 export async function openScreen(page: Page, name: string) {
   const tab = page.getByRole('tab', { name, exact: true });
   const heads = page.locator('.module-group-head');
@@ -26,5 +26,5 @@ export async function openScreen(page: Page, name: string) {
       return;
     }
   }
-  throw Error(`Availability has no screen called "${name}".`);
+  throw Error(`The open module has no screen called "${name}".`);
 }

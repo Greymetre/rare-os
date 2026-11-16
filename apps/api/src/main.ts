@@ -58,6 +58,9 @@ import { DeliveryController } from './delivery.controller.js';
 import { PlanningToolsController } from './planning-tools.controller.js';
 import { RawImportsController, MAX_WORKBOOK_BYTES } from './raw-imports.controller.js';
 import { AccessController } from './access.controller.js';
+import { ReachController } from './reach.controller.js';
+import { ReachCustomersController } from './reach-customers.controller.js';
+import { MAX_FILE_BYTES, UPLOAD_TYPES } from './file-store.js';
 @Catch()
 class Errors implements ExceptionFilter {
   catch(error: unknown, host: ArgumentsHost) {
@@ -401,6 +404,8 @@ class AppController {
     DeliveryController,
     PlanningToolsController,
     RawImportsController,
+    ReachController,
+    ReachCustomersController,
   ],
 })
 class AppModule {}
@@ -428,6 +433,9 @@ app.use(
     limit: MAX_WORKBOOK_BYTES,
   }),
 );
+// RCH-0: a photo or a document arrives as bytes on this route only, capped well below the
+// workbook limit, and is never parsed as text or as JSON.
+app.use('/api/files', raw({ type: UPLOAD_TYPES, limit: MAX_FILE_BYTES }));
 app.use(json({ limit: '64kb' }));
 app.use(urlencoded({ extended: false, limit: '64kb' }));
 app.use((req: Request, res: Response, next: () => void) => {
