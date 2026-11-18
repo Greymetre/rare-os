@@ -16,6 +16,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # Trivy reads what ships: the production dependency tree, the Dockerfiles and any secret
+      # that reached the source. Build-time dependencies are deliberately not scanned here,
+      # because two gates reasoning about them separately means one of them has to be silenced
+      # the first time an advisory has no fix, and a silenced gate stops being read. They are
+      # scanned by `scripts/audit.mjs` instead, which is stricter about them — every severity
+      # from low, not just HIGH and CRITICAL — and which is the one place an advisory may be
+      # accepted, by name, with a reason and a date it has to be looked at again.
       - name: Source dependency, secret and configuration vulnerability scan
         run: >-
           mkdir -p "$RUNNER_TEMP/trivy-cache" &&
@@ -24,7 +31,6 @@ jobs:
           -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy"
           ghcr.io/aquasecurity/trivy:0.74.0 fs
           --scanners vuln,secret,misconfig
-          --include-dev-deps
           --severity HIGH,CRITICAL
           --exit-code 1
           --skip-dirs /workspace/.git
