@@ -196,6 +196,334 @@ test('RCH-1 customers, tags and rounds keep their boundaries in the source itsel
   assert.match(read('packages/schema/customers-db.mjs'), /This customer type is not asked for/);
 });
 
+test('RCH-2 attendance keeps every record it writes, and a rep marks only their own day', () => {
+  const migration = read('db/migrations/031_reach_attendance.sql');
+  const tables = ['work_types', 'shifts', 'attendance_days', 'leave_requests', 'attendance_edits'];
+  // A punch, a leave decision and a correction are all records of what happened. Nothing here is
+  // ever deleted — it is cancelled or superseded — so the runtime role gets no DELETE at all.
+  for (const [, privileges, granted] of migration.matchAll(
+    /GRANT ([^;]*?) ON ([^;]*?) TO rare_app/gi,
+  ))
+    assert.doesNotMatch(privileges, /\bDELETE\b/i, `DELETE granted on ${granted.trim()}`);
+  for (const table of tables)
+    assert.ok(new RegExp(`'${table}'`).test(migration), `${table} is not row-level scoped`);
+
+  // One day per rep, and one correction in flight per day, so two writes cannot race into each
+  // other and leave a register nobody can explain.
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX attendance_days_rep_date_idx ON attendance_days\(tenant_id, rep_id, work_date\)/,
+  );
+  assert.match(migration, /attendance_edits_pending_idx[\s\S]{0,160}WHERE status = 'PENDING'/);
+  // A correction has to change something, and a rejection has to say why.
+  assert.match(
+    migration,
+    /CHECK \(requested_start_at IS NOT NULL OR requested_end_at IS NOT NULL\)/,
+  );
+  for (const table of ['leave_requests', 'attendance_edits'])
+    assert.ok(
+      migration.includes("CHECK (status <> 'REJECTED' OR decision_reason <> '')"),
+      `${table} allows a rejection with no reason`,
+    );
+
+  const controller = read('apps/api/src/reach-attendance.controller.ts');
+  // The rep is read from the signed-in login. A rep id in a request body is never trusted, so
+  // nobody can mark, withdraw or correct somebody else's day.
+  assert.match(controller, /repForUser\(db, actor\.id\)/);
+  assert.doesNotMatch(controller, /body\(req, \[[^\]]*'rep_id'/);
+  assert.match(controller, /You may only withdraw your own request/);
+  assert.match(controller, /You may only read your own attendance/);
+  // Marking a day, deciding leave and changing setup are three different rights.
+  for (const required of [
+    "mutate(req, 'reach.attend'",
+    "mutate(req, 'reach.leave'",
+    "mutate(req, 'reach.setup'",
+    "access(req, 'reach.read')",
+  ])
+    assert.ok(controller.includes(required), `the controller is missing ${required}`);
+  // A coordinate off the planet is a typo somebody has to see, not a number to round.
+  assert.match(controller, /coordinate\(raw\.latitude, 'Latitude', 90\)/);
+  assert.match(controller, /coordinate\(raw\.longitude, 'Longitude', 180\)/);
+  assert.match(controller, /GEO_SOURCES\.includes\(source\)/);
+  assert.match(controller, /LEAVE_DECISIONS\.includes\(status\)/);
+  // One request can ask for at most a year, so it cannot walk a company's whole history.
+  assert.match(controller, /MAX_SPAN_DAYS = 366/);
+  // The export is served as a file and never sniffed as something a browser would run.
+  assert.match(controller, /'X-Content-Type-Options', 'nosniff'/);
+  assert.match(controller, /Content-Disposition[\s\S]{0,40}attachment/);
+
+  // The register is calculated, never stored: the punch table keeps no status column to drift
+  // away from the evidence it was derived from.
+  const punchTable = /CREATE TABLE attendance_days[\s\S]*?\n\);/i.exec(migration)?.[0] ?? '';
+  assert.ok(punchTable, 'attendance_days is not declared in the migration');
+  assert.doesNotMatch(punchTable, /\bstatus\b/i);
+
+  // One settings row holds every Reach setting, so a partial save must not blank its neighbours.
+  assert.match(
+    read('packages/schema/customers-db.mjs'),
+    /value\[c\] === undefined \? current\[c\] : value\[c\]/,
+  );
+});
+
+test('RCH-3 tour plans are built by the rep who walks them, and nothing is deleted', () => {
+  const migration = read('db/migrations/032_reach_tour_plan.sql');
+  const tables = ['tour_plans', 'tour_plan_days', 'tour_plan_changes', 'visits'];
+  // A plan, the decision taken on it, a change request and a visit are all records of what was
+  // intended or what happened. Nothing here is ever deleted, so the runtime role gets no DELETE.
+  for (const [, privileges, granted] of migration.matchAll(
+    /GRANT ([^;]*?) ON ([^;]*?) TO rare_app/gi,
+  ))
+    assert.doesNotMatch(privileges, /\bDELETE\b/i, `DELETE granted on ${granted.trim()}`);
+  for (const table of tables)
+    assert.ok(new RegExp(`'${table}'`).test(migration), `${table} is not row-level scoped`);
+
+  // One plan per rep per month, and one change in flight per day, so two writes cannot race into
+  // each other and leave a month nobody can explain.
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX tour_plans_rep_month_idx ON tour_plans\(tenant_id, rep_id, plan_month\)/,
+  );
+  assert.match(migration, /tour_plan_changes_pending_idx[\s\S]{0,160}WHERE status = 'PENDING'/);
+  // A month is one value, not a pair of dates to keep in step.
+  assert.match(migration, /CHECK \(plan_month = date_trunc\('month', plan_month\)::date\)/);
+  // Sending a month back or rejecting a change without saying why teaches the rep nothing.
+  assert.match(migration, /CHECK \(status <> 'SENT_BACK' OR decision_reason <> ''\)/);
+  assert.match(migration, /CHECK \(status <> 'REJECTED' OR decision_reason <> ''\)/);
+
+  const controller = read('apps/api/src/reach-tour.controller.ts');
+  // The rep is read from the signed-in login. A rep id in a request body is never trusted, so
+  // nobody builds, submits or moves a day on somebody else's month.
+  assert.match(controller, /repForUser\(db, actor\.id\)/);
+  assert.doesNotMatch(controller, /body\(req, \[[^\]]*'rep_id'/);
+  assert.match(controller, /A tour plan is built by the rep who walks it/);
+  assert.match(controller, /You may only read your own tour plan/);
+  // Building a month, deciding one and changing the numbers it is judged by are three rights.
+  for (const required of [
+    "mutate(req, 'reach.plan'",
+    "mutate(req, 'reach.plan_approve'",
+    "mutate(req, 'reach.setup'",
+    "access(req, 'reach.read')",
+  ])
+    assert.ok(controller.includes(required), `the controller is missing ${required}`);
+  // A month stops being editable the moment it is submitted, and after approval a day moves by
+  // request. Both are refused in the controller, not only hidden in the screens.
+  assert.match(controller, /EDITABLE\.includes\(plan!\.status\)/);
+  assert.match(controller, /Only an approved month moves a day by request/);
+  // Every decision and every status is checked against a list the code declares.
+  assert.match(controller, /PLAN_DECISIONS\.includes\(status\)/);
+  assert.match(controller, /CHANGE_DECISIONS\.includes\(status\)/);
+  // One request can ask for at most a year, so it cannot walk a company's whole history.
+  assert.match(controller, /MAX_SPAN_DAYS = 366/);
+  // A rep cannot plan a round they do not hold, and cannot name a town the round does not pass
+  // through: the town is taken from the beat, never from the request body.
+  assert.match(controller, /That round is not one this rep holds in this month/);
+  assert.doesNotMatch(controller, /body\(req, \[[^\]]*'town'/);
+
+  // Plan versus actual is calculated, never stored: the plan tables keep no verdict column to
+  // drift away from the evidence it came from. This is what lets leave approved after the plan
+  // was built stop a day counting as missed.
+  for (const table of ['tour_plans', 'tour_plan_days']) {
+    const declared =
+      new RegExp(`CREATE TABLE ${table}[\\s\\S]*?\\n\\);`, 'i').exec(migration)?.[0] ?? '';
+    assert.ok(declared, `${table} is not declared in the migration`);
+    for (const word of ['FOLLOWED', 'PARTIAL', 'DEVIATED', 'MISSED', 'adherence'])
+      assert.ok(!declared.includes(word), `${table} stores ${word}, which must be calculated`);
+  }
+
+  // A check-in from outside a shop's radius is recorded and flagged, never refused: rejecting it
+  // loses a real visit and teaches the salesman to distrust the app.
+  assert.match(migration, /out_of_fence boolean NOT NULL DEFAULT false/);
+});
+
+test('RCH-4 records every call, never refuses one for being far away, and never duplicates it', () => {
+  const migration = read('db/migrations/033_reach_visits.sql');
+  // The report form is setup like any other master; the visit itself was granted by 032. Nothing
+  // in either file may be deleted by the runtime role.
+  for (const [, privileges, granted] of migration.matchAll(
+    /GRANT ([^;]*?) ON ([^;]*?) TO rare_app/gi,
+  ))
+    assert.doesNotMatch(privileges, /\bDELETE\b/i, `DELETE granted on ${granted.trim()}`);
+  for (const table of ['visit_form_fields', 'visit_form_rules'])
+    assert.ok(new RegExp(`'${table}'`).test(migration), `${table} is not row-level scoped`);
+
+  // The two indexes that make a retry on a bad line safe rather than hopeful.
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX visits_open_idx ON visits\(tenant_id, rep_id, customer_id\)\s*\n\s*WHERE checked_out_at IS NULL/,
+  );
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX visits_client_ref_idx ON visits\(tenant_id, client_ref\)\s*\n\s*WHERE client_ref <> ''/,
+  );
+  // Time does not run backwards, and a place can only be recorded for a visit that has ended.
+  assert.match(migration, /CHECK \(checked_out_at IS NULL OR checked_out_at >= checked_in_at\)/);
+  assert.match(migration, /visits_out_needs_checkout/);
+
+  // There is nothing in this migration that can refuse a check-in for being far from the shop.
+  // `out_of_fence` is evidence, not a gate: no constraint may test it. The prose is stripped
+  // first, because this file argues the point in words as well as in SQL.
+  const sqlOnly = migration.replace(/--.*$/gm, '');
+  assert.doesNotMatch(sqlOnly, /CHECK\s*\([^)]*out_of_fence/i);
+  assert.doesNotMatch(sqlOnly, /CHECK\s*\([^)]*distance_m/i);
+
+  // How a visit reads is calculated: no status, no duration and no "report complete" column.
+  for (const column of ['status', 'duration', 'report_complete', 'minutes'])
+    assert.ok(
+      !new RegExp(`ADD COLUMN ${column}\\b`, 'i').test(migration),
+      `visits stores ${column}, which must be calculated`,
+    );
+
+  const controller = read('apps/api/src/reach-visit.controller.ts');
+  // The rep is read from the signed-in login. A rep id in a request body is never trusted.
+  assert.match(controller, /repForUser\(db, actor\.id\)/);
+  assert.doesNotMatch(controller, /body\(req, \[[^\]]*'rep_id'/);
+  assert.match(controller, /You may only check out of your own visit/);
+  assert.match(controller, /You may only correct your own report/);
+  assert.match(controller, /You may only read your own visits/);
+  // Calling on a shop, reading everyone's day and changing the setup are three rights.
+  for (const required of [
+    "mutate(req, 'reach.visit'",
+    "mutate(req, 'reach.setup'",
+    "access(req, 'reach.read')",
+  ])
+    assert.ok(controller.includes(required), `the controller is missing ${required}`);
+  // A coordinate off the planet is a typo somebody has to see, not a number to round.
+  assert.match(controller, /coordinate\(raw\.latitude, 'Latitude', 90\)/);
+  assert.match(controller, /coordinate\(raw\.longitude, 'Longitude', 180\)/);
+  assert.match(controller, /GEO_SOURCES\.includes\(source\)/);
+  // One request can ask for at most a year, so it cannot walk a company's whole history.
+  assert.match(controller, /MAX_SPAN_DAYS = 366/);
+  // The export is served as a file and never sniffed as something a browser would run.
+  assert.match(controller, /'X-Content-Type-Options', 'nosniff'/);
+  assert.match(controller, /Content-Disposition[\s\S]{0,40}attachment/);
+  // A repeat is answered with the visit that already exists rather than refused.
+  assert.match(controller, /repeated: true/);
+  // An answer the form never asked for is refused rather than stored.
+  assert.match(read('packages/schema/visit-db.mjs'), /validateAnswers\(form, raw\)/);
+});
+
+test('RCH-5 holds an order rather than refusing it, and never stores what it works out', () => {
+  const migration = read('db/migrations/034_reach_trade.sql');
+  // An order, a bill, a collection and a KYC decision are records of what happened. None of
+  // them may be deleted by the runtime role; they are cancelled, never removed.
+  for (const [, privileges, granted] of migration.matchAll(
+    /GRANT ([^;]*?) ON ([^;]*?) TO rare_app/gi,
+  ))
+    assert.doesNotMatch(privileges, /\bDELETE\b/i, `DELETE granted on ${granted.trim()}`);
+  for (const table of [
+    'kyc_types',
+    'kyc_rules',
+    'kyc_documents',
+    'price_list_items',
+    'trade_schemes',
+    'trade_orders',
+    'trade_order_lines',
+    'trade_invoices',
+    'trade_invoice_lines',
+    'trade_receipts',
+    'invoice_series',
+  ])
+    assert.ok(new RegExp(`'${table}'`).test(migration), `${table} is not row-level scoped`);
+
+  // The two numbering authorities are told apart by the table itself, not by a convention: a
+  // bill this module raised has a series and a recorded one never does.
+  assert.match(migration, /CHECK \(\(source = 'RAISED'\) = \(series_id IS NOT NULL\)\)/);
+  assert.match(
+    migration,
+    /CHECK \(source <> 'RAISED' OR \(taxable IS NOT NULL AND gst IS NOT NULL\)\)/,
+  );
+  // One number per company, prefix and year, and a counter that only ever goes up: a cancelled
+  // bill keeps its number used, which is what a gapless series means in practice.
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX invoice_series_key_idx ON invoice_series\(tenant_id, lower\(prefix\), fy\)/,
+  );
+  assert.match(migration, /next_no integer NOT NULL DEFAULT 1 CHECK \(next_no >= 1\)/);
+  // One bill number may only be recorded once.
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX trade_invoices_no_idx ON trade_invoices\(tenant_id, lower\(invoice_no\)\)/,
+  );
+  // Every document uploaded inside one transaction needs its own moment, or "the newest one"
+  // is undecidable and a re-upload after a rejection never takes effect.
+  assert.match(migration, /uploaded_at timestamptz NOT NULL DEFAULT clock_timestamp\(\)/);
+
+  // Nothing a screen works out may be stored. A column for any of these would be a second
+  // version of the truth that somebody has to remember to rewrite.
+  const sqlOnly = migration.replace(/--.*$/gm, '');
+  for (const column of [
+    'outstanding',
+    'credit_hold',
+    'on_hold',
+    'kyc_status',
+    'dso',
+    'ageing_bucket',
+    'age_days',
+  ])
+    assert.ok(
+      !new RegExp(`\\b${column}\\s+(numeric|integer|boolean|text|date)`, 'i').test(sqlOnly),
+      `the schema stores ${column}, which must be calculated`,
+    );
+  // Nothing in this migration can refuse an order for credit or for paperwork: a hold is
+  // recorded on the order, never enforced by a constraint.
+  assert.doesNotMatch(sqlOnly, /CHECK\s*\([^)]*credit_limit[^)]*total/i);
+  assert.doesNotMatch(sqlOnly, /CHECK\s*\([^)]*hold_reasons[^)]*=\s*'\{\}'/i);
+
+  const controller = read('apps/api/src/reach-trade.controller.ts');
+  // The rep is the signed-in login. A rep id in a request body is never read, so nobody takes
+  // an order or banks a collection in somebody else's name.
+  assert.match(controller, /repForUser\(db, actor\.id\)/);
+  assert.doesNotMatch(controller, /body\(req, \[[^\]]*'rep_id'/);
+  assert.match(controller, /You may only read your own orders/);
+  assert.match(controller, /You may only cancel your own order/);
+  assert.match(controller, /You may only cancel your own receipt/);
+  // An order past the limit is taken and held, not refused.
+  assert.match(controller, /taken and held/);
+  // Both ways a bill arrives sit behind one right, so granting nobody that right means no bill
+  // is ever raised here and every one arrives from an ERP. There is no setting to deploy.
+  for (const required of [
+    "mutate(req, 'reach.invoice'",
+    "mutate(req, 'reach.order'",
+    "mutate(req, 'reach.collect'",
+    "mutate(req, 'reach.kyc'",
+    "mutate(req, 'reach.credit'",
+    "mutate(req, 'reach.setup'",
+    "access(req, 'reach.read')",
+  ])
+    assert.ok(controller.includes(required), `the controller is missing ${required}`);
+  // Releasing a hold and deciding a document are decisions, and each one carries its reason.
+  assert.match(controller, /text\(raw\.reason, 'Reason', 1, 300\)/);
+  // A recorded bill may never claim this module's own numbering authority.
+  assert.match(controller, /INVOICE_SOURCES = \['MANUAL', 'IMPORT', 'ERP'\]/);
+  // One request may ask for at most a year, and a basket is a basket.
+  assert.match(controller, /MAX_SPAN_DAYS = 366/);
+  assert.match(controller, /MAX_LINES = 200/);
+  // Money finer than a paisa is refused rather than silently rounded.
+  assert.match(controller, /cannot be finer than a paisa/);
+  // Lines sent with a recorded bill have to agree with what the bill says it came to.
+  assert.match(controller, /The lines come to/);
+
+  const db = read('packages/schema/trade-db.mjs');
+  // The number is read and advanced in one statement, so two people billing at the same moment
+  // cannot be handed the same one.
+  assert.match(
+    db,
+    /ON CONFLICT \(tenant_id,lower\(prefix\),fy\)\s*\n?\s*DO UPDATE SET next_no = invoice_series\.next_no \+ 1/,
+  );
+  assert.doesNotMatch(db, /SELECT next_no[\s\S]{0,200}UPDATE invoice_series SET next_no/);
+  // The newest document is decided by a stable order, not by whichever row came back first.
+  assert.match(db, /ORDER BY (d\.)?uploaded_at DESC, (d\.)?id DESC/);
+
+  // The hold reasons the engine can give are the ones the catalogue knows about.
+  const engine = read('packages/engines/trade.mjs');
+  for (const reason of ['OVER_LIMIT', 'OVERDUE', 'KYC', 'APPROVAL', 'INACTIVE'])
+    assert.ok(new RegExp(`${reason}:`).test(engine), `HOLD_REASONS is missing ${reason}`);
+  // Rates keep four decimals so a bulk list quoting 0.3333 a piece does not lose its precision
+  // on the way to a total; only the amounts a rate produces are rounded to the paisa.
+  assert.match(engine, /const unitRate = \(value\) => \{[\s\S]{0,160}10000\) \/ 10000/);
+  assert.match(engine, /const price = unitRate\(rate\)/);
+});
+
 test('production gateways and images retain baseline VAPT hardening', () => {
   const nginx = read('infra/docker/nginx.conf');
   for (const required of [

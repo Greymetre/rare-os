@@ -60,6 +60,10 @@ import { RawImportsController, MAX_WORKBOOK_BYTES } from './raw-imports.controll
 import { AccessController } from './access.controller.js';
 import { ReachController } from './reach.controller.js';
 import { ReachCustomersController } from './reach-customers.controller.js';
+import { ReachAttendanceController } from './reach-attendance.controller.js';
+import { ReachTourController } from './reach-tour.controller.js';
+import { ReachVisitController } from './reach-visit.controller.js';
+import { ReachTradeController } from './reach-trade.controller.js';
 import { MAX_FILE_BYTES, UPLOAD_TYPES } from './file-store.js';
 @Catch()
 class Errors implements ExceptionFilter {
@@ -406,6 +410,10 @@ class AppController {
     RawImportsController,
     ReachController,
     ReachCustomersController,
+    ReachAttendanceController,
+    ReachTourController,
+    ReachVisitController,
+    ReachTradeController,
   ],
 })
 class AppModule {}

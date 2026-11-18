@@ -242,3 +242,748 @@ Ye jaan-boojh ke alag hain. Agar ek distributor dono hai, to Reach ke record me 
 ### Jo RCH-1 mein nahi hai
 
 Customer 360 (RCH-5), visit aur check-out report (RCH-4), orders, KYC documents, outstanding aur ledger — ye aage ke milestones hain. Abhi customer type par `KYC before ordering`, `Order route`, `Credit limit`, `Credit days` aur `Hold days` **sirf set hote hain**, inhe padhne wala kaam baad me aayega. Geo plane par koi map background nahi hai (handover me bhi nahi hai) — wo to-scale plane hai.
+
+---
+
+## RCH-2 — Attendance aur Leave
+
+Yahan sabse zaroori baat pehle samajh lijiye: **register kahin store nahi hota.** Present, Late,
+Half day, Leave, Absent, Week-off aur Holiday har baar punch, shift, holiday list aur approved
+leave se **nikale jaate hain**. Isliye agar aap aaj ek purana punch theek karte ho ya ek holiday
+peeche daalte ho, to **pichhle mahine ka register bhi badal jaata hai** — yahi iska maqsad hai.
+
+Saari clock timings company ke apne timezone me padhi jaati hain (`Reach → Attendance settings`),
+default `Asia/Kolkata`.
+
+### 1. Shift banao (sab kuch isi par tika hai)
+
+`Reach → Field setup → Shifts → Create shift`
+
+| Field                  | Daalo   |
+| ---------------------- | ------- |
+| Shift code             | `DAY`   |
+| Starts at              | `09:30` |
+| Ends at                | `18:00` |
+| Grace in minutes       | `10`    |
+| Half day under minutes | `240`   |
+| Counts from minutes    | `60`    |
+| Week off               | `SUN`   |
+
+Jaanch ke liye: `25:00` daal kar dekho — refuse hona chahiye. `9:30` likho to apne aap `09:30`
+ban jana chahiye. `sun` likho to `SUN`. Aur "Counts from" ko `300` aur "Half day under" ko `120`
+karke save karo — wo bhi rukna chahiye (din aadha hone ke baad ginti shuru nahi ho sakti).
+
+Ek **night shift** bhi banao: `NIGHT`, `22:00` se `06:00`. Yeh chalna chahiye — end start se
+pehle hona galti nahi, raat ki shift hai.
+
+### 2. Work types
+
+`Reach → Field setup → Work types`
+
+| Code       | Needs a location | Counts as attended |
+| ---------- | ---------------- | ------------------ |
+| `FIELD`    | yes              | yes                |
+| `OFFICE`   | no               | yes                |
+| `PERSONAL` | no               | **no**             |
+
+`PERSONAL` ka matlab: din record hoga par attendance me ginega nahi.
+
+### 3. Rep ko shift do
+
+`Reach → Field setup → Field reps` — apne rep ko edit karke **Shift code** me `DAY` daalo.
+
+Shift khaali chhoda to kya hota hai? Register phir saaf kehta hai ki lateness judge nahi ho
+sakti — wo chupchap office hours maan kar nahi chalta.
+
+### 4. Apna din — acceptance ka pehla hissa
+
+Us login se sign in karo jo kisi field rep se juda hai. `Reach → Attendance → My day`.
+
+1. Work type chuno
+2. `FIELD` chuna to **Use my location** dabao, phir **selfie** lo
+3. **Start my day**
+
+Dekhne layak cheezein:
+
+- `OFFICE` chunte hi location aur selfie ki zarurat gayab ho jaani chahiye
+- Location permission mana karo — screen saaf batayega kya kami hai, crash nahi karega
+- Dobara start karne ki koshish karo — rukna chahiye
+- **End my day** ke baad "Your day is finished" dikhega
+
+Jis login ka koi rep record nahi hai, usse saaf kaha jayega — khaali screen nahi milega.
+
+### 5. Late, Half day aur Leave — plan ka apna acceptance
+
+`Reach → Attendance → Register`, apni date range chuno.
+
+| Punch              | Dikhna chahiye                                            |
+| ------------------ | --------------------------------------------------------- |
+| 09:29 – 18:00      | **Present**                                               |
+| 09:40 – 18:00      | **Present** (09:30 + 10 grace, boundary par late nahi)    |
+| 09:41 – 18:00      | **Late**                                                  |
+| 09:45 – 13:00      | **Half day** (3h 15m), par "Why" me late bhi likha rahega |
+| 09:00 – 09:30      | **Absent** (ek ghante se kam, din ginta hi nahi)          |
+| 09:00 – (end nahi) | **Not ended** — correction maango                         |
+
+Aur sabse zaroori: **approved leave wale din punch ka sawal hi nahi uthta** — wahan `Leave`
+likha aayega, chahe punch ho ya na ho.
+
+### 6. Tarteeb — kya kisko harata hai
+
+`Holiday` → `Week off` → `Leave` → punch → `Absent`
+
+Iski jaanch:
+
+- Leave wale din par ek **holiday** daal do → din `Holiday` ho jayega (rep ki leave bekaar na jaye)
+- Sunday dekho → `Week off`, `Absent` nahi
+
+### 7. Leave — balance, apply, approve
+
+`Reach → Attendance → Leave`
+
+Upar balance table: quota, taken, left. Apply karo, phir **wahi dates dobara** maango — rukna
+chahiye, aur message me purani dates ka naam aayega.
+
+`reach.leave` wale login se **Decide** dabao. Refuse karne par **reason zaroori hai**, approve
+karne par nahi. Approve hote hi register us din par `Leave` dikhane lagega aur balance ghat jayega.
+
+Jiske paas `reach.leave` nahi hai usey **Withdraw** dikhega — sirf apni request par.
+
+### 8. Correction (regularisation)
+
+`Reach → Attendance → Corrections → Ask for a correction`
+
+Ek purana din chuno jahan punch chhut gaya tha, time daalo, wajah likho.
+
+- Usi din ke liye doosri correction maango — rukna chahiye
+- **Future ki date** maango — rukna chahiye
+- Queue me **"Was" aur "Asked for" dono** dikhte hain — purani value record par hi rehti hai
+- Approve karo → register us din ko dobara padhega aur status badal jayega
+
+### 9. Today board
+
+`Reach → Attendance → Today`
+
+Upar tiles (kitne present, late, absent…), neeche har rep ki line. Jo rep shift khatam hone ke
+**"Chase after minutes"** baad bhi nahi dikha, uske saamne _no word yet_ aayega — yeh sirf
+**suggestion hai**, koi message apne aap nahi jaata.
+
+Jo rep fence ke bahar se shuru kare uske start time ke aage `*` lagega. **Punch phir bhi hota
+hai** — fence se bahar hona mana nahi hai, bas nishaan lag jaata hai.
+
+### 10. Payroll CSV
+
+`Register → Payroll CSV`. Header:
+
+```
+code,name,days,present,late,half_day,leave,absent,week_off,holiday,open,paid_days
+```
+
+**CSV ki ginti screen se bilkul milni chahiye** — dono ek hi engine se aate hain. Ek rep ka
+register khol kar tiles se mila lijiye.
+
+`paid_days` ka hisaab: Present aur Late = 1, Half day = 0.5, **paid** leave = 1, **unpaid**
+leave = 0, aur Absent / Not ended / Week off / Holiday = 0.
+
+### 11. Attendance settings
+
+`Reach → Customer setup → Attendance settings`
+
+Fence (metres), chase-after minutes, selfie zaroori hai ya nahi, aur timezone.
+
+Zaroori jaanch: **yahan save karne ke baad `Reach settings` khol kar dekho** — GPS verified,
+duplicate aur retag wali values waisi ki waisi honi chahiye. Dono ek hi row me rehti hain, par
+ek doosre ko mitati nahi.
+
+Timezone me `Mars/Olympus` daal kar dekho — refuse hona chahiye.
+
+### 12. Permissions
+
+| Permission     | Kya milta hai                                     |
+| -------------- | ------------------------------------------------- |
+| `reach.attend` | My day, apna Register, apni Leave aur Corrections |
+| `reach.read`   | Today board, sab reps ka register, Payroll CSV    |
+| `reach.leave`  | Leave aur corrections par **Decide**              |
+| `reach.setup`  | Attendance settings badalna                       |
+
+Sirf `reach.attend` wale login se jaanch: **Today** menu me dikhna hi nahi chahiye, **Payroll
+CSV** ka link nahi hona chahiye, aur kisi doosre rep ka register maangne par mana hona chahiye.
+
+### Jo RCH-2 mein nahi hai
+
+- Reminder apne aap nahi jaata — board sirf propose karta hai
+- Payroll software se koi jodna nahi hai, sirf CSV
+- Overtime, comp-off aur leave carry-forward ka hisaab abhi nahi
+- Mobile app nahi — web browser phone par chalta hai, selfie aur GPS wahin se
+
+---
+
+## RCH-3 — Tour Plan
+
+Yahan bhi wahi usool hai jo RCH-2 me tha, aur isi wajah se milestone ka doosra acceptance
+chalta hai: **plan vs actual kahin store nahi hota.** Followed, Partial, Deviated, Missed aur
+Unplanned har baar plan, visits aur attendance register se **nikale jaate hain**. Isliye plan
+ban jane ke **baad** agar kisi din ki leave approve ho jaye, to wo din apne aap "Missed" hona
+band ho jaata hai — kuch dobara likhna nahi padta.
+
+Leave, holiday aur week-off yahan dobara nahi rakhe gaye. Wo Attendance ke hain, aur plan unhi
+se poochta hai. Ek hi holiday do jagah rakhne par company apne aap se asehmat ho jaati hai.
+
+**Kahan:** `Reach → Tour plan` — **My plan**, **Plans**, **Day changes**, **Plan vs actual**.
+Settings `Reach → Customer setup → Tour plan settings`.
+
+### 1. Pehle ye hona chahiye (RCH-1 aur RCH-2 ka saman)
+
+| Cheez            | Kahan                                      |
+| ---------------- | ------------------------------------------ |
+| Territory, Rep   | Field setup → Territories, Field reps      |
+| Shift (week off) | Field setup → Shifts — `Week off = SUN`    |
+| Beat + run days  | Field setup → Beats — `run_days = MON,THU` |
+| Beat assignment  | Field setup → Beat assignments             |
+| Beat ke outlets  | Customers → Customer register (beat chuno) |
+| Holiday          | Field setup → Holidays                     |
+
+Beat ka **town** aur **kitne outlet** — dono beat ke apne stops se aate hain, haath se nahi
+likhe jaate. Isi wajah se plan kabhi aisa town nahi bol sakta jahan se round guzarta hi nahi.
+
+### 2. Mahina shuru karo
+
+`Reach → Tour plan → My plan` → month chuno → **Start this month**.
+
+Ek rep ka ek mahine me ek hi plan banta hai. Dobara start karne par mana hona chahiye.
+
+### 3. Auto-fill — beat calendar se poora mahina
+
+**Fill from the beat calendar** dabao.
+
+Dekhne layak:
+
+- Sirf wahi din bhare jo beat ke `run_days` me hain
+- **Sunday aur holiday bilkul nahi aate** — wo Attendance ke hain
+- FORTNIGHTLY beat sirf apne aadhe pakhwade me aata hai (ODD / EVEN ISO week)
+- Jo beat rep ne mahine ke beech me liya hai, wo usse pehle ke din me nahi aata
+- Har bhare hue din par round, uska town aur uske outlet ki ginti aa jaati hai
+- "From" column me `Beat calendar` likha dikhega
+
+Ab ek din ko **Change** karke haath se badlo (`From` me `Typed` ho jayega), phir dobara
+**Fill from the beat calendar** dabao — **aapka typed din waisa hi rehna chahiye.**
+
+### 4. Jo jaanch mahina paas kiye bina submit nahi hota
+
+Screen par teen check dikhte hain, har ek apna kaaran likhta hai:
+
+| Check        | Matlab                                      |
+| ------------ | ------------------------------------------- |
+| `HAS_DAYS`   | Mahine me kam se kam ek field day ho        |
+| `FIELD_DAYS` | Working days ka kam se kam 75% field day ho |
+| `OUTLET_CAP` | Kisi din 12 se zyada outlet na hon          |
+
+Working days = mahine ke din − Sundays (rep ka week off) − holidays.
+
+Sirf auto-fill se mahina aam taur par 75% tak nahi pahunchta, to **Submit for approval** band
+rahega. Baaki din haath se bharo, phir khul jayega.
+
+Ek din me `30` outlet daal kar dekho — **wahin mana hona chahiye**, 12 ki limit ke saath.
+Mahine ke bahar ki date daalo — wo bhi mana. Aur aisa round chuno jo rep ke paas hai hi nahi —
+wo bhi mana.
+
+### 5. Submit, approve, wapas bhejna
+
+Rep: **Submit for approval**.
+
+Ab mahina **Waiting** hai — rep usme kuch bhi badal nahi sakta. Try karke dekho, mana hona
+chahiye.
+
+Manager (`reach.plan_approve` wala): `Reach → Tour plan → Plans` → month chuno → **Decide**.
+
+- **Send back** bina kaaran likhe — **mana hona chahiye**. Kaaran likh kar bhejo.
+- Rep ko wo kaaran apni screen par dikhna chahiye.
+- Rep dobara submit kare — purana kaaran apne aap hat jata hai.
+- Ab **Approve** karo.
+
+Rep apne hi mahine ko approve karne ki koshish kare — permission nahi milni chahiye.
+
+### 6. Approved mahine ka ek din hilana (change request)
+
+Approved mahina ab type karke nahi badlta. Rep: us din par **Ask to change**.
+
+- Kaaran likhna zaroori hai
+- Ek din par ek hi request chal sakti hai — doosri bhejne par mana
+- Rep khud apni request decide nahi kar sakta
+
+Manager: `Tour plan → Day changes` → **Decide** → **Approve the move**.
+
+Iske baad:
+
+- **Sirf wahi ek din badla** — aas-paas ke din waise ke waise
+- Request par **purana din bhi likha rehta hai** (`Now` column), isliye record mitta nahi
+- Usi request ko dobara decide karne par mana
+
+### 7. Plan vs actual — milestone ka apna acceptance
+
+Abhi check-in RCH-4 me aayega, isliye jaanch ke liye visits seedha database me daal kar dekhiye
+(ye **sirf local test ke liye** hai):
+
+```bash
+docker compose exec -T db psql -U rare_owner -d rare_os -c \
+  "INSERT INTO visits(id,tenant_id,rep_id,customer_id,visit_date,checked_in_at)
+   SELECT gen_random_uuid(), c.tenant_id, r.id, c.id, '2026-03-09', '2026-03-09 11:00+05:30'
+   FROM trade_customers c, field_reps r
+   WHERE r.code='<REP>' AND c.beat_id=(SELECT id FROM beats WHERE code='<BEAT>')
+   LIMIT 6"
+```
+
+`Reach → Tour plan → Plan vs actual` → From/To us din par:
+
+| Kitne stop par gaye (10 me se) | Kya dikhna chahiye |
+| ------------------------------ | ------------------ |
+| 6 (= 60%)                      | **Followed**       |
+| 5 (= 50%)                      | **Partial**        |
+| 0, par kahin aur gaye          | **Deviated**       |
+| 0, kahin nahi gaye             | **Missed**         |
+| Din plan me tha hi nahi        | **Unplanned**      |
+
+**Ab dusra acceptance:** usi mahine ke kisi planned din ki leave approve kar do
+(`Reach → Attendance → Leave`). Phir Plan vs actual me wo din dekho —
+**Missed nahi, `Leave` dikhna chahiye**, aur score ke denominator se bahar ho jana chahiye.
+Plan me kuch bhi dobara nahi likha gaya — yahi "calculate, store nahi" ka faayda hai.
+
+Holiday aur Sunday bhi kisi ke khilaaf nahi ginte.
+
+### 8. Plans board
+
+`Reach → Tour plan → Plans` — mahine ka poora hisaab:
+
+- Kis rep ka mahina kis haal me hai (Draft / Waiting / Approved / Sent back)
+- Kitne field days aur kitne outlet calls
+- **Jin reps ne mahina shuru hi nahi kiya wo bhi list me hain** (`Not started`) — yahi iska
+  asli maqsad hai
+
+### 9. Tour plan settings
+
+`Reach → Customer setup → Tour plan settings`
+
+| Setting                                 | Default | Matlab                                  |
+| --------------------------------------- | ------- | --------------------------------------- |
+| Plan due on day                         | 25      | Agle mahine ka plan is tareekh tak      |
+| Most outlets in a day                   | 12      | Isse zyada daalne par wahin mana        |
+| Field days as a percent of working days | 75      | Isse kam par mahina submit nahi hota    |
+| Followed at percent of the round        | 60      | Itne % round par gaye to din `Followed` |
+
+Ye chaar number client ke abhi tak na-diye gaye jawab hain (milestone plan ke sawal 5, 6 aur 8).
+Jawab aate hi screen se badal jayenge, koi deploy nahi chahiye.
+
+Zaroori jaanch: **yahan save karne ke baad `Reach settings` aur `Attendance settings` dono khol
+kar dekho** — unki values waisi ki waisi honi chahiye. Teeno ek hi row me rehti hain.
+
+### 10. Permissions
+
+| Permission           | Kya milta hai                                   |
+| -------------------- | ----------------------------------------------- |
+| `reach.plan`         | My plan, apna Plan vs actual, apni Day changes  |
+| `reach.read`         | Plans board, kisi bhi rep ka plan aur adherence |
+| `reach.plan_approve` | Plan aur day change par **Decide**              |
+| `reach.setup`        | Tour plan settings badalna                      |
+
+Sirf `reach.plan` wale login se jaanch: **Plans** menu me dikhna hi nahi chahiye, aur kisi
+doosre rep ka plan ya adherence maangne par mana hona chahiye.
+
+### Jo RCH-3 mein nahi hai
+
+- **Check-in khud RCH-4 me hai.** Yahan visits padhe jaate hain, banaye nahi jaate — isliye
+  asli Plan vs actual RCH-4 ke baad hi bharna shuru hoga
+- Manager rep ka plan khud edit nahi kar sakta (milestone plan ka sawal 8 — jaan boojh kar)
+- Plan ka koi CSV export abhi nahi
+- Visit norms (A/B/C class par mahine me kitni visit) abhi nahi — wo sawal 7 hai, client se
+- Mobile app nahi
+
+---
+
+## RCH-4 — Visit aur check-out report
+
+Milestone plan isse **"Reach ka dil"** kehta hai, aur handover saaf likhta hai: ye raasta server
+par pakka hone se pehle mobile app shuru nahi karni chahiye. Isliye teen usool yahan **server
+par** lage hain, screen par nahi:
+
+1. **Check-in kabhi reject nahi hota.** Dukaan se 800 meter door khade ho? Visit **banega aur
+   flag hoga**. Reject karne se ek asli visit gum ho jaati hai aur salesman app par bharosa
+   karna chhod deta hai — handover ka apna shabd hai ye.
+2. **Ek hi check-in teen baar aaye to ek hi visit banti hai.** Network girta hai, app dobara
+   bhejti hai. Do database index isse pakka karte hain, sirf code ki ummeed nahi.
+3. **Visit kaisi padhi jaati hai wo calculate hota hai.** Kitni der ruke = do timestamp.
+   Report poori hui ya nahi = **aaj ke form** ke hisaab se. Isliye kal ek sawal required banaya
+   to aaj ki purani report khud keh degi "ye missing hai".
+
+**Kahan:** `Reach → Field work` — **Field app**, **Visits**, **Calls today**.
+Report form `Reach → Customer setup → Visit report fields` aur **Visit report by type**.
+Settings `Reach → Customer setup → Visit settings`.
+
+### 1. Pehle ye hona chahiye
+
+| Cheez                   | Kahan                                              |
+| ----------------------- | -------------------------------------------------- |
+| Customer type ka radius | Customer setup → Customer types                    |
+| Rep + uska login        | Field setup → Field reps (`user` bharo)            |
+| Beat + uske outlets     | Field setup → Beats, Customers → Customer register |
+| Dukaan ka location tag  | Customer register → row par **Tag location**       |
+| Aaj ka plan (optional)  | Tour plan → My plan (RCH-3)                        |
+
+Radius **type par** hai, settings par nahi — distributor ka yard aur retailer ka counter ek
+doori par nahi hote. Handover ke numbers: DIST 100, RET 75, INST 200 meter.
+
+### 2. Report form banao (har type ka alag)
+
+`Reach → Customer setup → Visit report fields → Create`
+
+| Field key     | Label           | Input  | Section |
+| ------------- | --------------- | ------ | ------- |
+| `shelf_share` | Shelf share %   | number | Shelf   |
+| `competitor`  | Competitor seen | text   | Shelf   |
+| `stock_out`   | Stock out today | bool   | Shelf   |
+
+Jaanch: `input = select` chuno aur choices khaali chhodo — **refuse hona chahiye** (bina choices
+ka sawal jawab-dene-layak hi nahi).
+
+Phir `Visit report by type`: RET par `shelf_share` = **R**, `competitor` = **O**.
+Distributor par kuch mat daalo — uska matlab hai distributor se kuch nahi poocha jayega.
+
+### 3. Field app — phone jaisa frame
+
+`Reach → Field work → Field app`
+
+Ye jaan boojh kar phone ke frame me bana hai: **yahi wo screen hai jiske against mobile app
+likhi jayegi.** Ek round, ek stop, bade button.
+
+Screen khulte hi browser location maangta hai.
+
+- **Allow karo** → upar "Located to about N m" dikhega
+- **Deny kar do** → bhi theek hai. Check-in tab bhi jayega, bas doori nahi napi jayegi.
+  Ye jaan boojh kar hai.
+
+### 4. Milestone ka pehla acceptance — 800 meter door se
+
+Browser me location spoof karo (Chrome DevTools → **Sensors** → Location → custom), dukaan se
+~800 meter door ka lat/long daalo, phir **Check in**.
+
+Dekhna chahiye:
+
+- Visit **ban gayi** (reject nahi hui)
+- Message: _"Checked in at …, 812 m from the shop. It is recorded and flagged."_
+- Stop par doori laal me, `flagged` ke saath
+
+Ab **usi jagah se** distributor par check in karo — uska radius 5000 m hai, to **flag nahi
+aayega**. Ek hi doori, do alag jawab, kyunki radius type ka hai.
+
+### 5. Milestone ka doosra acceptance — teen baar check-in, ek visit
+
+Usi dukaan par **Check in** teen baar dabao (ya network throttle karke dobara bhejo).
+
+```bash
+docker compose exec -T db psql -U rare_owner -d rare_os -At -c \
+  "SELECT count(*) FROM visits v JOIN trade_customers c ON c.id=v.customer_id
+   WHERE c.code='<SHOP CODE>'"
+```
+
+**Jawab `1` aana chahiye.** Dusri aur teesri baar screen bolega "Already checked in at …".
+
+Ye do index isse pakka karte hain:
+
+| Index                   | Kya rokta hai                            |
+| ----------------------- | ---------------------------------------- |
+| `visits_open_idx`       | Ek rep + ek dukaan par ek hi khuli visit |
+| `visits_client_ref_idx` | Ek reference, ek visit                   |
+
+### 6. Check-out aur report
+
+Stop par **Check out** dabao. Us type ka apna form khulega.
+
+- Required sawal khaali chhod do → **ruk jana chahiye**, aur batana chahiye kaunsa
+- Aisi key bhejo jo form me hai hi nahi → **refuse** (warna wo key hamesha ke liye report me
+  padi rehti, har screen se invisible)
+- Number wale sawal me `abcd` → refuse
+
+Sahi bhar kar check out karo. Agar 5 minute se kam ruke to visit **Short call** dikhegi —
+retailer type ka `min_visit_minutes` yahi tay karta hai.
+
+Check out ke baad **Report** button se report sudhaari ja sakti hai. **Visit dobara nahi
+khulti** — rep kab nikla wo ho chuka hai, aur wahi rahega.
+
+### 7. "Report poori hui ya nahi" — aaj ke form se
+
+Ek visit check out kar do jiska `competitor` khaali hai (abhi wo optional hai) → **Complete**.
+
+Ab `Visit report by type` me `competitor` ko **R** kar do.
+
+Wapas us visit par jao — ab wo **"missing 1"** dikhayegi. Database me kuch bhi dobara nahi
+likha gaya; form badla, jawab wahi raha. Agar ye flag stored hota to purani report jhooth
+bolti rehti.
+
+### 8. Din ki visit list
+
+`Reach → Field work → Visits`
+
+Har visit par: kitni der ruke, kitni door se check-in hua, report poori hui ya nahi.
+Manager ke liye **Visits CSV** bhi hai (`reach.read` chahiye).
+
+### 9. Calls today — manager ka board
+
+`Reach → Field work → Calls today` — ek din, rep ke hisaab se: kitni calls, kitne minute,
+average, kitni flagged, kitni report adhoori.
+
+### 10. RCH-3 ab asli data se bharti hai
+
+Visits aane ke baad `Reach → Tour plan → Plan vs actual` kholo. Ab Followed / Partial /
+Deviated asli check-in se nikal rahe hain, test data se nahi. Jo dukaan plan me nahi thi uspar
+visit **off plan** gini jayegi — gayab nahi hogi.
+
+### 11. Visit settings
+
+`Reach → Customer setup → Visit settings`
+
+| Setting                | Default | Matlab                                                           |
+| ---------------------- | ------- | ---------------------------------------------------------------- |
+| Retry window (minutes) | 10      | Itni der tak wahi check-in dobara aaye to wahi visit mani jayegi |
+
+Radius yahan **nahi** hai — wo customer type par hai. Ye jaan boojh kar hai.
+
+Zaroori jaanch: yahan save karne ke baad `Reach settings`, `Attendance settings` aur
+`Tour plan settings` teeno khol kar dekho — sab waise ke waise hone chahiye. Chaaron ek hi row
+me rehte hain.
+
+### 12. Permissions
+
+| Permission    | Kya milta hai                                   |
+| ------------- | ----------------------------------------------- |
+| `reach.visit` | Field app, apni Visits, apna check-in/check-out |
+| `reach.read`  | Calls today board, kisi bhi rep ki visits, CSV  |
+| `reach.setup` | Report form aur Visit settings badalna          |
+
+Sirf `reach.visit` wale login se jaanch: **Calls today** menu me dikhna hi nahi chahiye, CSV ka
+link nahi hona chahiye, aur kisi doosre rep ki visits maangne par mana hona chahiye.
+
+### Jo RCH-4 mein nahi hai
+
+- **Mobile app nahi.** Field app web par hai — yahi wo reference hai jiske against app banegi
+- Offline queue nahi — browser online hona chahiye (retry window dropped connection ke liye hai)
+- Order lena, stock dekhna, collection — wo RCH-5 (Customer 360) aur aage hai
+- Shelf photo visit se abhi nahi judti (file upload RCH-0 me hai, visit se link nahi)
+- **Khula sawal (milestone plan #12):** radius se bahar check-in — **rokein ya sirf flag karein**?
+  Abhi jawab **"flag"** hai, handover ki apni warning ke hisaab se. Client "roko" bole to ye
+  controller me chhota badlav hai — par handover khud isse mana karta hai
+
+---
+
+## RCH-5 — Customer 360
+
+Ye wo screen hai jahan dukaan ki poori trading tasveer ek jagah aati hai: kitna udhaar hai,
+order ja sakta hai ya nahi, kagaz poore hain ya nahi, is mahine kitna kharida, aur pichhe kya
+kya hua.
+
+Char usool yahan **server par** lage hain:
+
+1. **Order credit ke liye kabhi reject nahi hota.** Limit cross kar raha ho ya KYC verified na
+   ho — order **liya jata hai aur hold hota hai**, reason record ke saath. Wahi baat jo
+   check-in ki thi: salesman ko bina wajah "no" bolna app par bharosa tod deta hai.
+2. **Jo jod-ghata hota hai wo kahin store nahi hota.** Outstanding, ageing, hold aur KYC ki
+   haalat har request par evidence se padhi jaati hai. Isliye paisa aate hi ya document verify
+   hote hi hold apne aap khul jata hai — kuch dhoondh kar badalna nahi padta.
+3. **Bill do raaste se aata hai, aur permission hi switch hai.** `reach.invoice` kisi ko nahi
+   diya → yahan se invoice ban hi nahi sakti, sab ERP se aayengi. De diya → yahan se bhi ban
+   jayegi, apni numbering series se. Koi setting nahi, koi deploy nahi.
+4. **Rep wahi hai jo login hai.** Request me bheja hua rep id kabhi nahi padha jata, to koi
+   kisi aur ke naam par order ya collection nahi kar sakta.
+
+**Kahan:** `Reach → Trade` — **Customer 360**, **Take order**, **Orders**, **Paperwork**.
+Setup `Reach → Customer setup` me — **KYC documents**, **KYC by type**, **Price list**,
+**Schemes**, **Customer 360 settings**.
+
+### 1. Pehle ye hona chahiye
+
+| Cheez                           | Kahan                                       |
+| ------------------------------- | ------------------------------------------- |
+| Item aur uska unit              | Availability → Masters → Items (unit pehle) |
+| Customer type par credit terms  | Customer setup → Customer types             |
+| KYC documents aur kis type par  | Customer setup → KYC documents, KYC by type |
+| Price list (type + item + rate) | Customer setup → Price list                 |
+| Scheme (optional)               | Customer setup → Schemes                    |
+| Rep + uska login                | Field setup → Field reps (`user` bharo)     |
+| Dukaan                          | Customers → Customer register               |
+
+Customer type par ye char naye khaane hain:
+
+| Khana                          | Matlab                                                       |
+| ------------------------------ | ------------------------------------------------------------ |
+| Credit limit                   | Ek waqt me itna udhaar ho sakta hai                          |
+| Credit days                    | Kitne din ki udhaari par bechte hain                         |
+| Hold orders after overdue days | Bill itna purana hua to naye order hold. Khaali = kabhi nahi |
+| KYC before ordering            | Tick kiya to verified kagaz ke bina order hold hoga          |
+
+**Credit days aur hold days alag cheezein hain.** Credit days wo shart hai jis par becha jata
+hai; hold days wo umar hai jis par bechna band hota hai. 30 din ki udhaari aur 45 din par hold
+ek saath chalte hain — bill 35 din ka hai to overdue hai par hold nahi.
+
+### 2. Price list aur scheme
+
+`Reach → Customer setup → Price list → Create`
+
+| Khana         | Example      | Note                                                    |
+| ------------- | ------------ | ------------------------------------------------------- |
+| Customer type | RET          | Rate **type par** hai, dukaan par nahi                  |
+| Item code     | CHAIR        |                                                         |
+| Rate          | `240.0000`   | **Char decimal** — bulk list 0.3333/piece bhi bolti hai |
+| GST %         | `18.00`      |                                                         |
+| From          | aaj ya pehle | Jo list sabse baad me khuli, wahi chalti hai            |
+
+`Schemes` me: CHAIR par `From quantity` 50, `Discount %` 5, `Free units` 2.
+
+Jaanch: ek scheme banao jisme **na discount na free units** — refuse hona chahiye. Jo scheme
+kuch deti hi nahi wo kisi ki galti hai.
+
+### 3. Milestone ka acceptance — hold, reject nahi
+
+`Reach → Trade → Take order` → dukaan dhoondo → **Open**.
+
+Price list dikhegi. CHAIR ke saamne **50** likho → **Price it**.
+
+Dekho:
+
+- Line par `Discount` 5% aur `Free` 2 aa gaya — scheme khud lagi
+- `Taxable` 11,400 (12,000 me se 5% gaya), `Total` 13,452 (18% GST)
+- **Do free chair billed nahi hain** — di gayi hain
+- Upar laal patti: **"On hold: KYC is not verified."**
+
+Ab **Place the order** dabao. Order **ban jayega** aur `HELD` dikhega, message hoga
+"Order … taken and held." Order gaya nahi — reject nahi hua.
+
+### 4. Kagaz verify karo, aur hold apne aap khul jaye
+
+`Reach → Trade → Customer 360` → wahi dukaan → **Upload a document**.
+
+- GST chuno, number me `NOTAGSTIN` daalo → **refuse** hoga (wahi GSTIN rule jo customer form me hai)
+- Sahi GSTIN daalo (`06AABCU9603R1ZM`) → upload ho jayega, status **Waiting**
+
+Ab Customer 360 refresh karo: KYC `Waiting` hai, hold abhi bhi **KYC** par hai.
+**Upload karna verify karna nahi hai** — ye jaan boojh kar alag hai.
+
+`Reach → Trade → Paperwork` → row par **Decide**:
+
+- `Rejected` chuno aur reason khaali chhodo → refuse hoga (rejection ko wajah batani hi padti hai)
+- `Verified` chuno → save
+
+**Ab asli jaanch.** Customer 360 wapas kholo:
+
+- KYC **Verified**
+- Patti ab hari: **"Clear to place."**
+- **Purana held order abhi bhi HELD hai** — kuch peeche jaa kar badla nahi gaya
+
+Naya order lo (3 TABLE) → **PLACED** aayega, 7,080 ka. Yahi milestone ka acceptance hai: hold
+evidence se padha ja raha tha, store nahi tha.
+
+### 5. Limit cross karna
+
+30 TABLE ka order lo (70,800) jab limit 50,000 hai → **HELD**, reason **OVER_LIMIT**.
+
+`Reach → Trade → Orders` → order **Open** karo:
+
+- `reach.credit` wale login par **Release** button dikhega, baaki par nahi
+- Release par **reason zaroori** hai — ye kisi ki li hui decision hai aur uske naam par likhi jayegi
+- Release ke baad status `PLACED` aur "Released because: …" dikhega
+- Jo hold par nahi hai usse release karne par mana hoga
+
+### 6. Bill — dono raaste
+
+**A. Yahan se banao** (sirf `reach.invoice` ho to)
+
+Orders → PLACED order Open → **Raise invoice**. Prefix `INV` default hai.
+
+Number aisa aayega: `INV/2026/0001` — prefix / financial year / counter.
+
+- Usi order ka dobara bill banane par mana hoga
+- Held ya cancelled order ka bill nahi banta
+
+**B. Bahar se aaya bill record karo**
+
+Customer 360 → **Record a bill**. Number wahi jo us document par hai, source `From the ERP`.
+
+- Wahi number dobara → mana
+- Agar lines bheji hain to unka jod bill ke total se match hona chahiye, warna mana
+
+**Number wapas nahi milta.** Raise kiya hua bill cancel karo → message aayega "Its number stays
+used." Ab agla bill banao → `INV/2026/0002` aayega, `0001` **nahi**. GST me "no gaps" ka matlab
+yahi hai.
+
+### 7. Collection
+
+Customer 360 → **Collect**.
+
+| Jaanch                               | Hona kya chahiye              |
+| ------------------------------------ | ----------------------------- |
+| Cheque/NEFT/UPI bina reference       | Mana — bank line se jodna hai |
+| Mode `BARTER` jaisa kuch             | Mana                          |
+| Received on = kal ki date            | Mana — paisa kal nahi aata    |
+| Cash 5,000 ek bill ke saamne         | Wo bill `Part paid`           |
+| 2,000 bina bill chune ("On account") | **Sabse purana bill pehle**   |
+
+Har collection ke baad message khud bata deta hai kitna abhi bhi baaki hai — rep ko bharosa
+nahi karna padta.
+
+**Receipt cancel karo** → paisa phir se owed ho jata hai, outstanding wapas upar.
+
+### 8. Customer 360 par kya kya padho
+
+| Hissa        | Kya dekhna                                                           |
+| ------------ | -------------------------------------------------------------------- |
+| Tiles        | Outstanding, Left to sell, Oldest bill days, DSO, is mahine ki sale  |
+| Credit       | Limit kahan se aayi — **This shop** ya **Its type**                  |
+| Paperwork    | Har document: manga gaya tha ya nahi, number, kisne decide kiya      |
+| Money owed   | Ageing buckets, har bill ki umar, "Raised here" ya "ERP"             |
+| Collections  | Har receipt, kis bill ke saamne, kis rep ne                          |
+| What it buys | Is mahina vs pichla, growth, saal, top items                         |
+| History      | Visit, order, bill, collection, document, location — ek hi dhaage me |
+
+**Change terms** (sirf `reach.setup`): koi khana **khaali chhodo** to wo sawal customer type ko
+wapas chala jata hai. **Khaali aur zero alag hain** — zero ka matlab zero.
+
+### 9. Customer 360 settings
+
+`Reach → Customer setup → Customer 360 settings`
+
+| Setting                        | Default  | Matlab                                              |
+| ------------------------------ | -------- | --------------------------------------------------- |
+| Ageing buckets                 | 30,60,90 | 0-30, 31-60, 61-90, 91+ — har agla bada ho          |
+| Financial year starts in month | 4        | April. Invoice series isi ke saath restart hoti hai |
+| DSO window in days             | 90       | Itne din ki sale ke against DSO napa jata hai       |
+
+Jaanch: buckets `60,30` likho → mana hona chahiye (warna ek bill do bucket me gir jata).
+Save ke baad baaki teen Reach settings screens khol kar dekho — sab waise ke waise.
+
+### 10. Permissions
+
+| Permission      | Kya milta hai                                            |
+| --------------- | -------------------------------------------------------- |
+| `reach.order`   | Take order, apne liye gaye orders                        |
+| `reach.collect` | Collection record karna aur apna receipt cancel karna    |
+| `reach.kyc`     | Document upload aur verify/reject                        |
+| `reach.credit`  | Hold hua order release karna                             |
+| `reach.invoice` | **Yahan se bill banana, aur bahar ka bill record karna** |
+| `reach.read`    | Customer 360, Paperwork queue, sabke orders              |
+| `reach.setup`   | Terms, price list, KYC rules, settings                   |
+
+Sirf `reach.order` + `reach.collect` wale login se jaanch:
+
+- Menu me **Customer 360** aur **Paperwork** dikhna hi nahi chahiye
+- Orders me sirf apne order dikhein, doosre rep ka maangne par mana ho
+- **Raise invoice** aur **Record a bill** dono par mana ho
+- Release par mana ho
+
+### Jo RCH-5 mein nahi hai
+
+- **Ye GST ka legal tax invoice nahi hai.** Abhi ye numbered record hai. Legal ke liye chahiye:
+  seller GSTIN per place of business, place of supply, HSN, CGST/SGST/IGST ka alag-alag split,
+  aur turnover limit se upar e-invoice (IRN). Migration ke header me ye saaf likha hai —
+  **client se poochna hai**. Design badalna nahi padega, column jodne padenge
+- Payment gateway nahi — collection ka record hai, paisa lena nahi
+- Credit note / return nahi — bill cancel hota hai, credit note nahi banta
+- Stock dikhana nahi — order price se banta hai, availability se nahi
+- Order ERP ko bhejne ka asli connection nahi — "Send to ERP" status aur reference rakhta hai,
+  message bhejta nahi

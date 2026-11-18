@@ -63,6 +63,16 @@ export const permissions = [
   ['files.upload', 'Reach', 'Upload photos and documents'],
   ['reach.approve', 'Reach', 'Approve new customer accounts and location re-tags'],
   ['reach.setup', 'Reach', 'Change customer types, customer forms and Reach settings'],
+  ['reach.attend', 'Reach', 'Start and end your own working day'],
+  ['reach.leave', 'Reach', 'Approve leave requests and attendance corrections'],
+  ['reach.plan', 'Reach', 'Build and submit your own tour plan'],
+  ['reach.plan_approve', 'Reach', 'Approve tour plans and day change requests'],
+  ['reach.visit', 'Reach', 'Check in and out of the shops on your own round'],
+  ['reach.order', 'Reach', 'Take an order at the shop'],
+  ['reach.collect', 'Reach', 'Record a collection against a shop'],
+  ['reach.kyc', 'Reach', 'Verify or reject a customer KYC document'],
+  ['reach.credit', 'Reach', 'Release an order held for credit'],
+  ['reach.invoice', 'Reach', 'Raise an invoice from here, and record or cancel a bill'],
 ];
 
 export const requiredPermissions = {
@@ -114,6 +124,27 @@ export const requiredPermissions = {
   'reach.approve': ['reach.read'],
   // Setup changes the shape of every customer form, so it is read plus maintain plus this.
   'reach.setup': ['reach.read', 'reach.manage'],
+  // Marking your own day stands alone on purpose. Depending on reach.read would hand every
+  // field rep the day board, everyone else's register and the payroll export.
+  // Deciding someone's leave means reading the module and standing inside the attendance
+  // screens, which is where the queue is: the decision is taken beside the register it changes.
+  'reach.leave': ['reach.read', 'reach.attend'],
+  // Building your own month stands alone for the same reason marking your own day does: a rep
+  // needs their own plan, not the right to read every other rep's.
+  // Deciding someone's month means reading the module the beats and the reps live in, and
+  // standing inside the plan screens, which is where the queue is — the same shape as leave.
+  'reach.plan_approve': ['reach.read', 'reach.plan'],
+  // Taking an order and collecting money are a rep's own acts at the counter, so neither drags
+  // in the right to read every other rep's customers — the same shape as attendance and visits.
+  // Releasing a held order and deciding a KYC document are decisions taken about somebody else's
+  // account, inside the module, so both rest on reading it.
+  'reach.credit': ['reach.read'],
+  'reach.kyc': ['reach.read'],
+  // Granted to nobody, no invoice can be raised in this system and bills only ever arrive from an
+  // ERP. Granted, this module issues its own numbers. The permission is the whole switch, which
+  // is why it rests on reading the module rather than on taking orders: the person who bills is
+  // not usually the person at the counter.
+  'reach.invoice': ['reach.read'],
 };
 export const livePermissionCodes = [
   'dashboard.read',
@@ -169,6 +200,16 @@ export const livePermissionCodes = [
   'files.upload',
   'reach.approve',
   'reach.setup',
+  'reach.attend',
+  'reach.leave',
+  'reach.plan',
+  'reach.plan_approve',
+  'reach.visit',
+  'reach.order',
+  'reach.collect',
+  'reach.kyc',
+  'reach.credit',
+  'reach.invoice',
 ];
 
 // Where a permission is actually felt: the module in the sidebar, and the screens it opens or
@@ -240,6 +281,16 @@ export const permissionScreens = {
   'files.upload': ['Reach', 'Photos and documents → upload'],
   'reach.approve': ['Reach', 'Approvals: new customer accounts, location re-tags'],
   'reach.setup': ['Reach', 'Setup: customer types, customer form, Reach settings'],
+  'reach.attend': ['Reach', 'Attendance → start and end my day'],
+  'reach.leave': ['Reach', 'Attendance → approve leave and corrections'],
+  'reach.plan': ['Reach', 'Tour plan → my plan, my adherence'],
+  'reach.plan_approve': ['Reach', 'Tour plan → approve a month and day change requests'],
+  'reach.visit': ['Reach', 'Field app → check in, check out and the day’s calls'],
+  'reach.order': ['Reach', 'Customer 360 → take an order'],
+  'reach.collect': ['Reach', 'Customer 360 → record a collection'],
+  'reach.kyc': ['Reach', 'Customer 360 → verify or reject a KYC document'],
+  'reach.credit': ['Reach', 'Held orders → release an order held for credit'],
+  'reach.invoice': ['Reach', 'Customer 360 → raise an invoice, record or cancel a bill'],
 };
 
 // The module and screens a permission belongs to, falling back to its catalogue module.

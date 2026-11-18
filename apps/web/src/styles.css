@@ -2612,3 +2612,105 @@ section[aria-label='Insert options'] .scenario-grid {
   text-transform: uppercase;
   color: #9aa1b1;
 }
+
+/* ---------- RCH-4 field app ----------
+   A phone-shaped frame, because this screen is the reference the mobile app is written against:
+   one round, one stop at a time, and targets a thumb can hit. */
+.field-phone {
+  width: min(420px, 100%);
+  margin: 0 24px 20px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  overflow: hidden;
+}
+.field-phone-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 12px 16px;
+  background: #252936;
+  color: #fff;
+}
+.field-phone-head span {
+  font-size: 12px;
+  color: #c7cbd6;
+  font-variant-numeric: tabular-nums;
+}
+.field-phone-gps {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: #5b6577;
+}
+.field-phone-stops {
+  display: grid;
+}
+.field-stop {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+/* A call that is not on today's round is kept and marked, never hidden. */
+.field-stop[data-planned='no'] {
+  background: #fbfbfd;
+}
+.field-stop-who {
+  display: grid;
+  gap: 2px;
+}
+.field-stop-who span {
+  font-size: 12px;
+  color: #5b6577;
+}
+.field-stop-state {
+  grid-column: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+.field-stop-do {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+}
+.field-stop-do .button {
+  min-width: 96px;
+}
+.field-phone-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: #5b6577;
+  font-variant-numeric: tabular-nums;
+}
+/* A rep who is still inside a shop is the one thing on this screen that is live. */
+.status-pill.visit-open {
+  background: #e7f0ff;
+  color: #1f4fa3;
+}
+@media (max-width: 640px) {
+  .field-phone {
+    margin: 0 0 16px;
+  }
+}
+
+/* ---------- Customer 360 (RCH-5) ---------- */
+/* The quantity box sits inside a right-aligned money column, so it is sized to a quantity
+   rather than stretching the column it lives in. */
+input.qty {
+  width: 90px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

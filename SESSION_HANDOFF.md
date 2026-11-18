@@ -1,3 +1,272 @@
+# Current handoff — 18 November 2026 (RCH-2 to RCH-5, Claude Code)
+
+RCH-0 and RCH-1 went live on 17 November as `9668e10` with 30 migrations. This change adds RCH-2
+(attendance and leave), RCH-3 (the tour plan), RCH-4 (visits and the check-out report) and RCH-5
+(Customer 360) together, with migrations 031, 032, 033 and 034, plus a one-line fix to the Reach
+subtitle in the shell. **Nothing is pushed.**
+
+## The rule all four milestones are built on
+
+Neither the attendance register nor plan-versus-actual is ever stored. Present, Late, Half day,
+Leave, Absent, Week-off, Holiday — and Followed, Partial, Deviated, Missed, Unplanned — are read
+out of the evidence every time they are asked for, by `packages/engines/attendance.mjs` and
+`packages/engines/tour-plan.mjs`. That is what makes the two milestone acceptance tests work
+without anything being rewritten: correcting a punch re-reads last month's register, and leave
+approved _after_ a tour plan was approved stops that day counting as missed.
+
+Leave, holidays and week-offs are not repeated in RCH-3. Attendance owns them and the plan asks
+it again, so a company cannot end up holding the same holiday in two places.
+
+## What RCH-2 added
+
+- **Migration `031_reach_attendance.sql`**: `work_types`, `shifts` (both new generic masters),
+  `attendance_days` — which deliberately carries **no status column** — `leave_requests` and
+  `attendance_edits`, plus four settings columns on the existing `reach_settings` row. Row-level
+  scoped, and **no DELETE granted anywhere**: a punch, a leave decision and a correction are
+  records of what happened.
+- `packages/engines/attendance.mjs` and `packages/schema/attendance-db.mjs`: the register, the day
+  board with its reminder proposal, leave balances, corrections and the payroll CSV. SQL converts
+  timestamps with `AT TIME ZONE` and hands the engine `'HH:MM'`, so the engine never has to guess
+  whose midnight a working day belongs to.
+- `reach-attendance.controller.ts` (14 routes) and `reach-attendance.tsx` (6 screens).
+- Permissions `reach.attend` (stands alone on purpose) and `reach.leave`.
+
+## What RCH-3 added
+
+- **Migration `032_reach_tour_plan.sql`**: `tour_plans`, `tour_plan_days`, `tour_plan_changes`,
+  and a minimal `visits` table. Four more settings columns on the same `reach_settings` row. Again
+  row-level scoped with **no DELETE anywhere**, and a day taken off a round keeps its row with no
+  beat on it rather than being deleted, so a month always reads as a whole month.
+- **The auto-fill.** A beat already says which weekdays it runs on and which half of a fortnight
+  it belongs to, so a month of those rules is a month of planned days. The rep is handed a filled
+  calendar to correct instead of an empty one to type. A second run refreshes only the rows it
+  wrote itself and leaves a typed day alone. Two rounds claiming one day is reported, not silently
+  resolved.
+- **Submit, approve, send back** — a send-back needs a reason the rep can read — and, once a month
+  is approved, **one day moves by request**: one request in flight per day, decided once, and what
+  the day said before is kept on the request itself.
+- **Plan versus actual** from the plan, the visits and the attendance register.
+- `reach-tour.controller.ts` (12 routes) and `reach-tour.tsx` (5 screens).
+- Permissions `reach.plan` (stands alone, like `reach.attend`) and `reach.plan_approve`.
+
+### One scope decision worth knowing
+
+RCH-4 owns the visit — check-out, the per-type report form, duration, and the rule that three
+check-ins from a bad network collapse into one visit. RCH-3 creates only the part adherence has to
+read: one row per visit, where and when. **Nothing in RCH-3 writes a visit**, so Plan vs actual
+reads real data only once RCH-4 lands. RCH-4 should add its columns to that same row rather than
+start a second table beside it. The engine, the SQL and both acceptance cases are proven now.
+
+Four numbers (plan due day 25, 12 outlets a day, 75% field days, Followed at 60%) are the
+prototype's defaults for questions 5, 6 and 8 of the milestone plan that the client has not
+answered yet. All four change from `Reach > Customer setup > Tour plan settings` without a deploy.
+
+Question 8 — "can a manager edit a rep's plan?" — was answered **no**, as the plan proposes. A
+manager approves a month or sends it back and never types into it; every plan write is refused
+unless the plan belongs to the signed-in rep.
+
+## What RCH-4 added
+
+The milestone plan calls this the heart of Reach, and the handover is explicit that the path has
+to be solid on the server before a mobile app is written against it. Three rules are enforced in
+the migration and the controller rather than left to a screen.
+
+- **A check-in is never refused for being far away.** A rep 800 metres from the shop is recorded
+  and flagged; `distance_m` and `out_of_fence` are evidence, and no constraint and no route tests
+  them as a gate. Refusing one loses a real visit and teaches the salesman to distrust the app —
+  the handover's own words. The radius belongs to the customer type, because a distributor's yard
+  and a retailer's counter are not the same distance.
+- **The same check-in sent three times is one visit.** Two unique indexes make that safe rather
+  than hopeful: `visits_open_idx` (one open visit per rep per shop) and `visits_client_ref_idx`
+  (one reference, one visit). A retry inside the company's retry window is answered with the
+  visit that already exists, and the route says so (`repeated: true`) instead of failing.
+- **How a visit reads is calculated.** No status column, no duration column, no "report complete"
+  flag. The duration is the two timestamps; the completeness is judged against the report form as
+  it stands now, so making a question required today makes yesterday's report say it is missing
+  it.
+
+What that took:
+
+- **Migration `033_reach_visits.sql`**: the rest of the `visits` table RCH-3 started — check-out,
+  its location, the report, the client reference and the beat it was walked under — plus
+  `visit_form_fields` and `visit_form_rules`, and one settings column.
+- **The report form is the customer form's own machinery.** The same matrix, the same engine
+  (`packages/engines/customer-form.mjs`), so a distributor call and a retailer call are different
+  conversations without a second system to maintain. Both new masters arrive with CRUD, CSV
+  templates and imports for free.
+- **The field app** is drawn inside a phone-shaped frame on purpose: it is the reference the
+  mobile app will be written against. It takes today's round from RCH-3's approved plan, and a
+  call nobody planned is kept as unplanned work rather than discarded.
+- `reach-visit.controller.ts` (10 routes) and `reach-visit.tsx` (4 screens).
+- Permission `reach.visit` (stands alone, like `reach.attend` and `reach.plan`).
+
+RCH-3's plan-versus-actual now reads real visits rather than rows a test inserted.
+
+### The one open question left as it was
+
+Milestone plan question 12 — out-of-radius check-in, **block or flag?** — is still open with the
+client. The answer built here is **flag**, because the handover warns against the alternative in
+terms. No half-built blocking path was added: if the client says block, that is a small change in
+one controller, and the warning should be put to them first.
+
+## What RCH-5 added
+
+- **Migration `034_reach_trade.sql`**: eleven tables — `kyc_types`, `kyc_rules`, `kyc_documents`,
+  `price_list_items`, `trade_schemes`, `trade_orders`, `trade_order_lines`, `trade_invoices`,
+  `trade_invoice_lines`, `trade_receipts` and `invoice_series` — plus per-customer credit
+  overrides on `trade_customers` and three more settings columns on the same `reach_settings`
+  row. Row-level scoped, and **no DELETE granted anywhere**: an order, a bill, a collection and a
+  KYC decision are all records of what happened or what somebody decided.
+- **The same rule again, carried further.** The outstanding, the ageing, the credit hold, the KYC
+  state, DSO and the sales summary are all read from the evidence on every request. There is no
+  outstanding column, no hold flag, no KYC-state column and no stored age — which is why a held
+  order clears the moment money lands or a document is verified, with nothing to find and rewrite.
+  The security baseline asserts the absence of each of those columns.
+- **An order is never refused for credit.** One over the limit, or placed before the type's KYC
+  is verified, is taken and held with its reasons recorded. Releasing a hold is its own right
+  (`reach.credit`) and needs a reason. This is the same principle as a check-in from outside the
+  fence, and it is the milestone's own acceptance test.
+- **A bill arrives two ways, and a permission is the only switch.** `reach.invoice` granted to
+  nobody means no invoice can be raised in this system and every bill arrives from an ERP and is
+  recorded here. Granted, this module issues its own numbers from a per-company, per-prefix,
+  per-financial-year series whose counter is read and advanced in **one statement**, so two people
+  billing at the same moment cannot be handed the same number. A cancelled bill keeps its number
+  used. `source = 'RAISED'` and `series_id` are tied together by a table CHECK, so the two
+  numbering authorities stay told apart for ever. There is no setting to deploy and no path to
+  turn on later.
+- **Both kinds of bill have the same shape** — line, rate, GST %, taxable, tax. A recorded bill
+  fills in what its document knew and leaves the rest null rather than inventing it, so adding the
+  legal GST fields later is adding columns, not changing the design.
+- `packages/engines/trade.mjs` (price, scheme, line, ageing, DSO, credit, KYC, sales, timeline),
+  `packages/schema/trade-db.mjs`, `reach-trade.controller.ts` (20 routes) and `reach-trade.tsx`
+  (5 screens: Customer 360, Take order, Orders, Paperwork, Customer 360 settings).
+- Four new generic masters — KYC documents, KYC by type, Price list, Schemes — which means CRUD,
+  keyset paging, a CSV template, import and audit came for free.
+- Permissions `reach.order`, `reach.collect`, `reach.kyc`, `reach.credit` and `reach.invoice`.
+
+### Two open questions for the client
+
+1. **Is RARE OS to issue legally valid GST tax invoices?** What it issues today is a numbered
+   internal record. A legal tax invoice also needs the seller GSTIN per place of business, place
+   of supply, HSN per line, the CGST/SGST/IGST split and, above the turnover limit, e-invoicing
+   with an IRN. The migration header says so in terms. The shape is already right for it; this is
+   columns and a print layout, not a redesign.
+2. Milestone plan question 12 — out-of-radius check-in, block or flag — remains as RCH-4 left it.
+
+## A decision taken on the user's instruction
+
+Money and rates are not the same precision. **Rates keep four decimals** (`unitRate`) because a
+bulk list quotes a piece at 0.3333; only the amounts a rate produces are rounded to the paisa. The
+first version rounded the rate itself, which turned 3 × 0.333333 into 0.99.
+
+## Defects found and fixed while building
+
+- `version(raw)` was passed the whole request object in three routes, so leave decide, end-day and
+  withdraw were permanently broken. Caught by the browser spec.
+- `text(raw.note, 'Note', 0, 300)` rejects `undefined`, so starting a day without a note was
+  impossible. Four optional text fields guarded.
+- A rep could not load their own screens: they fetched master lists that need `reach.read`. The
+  choices now travel with the screen instead.
+- `reach.attend` was briefly made to depend on `reach.read`, which would have handed every field
+  rep the day board, everyone else's register and the payroll export. Removed.
+- Extending `SETTING_DEFAULTS` meant a partial settings save wrote NULL into NOT NULL columns.
+  `saveReachSettings` now merges against the current row; RCH-3's four columns are covered by the
+  same fix and it is asserted in both the dry run and the security baseline.
+- `removalBlockers` would have crashed on the tables with no `deleted_at`; they are now listed as
+  permanent.
+- `weekdayOf('2026-13-01')` returned 'FRI' because `Date.UTC` rolls bad dates forward. The shared
+  date parser now round-trips.
+- `visit_dedupe_minutes` was added to the migration but not to `SETTING_DEFAULTS`, so the setting
+  could never be read or saved. Caught by the dry run on its first line.
+- `visitBoard` spread `daySummary` over each rep's row, and `daySummary` reports a count called
+  `visits` — which silently replaced the rep's list of visits with a number. The summary now sits
+  under its own key.
+- `kyc_documents.uploaded_at` defaulted to `now()`, which is constant inside a transaction. Every
+  document uploaded in one go shared a timestamp, so "the newest document" was undecidable and a
+  re-upload after a rejection never took effect. It is `clock_timestamp()` now, with a stable
+  `ORDER BY uploaded_at DESC, id DESC` behind it.
+- `tradeCustomer` never selected `version`, so saving a customer's own credit terms always failed
+  the optimistic-concurrency check.
+- Lines on a recorded bill were written with `total: 0`, which would have made "top SKU" read zero
+  for every item billed from an ERP. They carry their own money now, and the lines have to add up
+  to what the bill says it came to.
+- `lineAmount` rounded the rate to the paisa before multiplying — see the note above.
+- The `invoice_series` foreign key was declared before the table existed.
+- RCH-3's spec fixture inserted visits with no check-out, which RCH-4's new `visits_open_idx`
+  correctly refused. **RCH-4's rule caught a genuine flaw in RCH-3's test data**, not the other way
+  round; the fixture now closes its visits.
+- The shell opened the Reach module only for `reach.read|reach.attend|reach.plan|reach.visit`.
+  A rep holding `reach.order` and `reach.collect` could not open Reach at all, so the screens
+  their own rights unlocked sat behind a door they could not open. This is the same mistake as
+  the earlier `reach.attend` one, in the other direction, and only the browser spec finds it.
+- Reach always opened on the readiness checklist, which needs `reach.read`. Every rep-only login
+  since RCH-2 landed on a 403 before touching anything. The module now opens on the first screen
+  the signed-in person's permissions actually unlock.
+
+## Tests
+
+- Unit: `tests/attendance.test.mjs` (13), `tests/tour-plan.test.mjs` (14),
+  `tests/visit.test.mjs` (11) and `tests/trade.test.mjs` (16), plus new RCH-2, RCH-3, RCH-4 and
+  RCH-5 suites in `tests/security-baseline.test.mjs`. **228 unit tests, 10 security suites.**
+- DB dry runs against real Postgres, inside a transaction that is always rolled back: 34 checks
+  for RCH-2, 60 for RCH-3, 44 for RCH-4 and 83 for RCH-5 — including every milestone acceptance
+  case through real SQL.
+- All 34 migrations replayed from an empty database on a throwaway stack (107 tables), so the
+  schema is proven from zero rather than only through the deltas applied by hand locally.
+- Browser/API + VAPT: `tests/reach-attendance.spec.ts`, `tests/reach-tour.spec.ts`,
+  `tests/reach-visit.spec.ts` and `tests/reach-trade.spec.ts`.
+- Manual steps in `docs/REACH_TEST_GUIDE_HINGLISH.md`; coverage rows in
+  `docs/REGRESSION_TESTING_HINGLISH.md`.
+- One clean full regression on a disposable stack: **38 specs passed in 24.7 minutes**, and all
+  eleven steps green — browser suite, database isolation and privileges, repeat-safe demo seeder,
+  application and identity backup/restore, and the offsite encrypted backup and restore drill.
+
+### The regression harness hid a gap, and that is fixed too
+
+`scripts/regression.mjs` killed every step at 25 minutes. The browser suite is one step that runs
+every spec on one worker, so four new Reach specs pushed it past the cap: a run reported 37 specs
+green, `security.spec.ts` never ran, and the only sign was the word FAILED at the bottom. Nothing
+said a spec had been skipped, which is exactly the shape of a result somebody skims and believes.
+The cap is now per step — 25 minutes still guards the short ones, the browser suite has 75 — with
+a note at the call site that reaching it again means splitting the suite, not raising the number.
+
+`tests/reach-masters.test.mjs` pinned the whole list of things that point at a beat, a rep and a
+customer type, which RCH-3 and RCH-4 both legitimately add to. It now checks its own entries by
+name — the same lesson RCH-0's spec taught during RCH-1, met twice more here. No product code
+changed for it.
+
+## The dependency gate was rewritten, on the user's instruction
+
+A new advisory (GHSA-fc5q-39xc-vjpf, ReDoS in `picomatch`) turned `npm audit --audit-level=low`
+red. There is no fixed version — 4.0.7 is the latest and the advisory covers every release — and
+`picomatch` is reached only through `vite → tinyglobby → fdir` at build time. `npm audit fix
+--force` would drop vite from 8.3.5 to 6.2.7. Production dependencies are clean.
+
+`security:dependencies` now runs `scripts/audit.mjs`, which audits twice. **Production
+dependencies are audited at `low` with no exceptions possible at all** — there is no code path in
+that file which could let a shipped vulnerability through. The whole tree, build toolchain
+included, is also audited at `low`, and only there may an advisory be accepted by id, with a
+reason and a date it has to be looked at again. The date for this one is **28 February 2027**;
+past it the gate goes red by itself, and when the advisory disappears the script says to delete
+the entry. Lowering a threshold or suppressing a report was not done and should not be.
+
+## Before any push
+
+Nothing to change in `.env`. After deploying, `Reach > Tour plan` appears for anyone holding
+`reach.plan` or `reach.read`, `Reach > Field work` for anyone holding `reach.visit` or
+`reach.read`, and `Reach > Trade` for anyone holding `reach.order` or `reach.read`; all start
+empty until a rep starts a month, walks a round and takes an order. The visit report form starts
+empty too, which means no questions are asked on check-out until someone places them under
+`Reach > Customer setup > Visit report by type`.
+
+**Decide `reach.invoice` before granting anything.** It is the only switch between "bills are
+raised in RARE OS" and "bills arrive from the ERP". Granting it to nobody is a complete, working
+configuration and is the safer default until the client has answered the GST question above; it
+can be granted later without a deploy. The four other new rights (`reach.order`, `reach.collect`,
+`reach.kyc`, `reach.credit`) are granted the same way, under `Access > Roles`.
+
+---
+
 # Current handoff — 16 November 2026 (RCH-1 customers and beats, Claude Code)
 
 RCH-0 and RCH-1 are both in this change, pushed together on the user's instruction. Live was

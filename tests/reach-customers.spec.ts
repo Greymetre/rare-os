@@ -721,7 +721,9 @@ test('RCH-1 customers and beats: the per-type form, the round, the location tag,
     await page.getByRole('button', { name: 'Create customer' }).click();
     await page.getByLabel('Customer type *').selectOption(p + 'RET');
     await page.getByLabel('Customer code *').fill(p + 'UI1');
-    await page.getByLabel('Name *').fill('Made on the screen');
+    // A type's own questions can include one whose label ends in the same words, such as
+    // "Trade name", so the base field is named exactly rather than by what it contains.
+    await page.getByLabel('Name *', { exact: true }).fill('Made on the screen');
     await page.getByLabel('Territory code *').fill(p + 'T1');
     await page.getByRole('button', { name: 'Save customer' }).click();
     await expect(page.locator('small.warning').first()).toContainText('is visited on a beat');

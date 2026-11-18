@@ -11,19 +11,42 @@ import { FileImport, Imports, statusLabel } from './imports';
 import { Modal } from './modal';
 import { useApi } from './api-client';
 import { Approvals, BeatRound, CustomerRegister, ReachSetup } from './reach-customers';
+import {
+  AttendanceSetup,
+  Corrections,
+  DayBoard,
+  LeaveScreen,
+  MyDay,
+  Register,
+} from './reach-attendance';
+import { Adherence, MyPlan, PlanBoard, PlanChanges, TourSetup } from './reach-tour';
+import { FieldApp, VisitBoard, VisitList, VisitSetup } from './reach-visit';
+import { Customer360, KycQueue, OrderList, TakeOrder, TradeSetup } from './reach-trade';
 
 // The order the masters are set up in: a rep needs a grade and a territory to exist first, and a
 // beat needs a territory. The customer's own shape is a separate concern, under Setup.
 const FIELD_MASTERS = [
   'territories',
   'rep_grades',
+  'shifts',
+  'work_types',
   'field_reps',
   'leave_types',
   'holidays',
   'beats',
   'beat_assignments',
 ];
-const CUSTOMER_SETUP = ['customer_types', 'customer_form_fields', 'customer_form_rules'];
+const CUSTOMER_SETUP = [
+  'customer_types',
+  'customer_form_fields',
+  'customer_form_rules',
+  'visit_form_fields',
+  'visit_form_rules',
+  'kyc_types',
+  'kyc_rules',
+  'price_list_items',
+  'trade_schemes',
+];
 const MASTER_ORDER = [...FIELD_MASTERS, ...CUSTOMER_SETUP];
 // What a phone sends after the browser has scaled the photo down. A selfie does not need to be
 // bigger than this, and a rep on a field connection should not have to upload more.
@@ -76,7 +99,7 @@ function Readiness({ csrf, refreshKey }: { csrf: string; refreshKey: number }) {
 // Scales the photo down in the browser before it is sent. A 12-megapixel phone photo is several
 // megabytes; this makes it a few hundred kilobytes, which is what a field connection can manage.
 // Anything the browser cannot decode as an image (a PDF, say) is sent through untouched.
-async function scaleDown(file: File) {
+export async function scaleDown(file: File) {
   if (!file.type.startsWith('image/') || typeof createImageBitmap !== 'function')
     return { blob: file as Blob, type: file.type };
   try {
@@ -247,11 +270,55 @@ export function reachMenu(permissions: string[], kinds: KindInfo[]) {
     ['Imports', 'reach.read'],
     ['File import', 'reach.read'],
   ];
+  // What a rep does with their own day, and what a manager reads of everyone's. My day and the
+  // register are a rep's own, so they need only the right to mark attendance.
+  const ATTENDANCE: [string, string][] = [
+    ['My day', 'reach.attend'],
+    ['Today', 'reach.read'],
+    ['Register', 'reach.attend'],
+    ['Leave', 'reach.attend'],
+    ['Corrections', 'reach.attend'],
+  ];
+  // The month a rep intends to walk and how it read afterwards. The plan and the adherence are a
+  // rep's own, so they need only the right to build a plan; the board reads everybody's.
+  const TOUR: [string, string][] = [
+    ['My plan', 'reach.plan'],
+    ['Plans', 'reach.read'],
+    ['Day changes', 'reach.plan'],
+    ['Plan vs actual', 'reach.plan'],
+  ];
+  // What a rep does in front of the shop, and what a manager reads of it afterwards. The field
+  // app and the rep's own calls need only the right to visit; the board reads everybody's.
+  const VISITS: [string, string][] = [
+    ['Field app', 'reach.visit'],
+    ['Visits', 'reach.visit'],
+    ['Calls today', 'reach.read'],
+  ];
+  // The shop's whole trading picture, the order taken in front of it and the paperwork behind it.
+  // Customer 360 is a manager's read; taking an order and banking money are the rep's own rights,
+  // and checking paperwork is a separate desk again.
+  const TRADE: [string, string][] = [
+    ['Customer 360', 'reach.read'],
+    ['Take order', 'reach.order'],
+    ['Orders', 'reach.order'],
+    ['Paperwork', 'reach.read'],
+  ];
   // What a customer is: its types, its questions, and the distances every tag is measured against.
-  const SETUP: [string, string][] = [...labelsOf(CUSTOMER_SETUP), ['Reach settings', 'reach.read']];
+  const SETUP: [string, string][] = [
+    ...labelsOf(CUSTOMER_SETUP),
+    ['Reach settings', 'reach.read'],
+    ['Attendance settings', 'reach.read'],
+    ['Tour plan settings', 'reach.read'],
+    ['Visit settings', 'reach.read'],
+    ['Customer 360 settings', 'reach.read'],
+  ];
   const allowed = (list: [string, string][]) => list.filter(([, p]) => has(p)).map(([t]) => t);
   const groups: [string, string, string[]][] = [
     ['Customers', 'the register, the rounds and the decisions', allowed(CUSTOMERS)],
+    ['Attendance', 'the working day, leave and what it adds up to', allowed(ATTENDANCE)],
+    ['Tour plan', 'the month ahead, and how the last one read', allowed(TOUR)],
+    ['Field work', 'the round as it is walked, and the report at each door', allowed(VISITS)],
+    ['Trade', 'what the shop owes, orders and pays', allowed(TRADE)],
     ['Field setup', 'the masters every Reach screen reads', allowed(FIELD)],
     ['Customer setup', 'the shape of a customer', allowed(SETUP)],
   ];
@@ -297,6 +364,13 @@ export function Reach({
   useEffect(() => {
     if (kinds) onNav?.(JSON.parse(menuKey));
   }, [menuKey, kinds, onNav]);
+  // The module opens on the readiness checklist, which needs reach.read. A rep who holds only
+  // their own rights would land on a screen that answers 403 before they had touched anything,
+  // so the module opens on the first screen their permissions actually unlock.
+  const screens = groups.flatMap(([, , list]) => list);
+  useEffect(() => {
+    if (kinds && screens.length && !screens.includes(tab)) setTab(screens[0]);
+  }, [menuKey, kinds, tab]);
   if (error)
     return (
       <div className="error" role="alert">
@@ -380,6 +454,54 @@ export function Reach({
       {tab === 'Approvals' && <Approvals csrf={csrf} refreshKey={refreshKey + revision} />}
       {tab === 'Reach settings' && (
         <ReachSetup csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'My day' && <MyDay csrf={csrf} refreshKey={refreshKey + revision} />}
+      {tab === 'Today' && <DayBoard csrf={csrf} refreshKey={refreshKey + revision} />}
+      {tab === 'Register' && (
+        <Register csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Leave' && (
+        <LeaveScreen csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Corrections' && (
+        <Corrections csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Attendance settings' && (
+        <AttendanceSetup csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'My plan' && (
+        <MyPlan csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Plans' && (
+        <PlanBoard csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Day changes' && (
+        <PlanChanges csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Plan vs actual' && (
+        <Adherence csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Tour plan settings' && (
+        <TourSetup csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Field app' && <FieldApp csrf={csrf} refreshKey={refreshKey + revision} />}
+      {tab === 'Visits' && (
+        <VisitList csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Calls today' && <VisitBoard csrf={csrf} refreshKey={refreshKey + revision} />}
+      {tab === 'Visit settings' && (
+        <VisitSetup csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Customer 360' && <Customer360 csrf={csrf} refreshKey={refreshKey + revision} />}
+      {tab === 'Take order' && <TakeOrder csrf={csrf} refreshKey={refreshKey + revision} />}
+      {tab === 'Orders' && (
+        <OrderList csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Paperwork' && (
+        <KycQueue csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Customer 360 settings' && (
+        <TradeSetup csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
       )}
       {current && (
         <MasterTable

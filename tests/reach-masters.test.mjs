@@ -168,20 +168,62 @@ test('removal names what still points at the record, and only for the kinds that
     '3 beats still use it',
     '3 customers still use it',
   ]);
+  // Checked by name rather than as a whole list: every later milestone adds something that
+  // points at a customer type, a beat or a rep, and a milestone's test must not break the next
+  // one's.
+  const holds = (got, wanted) => {
+    for (const one of wanted)
+      assert.ok(got.includes(one), `${one} missing from ${JSON.stringify(got)}`);
+  };
   // RCH-1: a customer type, a form field and a beat all have things pointing at them too.
-  assert.deepEqual(await removalBlockers(counting(2), 'customer_types', 'x'), [
+  holds(await removalBlockers(counting(2), 'customer_types', 'x'), [
     '2 customers still use it',
     '2 form rules still use it',
   ]);
   assert.deepEqual(await removalBlockers(counting(1), 'customer_form_fields', 'x'), [
     '1 form rule still uses it',
   ]);
-  assert.deepEqual(await removalBlockers(counting(1), 'beats', 'x'), [
+  holds(await removalBlockers(counting(1), 'beats', 'x'), [
     '1 customer still uses it',
     '1 beat assignment still uses it',
   ]);
-  // Nothing points at a leave type or a holiday, so removing one is never blocked.
-  assert.deepEqual(await removalBlockers(counting(9), 'leave_types', 'x'), []);
+  // RCH-2: attendance points back at the reps, shifts, work types and leave types it cites, and
+  // it keeps every row it writes, so even a cancelled request still blocks a removal. A register
+  // read months later cannot name a shift or a leave type that has been taken away.
+  assert.deepEqual(await removalBlockers(counting(9), 'leave_types', 'x'), [
+    '9 leave requests still use it',
+  ]);
+  assert.deepEqual(await removalBlockers(counting(1), 'shifts', 'x'), [
+    '1 field rep still uses it',
+  ]);
+  assert.deepEqual(await removalBlockers(counting(4), 'work_types', 'x'), [
+    '4 attendance days still use it',
+  ]);
+  holds(await removalBlockers(counting(2), 'field_reps', 'x'), [
+    '2 beat assignments still use it',
+    '2 customers still use it',
+    '2 attendance days still use it',
+    '2 leave requests still use it',
+    '2 attendance corrections still use it',
+  ]);
+  // RCH-3: a month that was planned, a change asked for on it and a visit that was made all
+  // point back at the rep and the round they name.
+  holds(await removalBlockers(counting(2), 'field_reps', 'x'), [
+    '2 tour plans still use it',
+    '2 plan change requests still use it',
+    '2 visits still use it',
+  ]);
+  holds(await removalBlockers(counting(3), 'beats', 'x'), [
+    '3 planned days still use it',
+    '3 plan change requests still use it',
+  ]);
+  // RCH-4: the visit report form is the same matrix, so a question a type still asks holds both
+  // the question and the type.
+  holds(await removalBlockers(counting(2), 'customer_types', 'x'), ['2 report rules still use it']);
+  holds(await removalBlockers(counting(1), 'visit_form_fields', 'x'), [
+    '1 report rule still uses it',
+  ]);
+  // Still nothing points at a holiday, so removing one is never blocked.
   assert.deepEqual(await removalBlockers(counting(9), 'holidays', 'x'), []);
 });
 

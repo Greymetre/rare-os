@@ -18,13 +18,30 @@ export const SETTING_DEFAULTS = {
   duplicate_within_m: 30,
   retag_approval_m: 100,
   kyc_reminder_days: 7,
+  // RCH-2. Attendance shares this row so a company has one Setup screen, not two.
+  attendance_fence_m: 200,
+  absent_after_minutes: 120,
+  selfie_required: true,
+  timezone: 'Asia/Kolkata',
+  // RCH-3. The numbers the tour plan is judged by: when a month is due, how big a day may be,
+  // how much of the month must be field work, and what share of a round reads as Followed.
+  plan_due_day: 25,
+  plan_max_outlets: 12,
+  plan_field_days_pct: 75,
+  plan_followed_pct: 60,
+  // RCH-4. How long a repeated check-in still counts as the same visit, for a field connection
+  // that drops and retries.
+  visit_dedupe_minutes: 10,
+  // RCH-5. How a company reads its ageing, when its financial year starts, and the window
+  // days-sales-outstanding is measured over.
+  ageing_buckets: '30,60,90',
+  fy_start_month: 4,
+  dso_window_days: 90,
 };
 
 export async function reachSettings(db) {
   const row = (
-    await db.query(
-      'SELECT gps_verified_m,duplicate_within_m,retag_approval_m,kyc_reminder_days,version FROM reach_settings',
-    )
+    await db.query(`SELECT ${Object.keys(SETTING_DEFAULTS).join(',')},version FROM reach_settings`)
   ).rows[0];
   return row ? { ...row, version: Number(row.version) } : { ...SETTING_DEFAULTS, version: 0 };
 }
@@ -32,13 +49,20 @@ export async function reachSettings(db) {
 // The one row per company, created on first save. version 0 means there was no row.
 export async function saveReachSettings(db, tenantId, value) {
   const columns = Object.keys(SETTING_DEFAULTS);
+  // One row holds every Reach setting, but a screen only knows its own. Anything the caller did
+  // not send keeps the value it already had, so saving the customer settings cannot blank the
+  // attendance ones — and the reverse.
+  const current = await reachSettings(db);
+  const settled = Object.fromEntries(
+    columns.map((c) => [c, value[c] === undefined ? current[c] : value[c]]),
+  );
   await db.query(
     `INSERT INTO reach_settings(tenant_id,${columns.join(',')})
      VALUES($1,${columns.map((_, i) => '$' + (i + 2)).join(',')})
      ON CONFLICT (tenant_id) DO UPDATE SET ${columns
        .map((c) => `${c}=excluded.${c}`)
        .join(',')},version=reach_settings.version+1,updated_at=now()`,
-    [tenantId, ...columns.map((c) => value[c])],
+    [tenantId, ...columns.map((c) => settled[c])],
   );
 }
 
@@ -271,15 +295,27 @@ export async function removeCustomer(db, id, actorId, reason) {
   return r.rowCount === 1;
 }
 
-// What still points at a customer. A distributor with dealers under it is not removed by accident.
+// What still points at a customer. A distributor with dealers under it is not removed by accident,
+// and neither is a shop somebody has already been recorded as visiting.
 export async function customerBlockers(db, id) {
+  const blockers = [];
   const n = (
     await db.query(
       'SELECT count(*)::int AS n FROM trade_customers WHERE buys_from_id=$1 AND deleted_at IS NULL',
       [id],
     )
   ).rows[0].n;
-  return n ? [`${n} customer${n === 1 ? '' : 's'} buy${n === 1 ? 's' : ''} from it`] : [];
+  if (n) blockers.push(`${n} customer${n === 1 ? '' : 's'} buy${n === 1 ? 's' : ''} from it`);
+  // Visits are records of what happened and carry no deleted_at, so the count asks whether the
+  // shop was ever called on at all.
+  const visits = (
+    await db.query('SELECT count(*)::int AS n FROM visits WHERE customer_id=$1', [id])
+  ).rows[0].n;
+  if (visits)
+    blockers.push(
+      `${visits} visit${visits === 1 ? '' : 's'} to it ${visits === 1 ? 'is' : 'are'} on record`,
+    );
+  return blockers;
 }
 
 // ---------- Beats ----------

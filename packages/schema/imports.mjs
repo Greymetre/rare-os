@@ -168,7 +168,17 @@ const EXAMPLES = {
       'kiran@example.com',
       '+91 98765 43210',
       '2024-04-01',
+      'DAY',
     ],
+  ],
+  work_types: [
+    ['FIELD', 'Field working', 'yes', 'yes'],
+    ['OFFICE', 'Office day', 'no', 'yes'],
+    ['PERSONAL', 'Personal day', 'no', 'no'],
+  ],
+  shifts: [
+    ['DAY', 'General shift', '09:30', '18:00', '10', '240', '60', 'SUN'],
+    ['NIGHT', 'Night shift', '22:00', '06:00', '15', '240', '60', 'SAT,SUN'],
   ],
   leave_types: [
     ['CL', 'Casual leave', 'yes', '12', 'no', 'yes'],
@@ -306,6 +316,46 @@ const EXAMPLES = {
     ['EAST-B2', 'Howrah round', 'EAST-T1', 'FORTNIGHTLY', 'TUE', 'ODD'],
   ],
   beat_assignments: [['EAST-B1', 'FS-1', '2026-04-01', '']],
+  // RCH-4: the questions a rep answers on the way out of a shop.
+  visit_form_fields: [
+    ['shelf_share', 'Shelf share %', 'number', 'Shelf', '10', '', 'Our share of the fixture', ''],
+    ['competitor', 'Competitor seen', 'text', 'Shelf', '20', '', '', ''],
+    ['stock_out', 'Stock out today', 'bool', 'Shelf', '30', '', '', 'no'],
+    [
+      'next_action',
+      'Next action',
+      'select',
+      'Close',
+      '40',
+      'Order|Sample|Collect|None',
+      '',
+      'None',
+    ],
+  ],
+  visit_form_rules: [
+    ['RET', 'shelf_share', 'R', ''],
+    ['RET', 'stock_out', 'R', ''],
+    ['DIST', 'next_action', 'R', 'What happens next'],
+  ],
+  // RCH-5: the paperwork a type asks for, what it pays, and the slabs a quantity earns.
+  kyc_types: [
+    ['GSTIN', 'GST certificate', 'gstin', ''],
+    ['PAN', 'PAN card', 'pan', ''],
+    ['SHOP', 'Shop photo', 'none', '24'],
+  ],
+  kyc_rules: [
+    ['DIST', 'GSTIN', 'R'],
+    ['DIST', 'PAN', 'R'],
+    ['RET', 'SHOP', 'O'],
+  ],
+  price_list_items: [
+    ['RET', 'FG-CHAIR', '1150.0000', '18.00', '2026-04-01', ''],
+    ['DIST', 'FG-CHAIR', '1020.0000', '18.00', '2026-04-01', ''],
+  ],
+  trade_schemes: [
+    ['S-CHAIR-10', '10 chairs, 5% off', 'FG-CHAIR', '10', '5.00', '0', '2026-04-01', ''],
+    ['S-CHAIR-50', '50 chairs, 8% and 2 free', 'FG-CHAIR', '50', '8.00', '2', '2026-04-01', ''],
+  ],
 };
 
 for (const [kind, def] of Object.entries(MASTER_KINDS))

@@ -38,7 +38,11 @@ for (const signal of ['SIGINT', 'SIGTERM'])
     interrupted = true;
     child?.kill('SIGTERM');
   });
-function command(program, args, cwd = workspace, capture = false) {
+// A step that stops making progress has to be killed, or a hung container keeps a machine busy
+// all night. The cap is a guard against a hang, not a budget: it is per step, so a step that is
+// genuinely long says so at its own call site rather than everything being given the slack.
+const STEP_TIMEOUT_MS = 25 * 60 * 1000;
+function command(program, args, cwd = workspace, capture = false, timeoutMs = STEP_TIMEOUT_MS) {
   return new Promise((accept, reject) => {
     const p = spawn(program, args, {
       cwd,
@@ -51,7 +55,7 @@ function command(program, args, cwd = workspace, capture = false) {
       p.stdout.on('data', (data) => {
         output += data;
       });
-    const timer = setTimeout(() => p.kill('SIGKILL'), 25 * 60 * 1000);
+    const timer = setTimeout(() => p.kill('SIGKILL'), timeoutMs);
     p.once('error', (error) => {
       clearTimeout(timer);
       reject(error);
@@ -64,14 +68,14 @@ function command(program, args, cwd = workspace, capture = false) {
     });
   });
 }
-async function step(name, program, args, cwd = workspace) {
+async function step(name, program, args, cwd = workspace, timeoutMs = STEP_TIMEOUT_MS) {
   if (interrupted) throw Error('Regression interrupted');
   console.log('\n[regression] ' + name);
   const item = { name, status: 'running', startedAt: new Date().toISOString() };
   summary.steps.push(item);
   const started = Date.now();
   try {
-    await command(program, args, cwd);
+    await command(program, args, cwd, false, timeoutMs);
     item.status = 'passed';
   } catch (error) {
     item.status = 'failed';
@@ -194,11 +198,18 @@ try {
   ]);
   // Arguments after the command reach Playwright, so one spec can be run while it is being
   // written (npm run test:regression -- --grep "AV-12"). CI passes none and runs everything.
-  await step('Browser and API regression suite', process.execPath, [
-    join(root, 'node_modules/@playwright/test/cli.js'),
-    'test',
-    ...process.argv.slice(2),
-  ]);
+  // The browser suite is one step that runs every spec, one worker at a time, so it grows with
+  // each milestone and is already past the ordinary cap. Killed at 25 minutes it reported 37 of
+  // 38 specs green and the last one never run, which reads like a pass to anybody skimming. It
+  // gets its own, longer guard; when this one is reached as well, the suite needs splitting
+  // rather than another number.
+  await step(
+    'Browser and API regression suite',
+    process.execPath,
+    [join(root, 'node_modules/@playwright/test/cli.js'), 'test', ...process.argv.slice(2)],
+    workspace,
+    75 * 60 * 1000,
+  );
   await step('Database isolation, privileges and indexed audit query', 'docker', [
     'compose',
     'run',

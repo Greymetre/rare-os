@@ -19,7 +19,7 @@
     "backup:local": "node scripts/backup-local.mjs",
     "backup:verify": "node scripts/backup-local.mjs --verify",
     "test:regression": "node scripts/regression.mjs",
-    "security:dependencies": "npm audit --audit-level=low",
+    "security:dependencies": "node scripts/audit.mjs",
     "security:check": "npm run security:dependencies && node --test tests/security-baseline.test.mjs",
     "security:containers": "scripts/security-scan-containers.sh",
     "verify:quick": "npm run format:check && npm run typecheck && npm test && npm run security:dependencies && npm run build",

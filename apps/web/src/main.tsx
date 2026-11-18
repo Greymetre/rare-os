@@ -322,7 +322,10 @@ function App() {
     ['Users', '♙', 'users.read'],
     ['Roles & permissions', '◇', 'roles.read'],
     ['Availability', '▤', 'masters.read|planning.read'],
-    ['Reach', '◎', 'reach.read'],
+    // Every right that opens a Reach screen of its own, including the ones a rep holds alone:
+    // a login that may only take an order or bank a collection still has to be able to reach
+    // the module, or the screens its own permissions unlock are behind a door it cannot open.
+    ['Reach', '◎', 'reach.read|reach.attend|reach.plan|reach.visit|reach.order|reach.collect'],
     ['Audit log', '≡', 'audit.read'],
   ];
   return (
@@ -445,7 +448,9 @@ function App() {
                           ? 'A traceable record of activity in your company.'
                           : page === 'Security'
                             ? 'Manage your sign-in protection and authenticator devices.'
-                            : 'Build a dependable plan from your plant’s actual data.'}
+                            : page === 'Reach'
+                              ? 'Know your field force, the customers they call on and the rounds they walk.'
+                              : 'Build a dependable plan from your plant’s actual data.'}
               </p>
             </div>
             <button

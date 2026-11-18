@@ -299,14 +299,38 @@ test('RCH-0 Reach foundation: field masters, photos, soft delete, imports, isola
 
     // ---------- The rep list from a file, through the same import engine ----------
     const template = await (await call('imports/templates/field_reps')).text();
-    expect(template.split('\r\n')[0]).toBe('code,name,grade,territory,user,email,phone,joined_on');
+    const header = template.split('\r\n')[0];
+    // The columns this milestone owns. Later milestones add their own to the same import, so the
+    // header is checked for these rather than pinned to exactly these, and the rows below are
+    // laid out from whatever the template actually says.
+    expect(header.split(',')).toEqual(
+      expect.arrayContaining([
+        'code',
+        'name',
+        'grade',
+        'territory',
+        'user',
+        'email',
+        'phone',
+        'joined_on',
+      ]),
+    );
     const rows = [2, 3, 4]
-      .map(
-        (n) =>
-          `${p}FS${n},Imported rep ${n},${p}SO,${p}T1,,rep${n}.${suffix}@example.test,,2025-07-0${n}`,
-      )
+      .map((n) => {
+        const values: Record<string, string> = {
+          code: `${p}FS${n}`,
+          name: `Imported rep ${n}`,
+          grade: `${p}SO`,
+          territory: `${p}T1`,
+          email: `rep${n}.${suffix}@example.test`,
+          joined_on: `2025-07-0${n}`,
+        };
+        return header
+          .split(',')
+          .map((column) => values[column] ?? '')
+          .join(',');
+      })
       .join('\r\n');
-    const header = 'code,name,grade,territory,user,email,phone,joined_on';
     await openScreen(page, 'Imports');
     // The import kinds this milestone owns. Later milestones add their own to the same picker,
     // so each is looked for rather than the whole list being pinned.

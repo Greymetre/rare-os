@@ -138,6 +138,15 @@ const parsers = {
   },
   // The days of the week something runs on, in any order and any case, kept in week order so two
   // ways of writing the same round read the same: "thu, mon" becomes MON,THU.
+  // A time of day on its own, with no date attached: a shift starts at 09:30 every day.
+  time(raw, f) {
+    const v = blank(raw) ? '' : String(raw).trim();
+    if (!v) return f.required ? { error: `${f.label} is required.` } : { value: f.default ?? null };
+    const m = /^(\d{1,2}):(\d{2})$/.exec(v);
+    if (!m || Number(m[1]) > 23 || Number(m[2]) > 59)
+      return { error: `${f.label} must be a time of day written as HH:MM, for example 09:30.` };
+    return { value: `${m[1].padStart(2, '0')}:${m[2]}` };
+  },
   weekdays(raw, f) {
     const v = blank(raw) ? '' : String(raw).trim();
     if (!v) return f.required ? { error: `${f.label} is required.` } : { value: f.default ?? '' };
@@ -393,9 +402,76 @@ export const MASTER_KINDS = {
       email,
       phone,
       { name: 'joined_on', label: 'Joined on', type: 'date' },
+      // Which shift decides this rep's lateness and week-offs. Blank until the company sets
+      // one, and the register then says so rather than assuming office hours on their behalf.
+      { name: 'shift', label: 'Shift code', type: 'ref', ref: 'shifts' },
     ],
     key: (v) => v.code.toLowerCase(),
     title: (v) => `Field rep ${v.code}`,
+  },
+  work_types: {
+    label: 'Work types',
+    singular: 'work type',
+    module: 'Reach',
+    permission: 'reach.manage',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'work_types',
+    fields: [
+      code('Work code'),
+      name,
+      { name: 'needs_location', label: 'Needs a location', type: 'bool', default: true },
+      // Training counts as attended; a day marked personal is recorded but not credited.
+      { name: 'counts_present', label: 'Counts as attended', type: 'bool', default: true },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Work type ${v.code}`,
+  },
+  shifts: {
+    label: 'Shifts',
+    singular: 'shift',
+    module: 'Reach',
+    permission: 'reach.manage',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'shifts',
+    fields: [
+      code('Shift code'),
+      name,
+      { name: 'starts_at', label: 'Starts at', type: 'time', required: true },
+      { name: 'ends_at', label: 'Ends at', type: 'time', required: true },
+      // Arrive within the grace and the day is still on time.
+      {
+        name: 'grace_minutes',
+        label: 'Grace in minutes',
+        type: 'int',
+        min: 0,
+        max: 240,
+        default: 15,
+      },
+      {
+        name: 'half_day_minutes',
+        label: 'Half day under minutes',
+        type: 'int',
+        min: 30,
+        max: 1440,
+        default: 240,
+      },
+      // Work shorter than this does not count as a day at all.
+      {
+        name: 'min_minutes',
+        label: 'Counts from minutes',
+        type: 'int',
+        min: 0,
+        max: 1440,
+        default: 60,
+      },
+      { name: 'week_off', label: 'Week off', type: 'weekdays', default: 'SUN' },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Shift ${v.code}`,
   },
   leave_types: {
     label: 'Leave types',
@@ -597,6 +673,246 @@ export const MASTER_KINDS = {
     key: (v) => `${v.type.toLowerCase()}|${v.field.toLowerCase()}`,
     title: (v) => `${v.field} on ${v.type}`,
   },
+  // RCH-4: the check-out report. The same matrix the customer form uses — fields, and a rule
+  // per customer type saying whether each one is asked — so one engine drives both.
+  // RCH-5: Customer 360's setup. The documents a type asks for, the rate it pays, and the slabs
+  // a quantity earns — all maintained as masters, so each one arrives with a CSV template and an
+  // import. A price list is exactly the thing a company already keeps in a spreadsheet.
+  kyc_types: {
+    label: 'KYC documents',
+    singular: 'KYC document',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'kyc_types',
+    fields: [
+      code('Document code'),
+      name,
+      // How the number on the document is checked. GSTIN and PAN go through the same validators
+      // the customer form uses, so one idea of a valid GSTIN exists in the system.
+      {
+        name: 'number_check',
+        label: 'Number check',
+        type: 'enum',
+        options: ['none', 'gstin', 'pan', 'text'],
+        default: 'none',
+      },
+      // Blank where the document never expires.
+      { name: 'valid_months', label: 'Valid for months', type: 'int', min: 1, max: 600 },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `KYC document ${v.code}`,
+  },
+  kyc_rules: {
+    label: 'KYC by type',
+    singular: 'KYC rule',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'kyc_rules',
+    fields: [
+      {
+        name: 'type',
+        label: 'Customer type',
+        type: 'ref',
+        ref: 'customer_types',
+        required: true,
+        immutable: true,
+      },
+      {
+        name: 'kyc_type',
+        label: 'KYC document',
+        type: 'ref',
+        ref: 'kyc_types',
+        required: true,
+        immutable: true,
+      },
+      // R asked and required before an order, O asked but not blocking, X not asked at all.
+      {
+        name: 'requirement',
+        label: 'Asked',
+        type: 'enum',
+        options: ['R', 'O', 'X'],
+        default: 'O',
+      },
+    ],
+    key: (v) => `${v.type.toLowerCase()}|${v.kyc_type.toLowerCase()}`,
+    title: (v) => `${v.kyc_type} on ${v.type}`,
+  },
+  price_list_items: {
+    label: 'Price list',
+    singular: 'price',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'price_list_items',
+    fields: [
+      {
+        name: 'type',
+        label: 'Customer type',
+        type: 'ref',
+        ref: 'customer_types',
+        required: true,
+        immutable: true,
+      },
+      {
+        name: 'item',
+        label: 'Item code',
+        type: 'ref',
+        ref: 'items',
+        required: true,
+        immutable: true,
+      },
+      // Money per unit, to four places: a bulk list may quote a piece at 0.3333.
+      { name: 'rate', label: 'Rate', type: 'decimal', decimals: 4, required: true, min: 0 },
+      {
+        name: 'gst_pct',
+        label: 'GST %',
+        type: 'decimal',
+        decimals: 2,
+        min: 0,
+        max: 100,
+        default: 0,
+      },
+      { name: 'from_date', label: 'From', type: 'date', required: true, immutable: true },
+      // Left blank, the rate stands until a later list opens over it.
+      { name: 'to_date', label: 'Until', type: 'date' },
+    ],
+    key: (v) => `${v.type.toLowerCase()}|${v.item.toLowerCase()}|${v.from_date}`,
+    title: (v) => `${v.item} for ${v.type} from ${v.from_date}`,
+  },
+  trade_schemes: {
+    label: 'Schemes',
+    singular: 'scheme',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'trade_schemes',
+    fields: [
+      code('Scheme code'),
+      name,
+      { name: 'item', label: 'Item code', type: 'ref', ref: 'items', required: true },
+      // Read as "from this quantity upwards"; the highest slab a line reaches is what it earns.
+      {
+        name: 'min_quantity',
+        label: 'From quantity',
+        type: 'decimal',
+        decimals: 6,
+        required: true,
+        min: 0,
+      },
+      {
+        name: 'discount_pct',
+        label: 'Discount %',
+        type: 'decimal',
+        decimals: 2,
+        min: 0,
+        max: 100,
+        default: 0,
+      },
+      {
+        name: 'free_quantity',
+        label: 'Free units',
+        type: 'decimal',
+        decimals: 6,
+        min: 0,
+        default: 0,
+      },
+      { name: 'from_date', label: 'From', type: 'date', required: true },
+      { name: 'to_date', label: 'Until', type: 'date' },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Scheme ${v.code}`,
+  },
+  visit_form_fields: {
+    label: 'Visit report fields',
+    singular: 'report field',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'visit_form_fields',
+    fields: [
+      // The key an answer is stored under on the visit. It cannot change later: reports
+      // already written carry it.
+      { name: 'field_key', label: 'Field key', type: 'key', required: true, immutable: true },
+      { ...name, label: 'Label on the form', max: 120 },
+      {
+        name: 'input',
+        label: 'Input',
+        type: 'enum',
+        required: true,
+        options: [
+          'text',
+          'textarea',
+          'number',
+          'select',
+          'date',
+          'phone',
+          'email',
+          'gstin',
+          'pan',
+          'bool',
+        ],
+      },
+      { name: 'section', label: 'Section', type: 'text', max: 60, default: 'Details' },
+      { name: 'display_order', label: 'Order', type: 'int', min: 1, max: 9999, default: 100 },
+      // One choice per line in the form; stored and imported pipe-separated.
+      { name: 'options', label: 'Choices (a | between each)', type: 'text', max: 1000 },
+      { name: 'help', label: 'Help text', type: 'text', max: 200 },
+      { name: 'default_value', label: 'Default answer', type: 'text', max: 200 },
+    ],
+    key: (v) => v.field_key,
+    title: (v) => `Report field ${v.field_key}`,
+  },
+  visit_form_rules: {
+    label: 'Visit report by type',
+    singular: 'report rule',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'visit_form_rules',
+    fields: [
+      {
+        name: 'type',
+        label: 'Type code',
+        type: 'ref',
+        ref: 'customer_types',
+        required: true,
+        immutable: true,
+      },
+      {
+        name: 'field',
+        label: 'Field key',
+        type: 'ref',
+        ref: 'visit_form_fields',
+        required: true,
+        immutable: true,
+      },
+      // R asked and required, O asked and optional, X not asked of this type.
+      {
+        name: 'requirement',
+        label: 'Asked',
+        type: 'enum',
+        options: ['R', 'O', 'X'],
+        default: 'O',
+      },
+      { name: 'label_override', label: 'Wording for this type', type: 'text', max: 120 },
+    ],
+    key: (v) => `${v.type.toLowerCase()}|${v.field.toLowerCase()}`,
+    title: (v) => `${v.field} on ${v.type}`,
+  },
   beats: {
     label: 'Beats',
     singular: 'beat',
@@ -712,10 +1028,46 @@ export function validateMaster(kind, raw) {
         });
     }
     // A choice list with no choices would leave an unanswerable question on the form.
-    if (kind === 'customer_form_fields' && value.input === 'select' && !value.options)
+    // The DB holds the same rule; saying it here means the form explains itself before the save.
+    if (
+      kind === 'shifts' &&
+      value.min_minutes !== null &&
+      value.half_day_minutes !== null &&
+      Number(value.min_minutes) > Number(value.half_day_minutes)
+    )
+      errors.push({
+        column: 'min_minutes',
+        message: 'A day cannot start counting after the point it would already be half a day.',
+      });
+    // The customer form and the visit report form are the same machinery, so a choice question
+    // with no choices is unanswerable on either of them.
+    if (
+      (kind === 'customer_form_fields' || kind === 'visit_form_fields') &&
+      value.input === 'select' &&
+      !value.options
+    )
       errors.push({
         column: 'options',
         message: 'A choice list needs its choices. Separate them with a | between each.',
+      });
+    // RCH-5: a dated price or scheme cannot end before it starts, and a slab that gives nothing
+    // is a slab somebody forgot to fill in. The table holds both rules; saying them here lets the
+    // screen name the field instead of showing a constraint name.
+    if (
+      (kind === 'price_list_items' || kind === 'trade_schemes') &&
+      value.to_date &&
+      value.from_date &&
+      value.to_date < value.from_date
+    )
+      errors.push({ column: 'to_date', message: 'Until cannot be earlier than From.' });
+    if (
+      kind === 'trade_schemes' &&
+      !Number(value.discount_pct ?? 0) &&
+      !Number(value.free_quantity ?? 0)
+    )
+      errors.push({
+        column: 'discount_pct',
+        message: 'A slab has to give something: a discount, free units, or both.',
       });
     if (kind === 'beat_assignments' && value.to_date && value.to_date < value.from_date)
       errors.push({ column: 'to_date', message: 'Until cannot be earlier than From.' });

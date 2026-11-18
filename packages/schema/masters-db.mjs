@@ -34,6 +34,12 @@ const REF_QUERIES = {
     'SELECT id,field_key AS code,active,input FROM customer_form_fields WHERE field_key=ANY($1::text[]) AND deleted_at IS NULL',
   beats:
     'SELECT id,code,active,territory_id FROM beats WHERE lower(code)=ANY($1::text[]) AND deleted_at IS NULL',
+  shifts:
+    'SELECT id,code,active FROM shifts WHERE lower(code)=ANY($1::text[]) AND deleted_at IS NULL',
+  visit_form_fields:
+    'SELECT id,field_key AS code,active,input FROM visit_form_fields WHERE field_key=ANY($1::text[]) AND deleted_at IS NULL',
+  kyc_types:
+    'SELECT id,code,active FROM kyc_types WHERE lower(code)=ANY($1::text[]) AND deleted_at IS NULL',
 };
 
 const REF_NOUNS = {
@@ -47,6 +53,9 @@ const REF_NOUNS = {
   customer_types: 'Customer type',
   customer_form_fields: 'Form field',
   beats: 'Beat',
+  shifts: 'Shift',
+  visit_form_fields: 'Report field',
+  kyc_types: 'KYC document',
 };
 // What to do about a reference that is not there. For masters it is "create it first"; a login is
 // not created here at all, it is invited on the Users screen.
@@ -421,9 +430,11 @@ const SQL = {
     select:
       'SELECT x.id,x.code,x.name,g.code AS grade,x.grade_id,t.code AS territory,x.territory_id,' +
       'coalesce(u.email,\'\') AS "user",x.user_id,x.photo_file_id,x.email,x.phone,' +
-      "to_char(x.joined_on,'YYYY-MM-DD') AS joined_on,x.active,x.version,x.updated_at " +
+      "to_char(x.joined_on,'YYYY-MM-DD') AS joined_on," +
+      "coalesce(sh.code,'') AS shift,x.shift_id,x.active,x.version,x.updated_at " +
       'FROM field_reps x JOIN rep_grades g ON g.id=x.grade_id ' +
-      'JOIN territories t ON t.id=x.territory_id LEFT JOIN app_users u ON u.id=x.user_id',
+      'JOIN territories t ON t.id=x.territory_id LEFT JOIN app_users u ON u.id=x.user_id ' +
+      'LEFT JOIN shifts sh ON sh.id=x.shift_id',
     sort: ['lower(x.code)'],
     search: '(starts_with(lower(x.code),$q) OR starts_with(lower(x.name),$q))',
     keyWhere: 'lower(x.code)=ANY($1::text[])',
@@ -435,11 +446,90 @@ const SQL = {
       (v.user_id ?? null) === r.user_id &&
       v.email === r.email &&
       v.phone === r.phone &&
-      (v.joined_on ?? null) === r.joined_on,
-    columns: ['code', 'name', 'grade_id', 'territory_id', 'user_id', 'email', 'phone', 'joined_on'],
-    types: ['text', 'text', 'uuid', 'uuid', 'uuid', 'text', 'text', 'date'],
+      (v.joined_on ?? null) === r.joined_on &&
+      (v.shift_id ?? null) === r.shift_id,
+    columns: [
+      'code',
+      'name',
+      'grade_id',
+      'territory_id',
+      'user_id',
+      'email',
+      'phone',
+      'joined_on',
+      'shift_id',
+    ],
+    types: ['text', 'text', 'uuid', 'uuid', 'uuid', 'text', 'text', 'date', 'uuid'],
     conflict: '(tenant_id,lower(code)) WHERE deleted_at IS NULL',
-    mutable: ['name', 'grade_id', 'territory_id', 'user_id', 'email', 'phone', 'joined_on'],
+    mutable: [
+      'name',
+      'grade_id',
+      'territory_id',
+      'user_id',
+      'email',
+      'phone',
+      'joined_on',
+      'shift_id',
+    ],
+    softDelete: true,
+  },
+  work_types: {
+    select:
+      'SELECT x.id,x.code,x.name,x.needs_location,x.counts_present,x.active,x.version,x.updated_at FROM work_types x',
+    sort: ['lower(x.code)'],
+    search: '(starts_with(lower(x.code),$q) OR starts_with(lower(x.name),$q))',
+    keyWhere: 'lower(x.code)=ANY($1::text[])',
+    keyOf: (r) => lc(r.code),
+    same: (v, r) =>
+      v.name === r.name &&
+      v.needs_location === r.needs_location &&
+      v.counts_present === r.counts_present,
+    columns: ['code', 'name', 'needs_location', 'counts_present'],
+    types: ['text', 'text', 'boolean', 'boolean'],
+    conflict: '(tenant_id,lower(code)) WHERE deleted_at IS NULL',
+    mutable: ['name', 'needs_location', 'counts_present'],
+    softDelete: true,
+  },
+  shifts: {
+    // The clock columns come back as HH:MM, which is what the form sends and what the register
+    // engine reads; a bare time would otherwise arrive with seconds attached.
+    select:
+      "SELECT x.id,x.code,x.name,to_char(x.starts_at,'HH24:MI') AS starts_at," +
+      "to_char(x.ends_at,'HH24:MI') AS ends_at,x.grace_minutes,x.half_day_minutes," +
+      'x.min_minutes,x.week_off,x.active,x.version,x.updated_at FROM shifts x',
+    sort: ['lower(x.code)'],
+    search: '(starts_with(lower(x.code),$q) OR starts_with(lower(x.name),$q))',
+    keyWhere: 'lower(x.code)=ANY($1::text[])',
+    keyOf: (r) => lc(r.code),
+    same: (v, r) =>
+      v.name === r.name &&
+      v.starts_at === r.starts_at &&
+      v.ends_at === r.ends_at &&
+      Number(v.grace_minutes) === Number(r.grace_minutes) &&
+      Number(v.half_day_minutes) === Number(r.half_day_minutes) &&
+      Number(v.min_minutes) === Number(r.min_minutes) &&
+      v.week_off === r.week_off,
+    columns: [
+      'code',
+      'name',
+      'starts_at',
+      'ends_at',
+      'grace_minutes',
+      'half_day_minutes',
+      'min_minutes',
+      'week_off',
+    ],
+    types: ['text', 'text', 'time', 'time', 'integer', 'integer', 'integer', 'text'],
+    conflict: '(tenant_id,lower(code)) WHERE deleted_at IS NULL',
+    mutable: [
+      'name',
+      'starts_at',
+      'ends_at',
+      'grace_minutes',
+      'half_day_minutes',
+      'min_minutes',
+      'week_off',
+    ],
     softDelete: true,
   },
   leave_types: {
@@ -614,6 +704,160 @@ const SQL = {
     types: ['uuid', 'uuid', 'text', 'text'],
     conflict: '(tenant_id,type_id,field_id) WHERE deleted_at IS NULL',
     mutable: ['requirement', 'label_override'],
+    softDelete: true,
+  },
+  visit_form_fields: {
+    select:
+      'SELECT x.id,x.field_key,x.name,x.input,x.section,x.display_order,x.options,x.help,' +
+      'x.default_value,x.locked,x.active,x.version,x.updated_at FROM visit_form_fields x',
+    sort: ['x.field_key'],
+    search: '(starts_with(x.field_key,$q) OR starts_with(lower(x.name),$q))',
+    keyWhere: 'x.field_key=ANY($1::text[])',
+    keyArgs: (rows) => [rows.map((r) => r.value.field_key)],
+    keyOf: (r) => r.field_key,
+    same: (v, r) =>
+      v.name === r.name &&
+      v.input === r.input &&
+      v.section === r.section &&
+      v.display_order === r.display_order &&
+      v.options === r.options &&
+      v.help === r.help &&
+      v.default_value === r.default_value,
+    columns: [
+      'field_key',
+      'name',
+      'input',
+      'section',
+      'display_order',
+      'options',
+      'help',
+      'default_value',
+    ],
+    types: ['text', 'text', 'text', 'text', 'int', 'text', 'text', 'text'],
+    conflict: '(tenant_id,field_key) WHERE deleted_at IS NULL',
+    mutable: ['name', 'input', 'section', 'display_order', 'options', 'help', 'default_value'],
+    softDelete: true,
+  },
+  visit_form_rules: {
+    select:
+      'SELECT x.id,t.code AS type,f.field_key AS field,x.type_id,x.field_id,x.requirement,' +
+      'x.label_override,x.active,x.version,x.updated_at FROM visit_form_rules x ' +
+      'JOIN customer_types t ON t.id=x.type_id JOIN visit_form_fields f ON f.id=x.field_id',
+    sort: ['lower(t.code)', 'f.field_key'],
+    search: '(starts_with(lower(t.code),$q) OR starts_with(f.field_key,$q))',
+    keyWhere:
+      '(x.type_id,x.field_id) IN (SELECT a::uuid,b::uuid FROM unnest($1::text[],$2::text[]) AS k(a,b))',
+    keyArgs: (rows) => [rows.map((r) => r.value.type_id), rows.map((r) => r.value.field_id)],
+    keyOf: (r) => `${lc(r.type)}|${lc(r.field)}`,
+    same: (v, r) => v.requirement === r.requirement && v.label_override === r.label_override,
+    columns: ['type_id', 'field_id', 'requirement', 'label_override'],
+    types: ['uuid', 'uuid', 'text', 'text'],
+    conflict: '(tenant_id,type_id,field_id) WHERE deleted_at IS NULL',
+    mutable: ['requirement', 'label_override'],
+    softDelete: true,
+  },
+  kyc_types: {
+    select:
+      'SELECT x.id,x.code,x.name,x.number_check,x.valid_months,x.active,x.version,x.updated_at ' +
+      'FROM kyc_types x',
+    sort: ['lower(x.code)'],
+    search: '(starts_with(lower(x.code),$q) OR starts_with(lower(x.name),$q))',
+    keyWhere: 'lower(x.code)=ANY($1::text[])',
+    keyArgs: (rows) => [rows.map((r) => r.value.code.toLowerCase())],
+    keyOf: (r) => lc(r.code),
+    same: (v, r) =>
+      v.name === r.name && v.number_check === r.number_check && v.valid_months === r.valid_months,
+    columns: ['code', 'name', 'number_check', 'valid_months'],
+    types: ['text', 'text', 'text', 'int'],
+    conflict: '(tenant_id,lower(code)) WHERE deleted_at IS NULL',
+    mutable: ['name', 'number_check', 'valid_months'],
+    softDelete: true,
+  },
+  kyc_rules: {
+    select:
+      'SELECT x.id,t.code AS type,k.code AS kyc_type,x.type_id,x.kyc_type_id,x.requirement,' +
+      'x.active,x.version,x.updated_at FROM kyc_rules x ' +
+      'JOIN customer_types t ON t.id=x.type_id JOIN kyc_types k ON k.id=x.kyc_type_id',
+    sort: ['lower(t.code)', 'lower(k.code)'],
+    search: '(starts_with(lower(t.code),$q) OR starts_with(lower(k.code),$q))',
+    keyWhere:
+      '(x.type_id,x.kyc_type_id) IN (SELECT a::uuid,b::uuid FROM unnest($1::text[],$2::text[]) AS k(a,b))',
+    keyArgs: (rows) => [rows.map((r) => r.value.type_id), rows.map((r) => r.value.kyc_type_id)],
+    keyOf: (r) => `${lc(r.type)}|${lc(r.kyc_type)}`,
+    same: (v, r) => v.requirement === r.requirement,
+    columns: ['type_id', 'kyc_type_id', 'requirement'],
+    types: ['uuid', 'uuid', 'text'],
+    conflict: '(tenant_id,type_id,kyc_type_id) WHERE deleted_at IS NULL',
+    mutable: ['requirement'],
+    softDelete: true,
+  },
+  price_list_items: {
+    select:
+      'SELECT x.id,t.code AS type,i.code AS item,i.name AS item_name,x.type_id,x.item_id,x.rate,' +
+      "x.gst_pct,to_char(x.from_date,'YYYY-MM-DD') AS from_date," +
+      "to_char(x.to_date,'YYYY-MM-DD') AS to_date,x.active,x.version,x.updated_at " +
+      'FROM price_list_items x ' +
+      'JOIN customer_types t ON t.id=x.type_id JOIN items i ON i.id=x.item_id',
+    sort: ['lower(t.code)', 'lower(i.code)', 'x.from_date DESC'],
+    search: '(starts_with(lower(t.code),$q) OR starts_with(lower(i.code),$q))',
+    keyWhere:
+      '(x.type_id,x.item_id,x.from_date) IN (SELECT a::uuid,b::uuid,c::date FROM unnest($1::text[],$2::text[],$3::text[]) AS k(a,b,c))',
+    keyArgs: (rows) => [
+      rows.map((r) => r.value.type_id),
+      rows.map((r) => r.value.item_id),
+      rows.map((r) => r.value.from_date),
+    ],
+    keyOf: (r) => `${lc(r.type)}|${lc(r.item)}|${r.from_date}`,
+    same: (v, r) =>
+      String(v.rate) === String(r.rate) &&
+      String(v.gst_pct) === String(r.gst_pct) &&
+      v.to_date === r.to_date,
+    columns: ['type_id', 'item_id', 'rate', 'gst_pct', 'from_date', 'to_date'],
+    types: ['uuid', 'uuid', 'numeric', 'numeric', 'date', 'date'],
+    conflict: '(tenant_id,type_id,item_id,from_date) WHERE deleted_at IS NULL',
+    mutable: ['rate', 'gst_pct', 'to_date'],
+    softDelete: true,
+  },
+  trade_schemes: {
+    select:
+      'SELECT x.id,x.code,x.name,i.code AS item,i.name AS item_name,x.item_id,x.min_quantity,' +
+      "x.discount_pct,x.free_quantity,to_char(x.from_date,'YYYY-MM-DD') AS from_date," +
+      "to_char(x.to_date,'YYYY-MM-DD') AS to_date,x.active,x.version,x.updated_at " +
+      'FROM trade_schemes x JOIN items i ON i.id=x.item_id',
+    sort: ['lower(x.code)'],
+    search: '(starts_with(lower(x.code),$q) OR starts_with(lower(x.name),$q))',
+    keyWhere: 'lower(x.code)=ANY($1::text[])',
+    keyArgs: (rows) => [rows.map((r) => r.value.code.toLowerCase())],
+    keyOf: (r) => lc(r.code),
+    same: (v, r) =>
+      v.name === r.name &&
+      v.item_id === r.item_id &&
+      String(v.min_quantity) === String(r.min_quantity) &&
+      String(v.discount_pct) === String(r.discount_pct) &&
+      String(v.free_quantity) === String(r.free_quantity) &&
+      v.from_date === r.from_date &&
+      v.to_date === r.to_date,
+    columns: [
+      'code',
+      'name',
+      'item_id',
+      'min_quantity',
+      'discount_pct',
+      'free_quantity',
+      'from_date',
+      'to_date',
+    ],
+    types: ['text', 'text', 'uuid', 'numeric', 'numeric', 'numeric', 'date', 'date'],
+    conflict: '(tenant_id,lower(code)) WHERE deleted_at IS NULL',
+    mutable: [
+      'name',
+      'item_id',
+      'min_quantity',
+      'discount_pct',
+      'free_quantity',
+      'from_date',
+      'to_date',
+    ],
     softDelete: true,
   },
   beats: {
@@ -804,26 +1048,65 @@ const DEPENDANTS = {
   field_reps: [
     ['beat_assignments', 'rep_id', 'beat assignment', 'beat assignments'],
     ['trade_customers', 'rep_id', 'customer', 'customers'],
+    ['attendance_days', 'rep_id', 'attendance day', 'attendance days'],
+    ['leave_requests', 'rep_id', 'leave request', 'leave requests'],
+    ['attendance_edits', 'rep_id', 'attendance correction', 'attendance corrections'],
+    ['tour_plans', 'rep_id', 'tour plan', 'tour plans'],
+    ['tour_plan_changes', 'rep_id', 'plan change request', 'plan change requests'],
+    ['visits', 'rep_id', 'visit', 'visits'],
   ],
+  shifts: [['field_reps', 'shift_id', 'field rep', 'field reps']],
+  work_types: [['attendance_days', 'work_type_id', 'attendance day', 'attendance days']],
+  leave_types: [['leave_requests', 'leave_type_id', 'leave request', 'leave requests']],
   customer_types: [
     ['trade_customers', 'type_id', 'customer', 'customers'],
     ['customer_form_rules', 'type_id', 'form rule', 'form rules'],
+    ['visit_form_rules', 'type_id', 'report rule', 'report rules'],
+    ['kyc_rules', 'type_id', 'KYC rule', 'KYC rules'],
+    ['price_list_items', 'type_id', 'price', 'prices'],
   ],
   customer_form_fields: [['customer_form_rules', 'field_id', 'form rule', 'form rules']],
+  visit_form_fields: [['visit_form_rules', 'field_id', 'report rule', 'report rules']],
+  kyc_types: [
+    ['kyc_rules', 'kyc_type_id', 'KYC rule', 'KYC rules'],
+    ['kyc_documents', 'kyc_type_id', 'uploaded document', 'uploaded documents'],
+  ],
+  trade_schemes: [['trade_order_lines', 'scheme_id', 'order line', 'order lines']],
   beats: [
     ['trade_customers', 'beat_id', 'customer', 'customers'],
     ['beat_assignments', 'beat_id', 'beat assignment', 'beat assignments'],
+    ['tour_plan_days', 'beat_id', 'planned day', 'planned days'],
+    ['tour_plan_changes', 'beat_id', 'plan change request', 'plan change requests'],
   ],
 };
+
+// Attendance keeps every row it ever wrote, so these tables have no deleted_at to filter on.
+// Every row counts as a dependant, including cancelled and rejected ones: the register reads
+// history, and history cannot cite a shift or a leave type that has been taken away.
+// Tables that keep what happened rather than what is current, so they have no deleted_at to
+// filter on. A dependant count against one of these asks "is this referred to at all?".
+const PERMANENT = new Set([
+  'attendance_days',
+  'leave_requests',
+  'attendance_edits',
+  'tour_plans',
+  'tour_plan_days',
+  'tour_plan_changes',
+  'visits',
+  'kyc_documents',
+  'trade_orders',
+  'trade_order_lines',
+  'trade_invoices',
+  'trade_invoice_lines',
+  'trade_receipts',
+]);
 
 export async function removalBlockers(db, kind, id) {
   const blockers = [];
   for (const [table, column, one, many] of DEPENDANTS[kind] ?? []) {
+    const live = PERMANENT.has(table) ? '' : ' AND deleted_at IS NULL';
     const n = (
-      await db.query(
-        `SELECT count(*)::int AS n FROM ${table} WHERE ${column}=$1 AND deleted_at IS NULL`,
-        [id],
-      )
+      await db.query(`SELECT count(*)::int AS n FROM ${table} WHERE ${column}=$1${live}`, [id])
     ).rows[0].n;
     if (n) blockers.push(`${n} ${n === 1 ? one : many} still ${n === 1 ? 'uses' : 'use'} it`);
   }
