@@ -168,6 +168,7 @@ const EXAMPLES = {
       'kiran@example.com',
       '+91 98765 43210',
       '2024-04-01',
+      'Rohtak',
       'DAY',
     ],
   ],
@@ -338,6 +339,13 @@ const EXAMPLES = {
     ['DIST', 'next_action', 'R', 'What happens next'],
   ],
   // RCH-5: the paperwork a type asks for, what it pays, and the slabs a quantity earns.
+  // RCH-6: the client's own categories, from question 9 of the milestone plan.
+  expense_categories: [
+    ['KM', 'Travel by road', 'KM', ''],
+    ['DA', 'Daily allowance', 'DAILY', ''],
+    ['STAY', 'Lodging', 'NIGHTLY', '200'],
+    ['PHONE', 'Phone bill', 'ACTUAL', '200'],
+  ],
   kyc_types: [
     ['GSTIN', 'GST certificate', 'gstin', ''],
     ['PAN', 'PAN card', 'pan', ''],

@@ -64,6 +64,8 @@ import { ReachAttendanceController } from './reach-attendance.controller.js';
 import { ReachTourController } from './reach-tour.controller.js';
 import { ReachVisitController } from './reach-visit.controller.js';
 import { ReachTradeController } from './reach-trade.controller.js';
+import { ReachExpenseController } from './reach-expense.controller.js';
+import { ReachOverviewController } from './reach-overview.controller.js';
 import { MAX_FILE_BYTES, UPLOAD_TYPES } from './file-store.js';
 @Catch()
 class Errors implements ExceptionFilter {
@@ -414,6 +416,8 @@ class AppController {
     ReachTourController,
     ReachVisitController,
     ReachTradeController,
+    ReachExpenseController,
+    ReachOverviewController,
   ],
 })
 class AppModule {}

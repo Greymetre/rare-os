@@ -18,20 +18,10 @@
 // Adding an entry below is a decision somebody owns. It is not a way to make a red build green.
 import { spawnSync } from 'node:child_process';
 
-// Advisories looked at and accepted, for the build toolchain only.
-const ACCEPTED = [
-  {
-    id: 'GHSA-fc5q-39xc-vjpf',
-    package: 'picomatch',
-    until: '2027-02-28',
-    why:
-      'ReDoS in picomatch, reached only through vite → tinyglobby → fdir at build time. No fixed ' +
-      'version exists: 4.0.7 is the latest and the advisory covers every release. picomatch is a ' +
-      'devDependency and is not in any shipped image, and the only globs it is given are this ' +
-      "repository's own. `npm audit fix --force` would drop vite from 8.3.5 to 6.2.7, which is " +
-      'two major versions back and carries its own advisories. Revisit when vite ships a fix.',
-  },
-];
+// Advisories looked at and accepted, for the build toolchain only. Empty is the normal state:
+// an entry here is a decision somebody owns, and it is removed the moment upstream fixes the
+// advisory — which this script says plainly when it happens.
+const ACCEPTED = [];
 
 const today = new Date().toISOString().slice(0, 10);
 

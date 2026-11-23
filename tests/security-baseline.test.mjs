@@ -524,6 +524,123 @@ test('RCH-5 holds an order rather than refusing it, and never stores what it wor
   assert.match(engine, /const price = unitRate\(rate\)/);
 });
 
+test('RCH-6 freezes a policy once it governs, and stores no amount at all', () => {
+  const migration = read('db/migrations/035_reach_expenses.sql');
+  // A claim, a decision and a policy version are records of what happened or what somebody was
+  // paid against. Nothing here may be removed by the runtime role.
+  for (const [, privileges, granted] of migration.matchAll(
+    /GRANT ([^;]*?) ON ([^;]*?) TO rare_app/gi,
+  ))
+    assert.doesNotMatch(privileges, /\bDELETE\b/i, `DELETE granted on ${granted.trim()}`);
+  for (const table of [
+    'expense_categories',
+    'expense_policies',
+    'expense_policy_rates',
+    'expense_claims',
+    'expense_lines',
+  ])
+    assert.ok(new RegExp(`'${table}'`).test(migration), `${table} is not row-level scoped`);
+
+  // Nothing a screen works out may be stored. A column for any of these would be a second
+  // version of the truth, and the first one somebody forgets to rewrite.
+  const sqlOnly = migration.replace(/--.*$/gm, '');
+  for (const column of ['allowed', 'approved_amount', 'computed', 'policy_amount', 'payable'])
+    assert.ok(
+      !new RegExp(`\\b${column}\\s+numeric`, 'i').test(sqlOnly),
+      `the schema stores ${column}, which must be calculated`,
+    );
+  // What the rep asked for is kept; what the policy makes of it is not.
+  assert.match(sqlOnly, /claimed_amount numeric/);
+
+  // The milestone's own acceptance, in the table rather than only in the controller.
+  assert.match(
+    sqlOnly,
+    /CHECK \(manager_by IS NULL OR finance_by IS NULL OR manager_by <> finance_by\)/,
+  );
+  // Finance cannot have seen a claim a manager never passed, and a refusal has to say why.
+  assert.match(sqlOnly, /CHECK \(finance_by IS NULL OR manager_by IS NOT NULL\)/);
+  assert.match(sqlOnly, /CHECK \(status <> 'REJECTED' OR reject_reason <> ''\)/);
+  // One claim per rep per period, and two versions cannot begin on the same day.
+  assert.match(migration, /CREATE UNIQUE INDEX expense_claims_period_idx/);
+  assert.match(migration, /CREATE UNIQUE INDEX expense_policies_from_idx/);
+
+  const controller = read('apps/api/src/reach-expense.controller.ts');
+  // The rule the whole module rests on, enforced where today's date is visible.
+  assert.match(controller, /has to start after today/);
+  assert.match(controller, /POLICY_IN_FORCE/);
+  assert.ok(
+    (controller.match(/policyIsOpen\(policy, today\)/g) ?? []).length >= 2,
+    'a started version must be refused on both the version and its rates',
+  );
+  // The rep is the signed-in login; a rep id in a body is never read.
+  assert.match(controller, /repForUser\(db, actor\.id\)/);
+  assert.doesNotMatch(controller, /body\(req, \[[^\]]*'rep_id'/);
+  assert.match(controller, /You may only change your own claim/);
+  assert.match(controller, /You may only read your own claims/);
+  // The two desks are two rights, and one person cannot use both on one claim.
+  for (const required of [
+    "mutate(req, 'reach.expense'",
+    "mutate(req, 'reach.setup'",
+    "stage === 'MANAGER' ? 'reach.expense_approve' : 'reach.expense_finance'",
+    'NOT_YOURS_TO_DECIDE',
+  ])
+    assert.ok(controller.includes(required), `the controller is missing ${required}`);
+  // One request may ask for at most a year, and a claim is a page of lines.
+  assert.match(controller, /MAX_SPAN_DAYS = 366/);
+  assert.match(controller, /MAX_LINES = 200/);
+  // The payout file is served as a file and never sniffed as something a browser would run.
+  assert.match(controller, /'X-Content-Type-Options', 'nosniff'/);
+  // Only what finance approved is paid out.
+  assert.match(controller, /status: 'APPROVED'/);
+
+  const engine = read('packages/engines/expense.mjs');
+  // A day the register settles as "not at work" earns no daily allowance.
+  assert.match(engine, /NOT_AT_WORK = \['ABSENT', 'LEAVE', 'WEEK_OFF', 'HOLIDAY'\]/);
+  // The plan's town outranks the one the rep typed, or a day at headquarters could be claimed
+  // as a day in the next district.
+  assert.match(engine, /const fromPlan = String\(plannedTown/);
+  // Over the limit is capped, never refused.
+  assert.match(engine, /reasons\.push\('CAPPED'\)/);
+
+  const layer = read('packages/schema/expense-db.mjs');
+  // The rates of a version are replaced as a set, and nothing is deleted doing it — the grant
+  // refuses a DELETE here outright, so this is the only shape that works.
+  assert.doesNotMatch(layer, /DELETE FROM expense_/);
+  assert.match(layer, /ON CONFLICT \(tenant_id,policy_id,category_id,key\) DO UPDATE/);
+});
+
+test('RCH-7 counts what is there and has no way to change any of it', () => {
+  const layer = read('packages/schema/reach-overview-db.mjs');
+  // The milestone's own acceptance, made structural: this file cannot write. If it cannot write,
+  // a proposal cannot act, and a tile cannot be a stored number that has drifted.
+  for (const write of ['INSERT INTO', 'UPDATE ', 'DELETE FROM', 'TRUNCATE'])
+    assert.ok(!layer.includes(write), `the overview reader contains a ${write.trim()}`);
+
+  const controller = read('apps/api/src/reach-overview.controller.ts');
+  // `mutate` is the only way this codebase writes behind a permission, so its absence is the
+  // plainest statement that nothing here changes anything.
+  assert.ok(!controller.includes('mutate('), 'the overview controller writes');
+  assert.doesNotMatch(controller, /@(Post|Put|Patch|Delete)\(/);
+  // Reading the module needs the right to read it; its audit trail needs the audit right.
+  assert.match(controller, /access\(req, 'reach\.read'\)/);
+  assert.match(controller, /access\(req, 'audit\.read'\)/);
+  // One request may ask for at most a year of trail, and a page of it at a time.
+  assert.match(controller, /MAX_SPAN_DAYS = 366/);
+  assert.match(controller, /MAX_AUDIT_ROWS = 200/);
+
+  const engine = read('packages/engines/reach-overview.mjs');
+  // A proposal pointing at a screen somebody cannot open is noise, so every one names the right
+  // it needs and the overview filters on it.
+  assert.match(engine, /PROPOSAL_RIGHTS/);
+  assert.match(engine, /if \(permissions && needs && !permissions\.includes\(needs\)\) continue/);
+  // Nothing counted is nothing proposed: the system says nothing rather than reassuring anybody.
+  assert.match(engine, /if \(!count\) continue/);
+  // The queue total is the sum of the rows beneath it, which is the acceptance in one line.
+  assert.match(engine, /total: waiting\.reduce/);
+  // Going live is read from the data, never from somebody having ticked a box.
+  assert.doesNotMatch(engine, /acknowledged|dismissed|marked_done/i);
+});
+
 test('production gateways and images retain baseline VAPT hardening', () => {
   const nginx = read('infra/docker/nginx.conf');
   for (const required of [

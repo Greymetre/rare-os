@@ -34,7 +34,7 @@ export async function attendanceSettings(db) {
 // ---------- Who a rep is, and which shift judges their day ----------
 
 const REP_COLUMNS = `
-  r.id, r.code, r.name, r.shift_id,
+  r.id, r.code, r.name, r.shift_id, r.hq_town, r.grade_id,
   coalesce(s.code,'') AS shift,
   to_char(s.starts_at,'HH24:MI') AS starts_at,
   to_char(s.ends_at,'HH24:MI') AS ends_at,

@@ -1,4 +1,109 @@
-# Current handoff — 18 November 2026 (RCH-2 to RCH-5, Claude Code)
+# Current handoff — 20 November 2026 (RCH-6 expenses, RCH-7 overview, Claude Code)
+
+RCH-2 to RCH-5 went live on 18 November as `dcf9aa3` with 34 migrations. This change adds RCH-6
+(expenses) with migration 035, and RCH-7 (the overview, one approval queue, proposals, the Reach
+audit trail and going live) **with no migration at all**. **Nothing is pushed.**
+
+## What RCH-6 added
+
+- **Migration `035_reach_expenses.sql`**: `expense_categories`, `expense_policies`,
+  `expense_policy_rates`, `expense_claims` and `expense_lines`, plus `hq_town` on `field_reps`
+  and two settings columns on the same `reach_settings` row. Row-level scoped, **no DELETE
+  granted anywhere**.
+- **The whole module turns on one sentence of the plan**: a policy version may only start after
+  today, and once it has started it is frozen. That is not ceremony — it is what makes it safe to
+  leave every amount **calculated rather than stored**. Re-reading last fortnight's claim always
+  gives last fortnight's answer, so there is no `amount`, no `allowed` and no `approved_amount`
+  column, and the security baseline asserts their absence.
+- **Attendance and the tour plan have the last word, and are asked rather than copied.** A day
+  the register settles as not at work earns no daily allowance — the milestone's own acceptance —
+  and the town comes from the plan, not from what the rep typed, so a day at headquarters cannot
+  be claimed as a day in the next district.
+- **Over the limit is capped, not refused**, with what was asked and what is allowed side by
+  side. A missing receipt **blocks the claim rather than zeroing the line**: the expense is real,
+  the paperwork is what is absent.
+- **Two desks, and never one person at both.** Refused by the engine, by the controller and by
+  the table's own CHECK, because that is the rule somebody will eventually want around.
+- `expense.mjs`, `expense-db.mjs`, `reach-expense.controller.ts` (18 routes) and
+  `reach-expense.tsx` (4 screens). Permissions `reach.expense`, `reach.expense_approve` and
+  `reach.expense_finance`.
+
+### One deliberate departure from the plan
+
+The plan asks for the policy's result to appear **before** the rep commits a line. The obvious
+way would be to price it in the browser as they type, and it would be wrong often enough to
+matter: a daily allowance depends on what the register says about that day and which town the
+plan sent the rep to, and a browser knows neither. A number that is usually right is worse than
+no number. So the line is added, priced by the server, and shown with both figures — and stays
+editable, or can be taken off, until the claim goes in.
+
+## What RCH-7 added
+
+**No new tables, and that is the design rather than an economy.** The milestone's two acceptance
+criteria — every tile matching the activity beneath it, and no proposal changing anything — are
+both structural once nothing is stored:
+
+- A tile and the list under it are the same count, read from the same query in the same request.
+- A proposal is a reading plus the name of the screen where a person decides. There is no route
+  in this module that writes: no `@Post`, no `mutate`, and no INSERT, UPDATE or DELETE in the
+  reader. The spec asks the server to write through nine request shapes and is refused each time.
+- What a person is offered is filtered by the right the screen it points at needs, because a
+  proposal nobody can act on is noise, and noise is how a dashboard stops being read.
+- Fourteen things are watched, across all six earlier milestones; **one queue** replaces the
+  queue each module used to keep; going live is seven lines read from the data rather than from
+  somebody ticking a box; and the Reach audit trail is a window onto the one shared audit record
+  rather than a second trail.
+- `reach-overview.mjs`, `reach-overview-db.mjs`, `reach-overview.controller.ts` (4 read-only
+  routes) and `reach-overview.tsx` (4 screens). No new permissions: it reads with `reach.read`,
+  and its trail with `audit.read`.
+
+## Defects found while building these two
+
+- `savePolicyRates` replaced a version's rates with a DELETE, which the module's own grant
+  forbids. Found by the browser spec as a 503. Rates are now upserted and the ones left out are
+  soft-deleted — the grant doing exactly its job.
+- `hq_town` was added to the `field_reps` master's fields but not to its SQL columns, so the
+  value was accepted and silently never written. Every daily allowance then read as out of
+  headquarters. Same class as the `visit_dedupe_minutes` miss in RCH-4.
+- Adding a field to `field_reps` broke the CSV template test, which is the test doing its job.
+- **I overwrote `packages/schema/overview-db.mjs`**, an existing Availability file, by choosing a
+  name that was already taken. Restored from git and the new one renamed `reach-overview-db.mjs`.
+  The typecheck caught it immediately.
+
+## Tests
+
+- Unit: `tests/expense.test.mjs` (14) and `tests/reach-overview.test.mjs` (6), plus RCH-6 and
+  RCH-7 suites in `tests/security-baseline.test.mjs`. **249 unit tests, 12 security suites.**
+- DB dry runs against real Postgres inside a transaction that is always rolled back: **42 checks
+  for RCH-6** and **16 for RCH-7**, including every milestone acceptance case through real SQL.
+- All 35 migrations replayed from an empty database on a throwaway stack (112 tables).
+- Browser/API + VAPT: `tests/reach-expense.spec.ts` and `tests/reach-overview.spec.ts`.
+- Manual steps in `docs/REACH_TEST_GUIDE_HINGLISH.md`; coverage rows in
+  `docs/REGRESSION_TESTING_HINGLISH.md`.
+
+## Before any push
+
+Nothing to change in `.env`. After deploying, `Reach > Overview` appears for anyone holding
+`reach.read` and is where the module now opens — which also fixes a defect from RCH-2 onwards,
+where every rep-only login landed on the readiness checklist and was answered 403.
+
+Three more rights need granting by hand under `Access > Roles`: `reach.expense`,
+`reach.expense_approve` and `reach.expense_finance`. **Grant the last two to different people.**
+One person may hold both, and the system will still refuse to let them use both on one claim, but
+a company that means to separate the two desks should separate them here as well.
+
+A company also has to set each rep's **headquarters town** before any daily allowance is right:
+blank reads as out of headquarters on every day.
+
+## The dependency gate has already paid for itself
+
+The picomatch advisory accepted on 18 November was fixed upstream within two days.
+`scripts/audit.mjs` printed "No longer present: GHSA-fc5q-39xc-vjpf. Remove it from ACCEPTED",
+the entry was removed, and `ACCEPTED` is empty again — which is its normal state.
+
+---
+
+# Previous handoff — 18 November 2026 (RCH-2 to RCH-5, Claude Code)
 
 RCH-0 and RCH-1 went live on 17 November as `9668e10` with 30 migrations. This change adds RCH-2
 (attendance and leave), RCH-3 (the tour plan), RCH-4 (visits and the check-out report) and RCH-5

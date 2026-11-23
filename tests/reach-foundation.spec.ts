@@ -166,7 +166,11 @@ test('RCH-0 Reach foundation: field masters, photos, soft delete, imports, isola
 
   try {
     // ---------- The module is there, and starts almost empty ----------
+    // Which screen Reach opens on is not this milestone's to decide — RCH-7 made it the overview
+    // so that a rep-only login does not land on a checklist they may not read. The readiness
+    // screen is asked for by name, the same way every other spec reaches a screen it wants.
     await page.getByRole('button', { name: 'Reach', exact: true }).click();
+    await openScreen(page, 'Readiness');
     await expect(page.getByRole('heading', { name: 'Field data readiness' })).toBeVisible();
     // Storage is ready before anything else: the volume is there whether or not a photo is.
     await expect(page.locator('.readiness-row[data-status="ready"]')).toHaveCount(1);

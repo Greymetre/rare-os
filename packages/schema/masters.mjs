@@ -402,6 +402,10 @@ export const MASTER_KINDS = {
       email,
       phone,
       { name: 'joined_on', label: 'Joined on', type: 'date' },
+      // RCH-6: where this rep is based. The daily allowance is a different rate at headquarters,
+      // out of it and away overnight, so the town has to be known. Blank means the company has
+      // not said, and every day then reads as out of headquarters rather than being guessed at.
+      { name: 'hq_town', label: 'Headquarters town', type: 'text', max: 80 },
       // Which shift decides this rep's lateness and week-offs. Blank until the company sets
       // one, and the register then says so rather than assuming office hours on their behalf.
       { name: 'shift', label: 'Shift code', type: 'ref', ref: 'shifts' },
@@ -678,6 +682,43 @@ export const MASTER_KINDS = {
   // RCH-5: Customer 360's setup. The documents a type asks for, the rate it pays, and the slabs
   // a quantity earns — all maintained as masters, so each one arrives with a CSV template and an
   // import. A price list is exactly the thing a company already keeps in a spreadsheet.
+  // RCH-6: what may be claimed, and how a line turns into money. How *much* lives on a policy
+  // version, because that is the part that changes and has to be dated.
+  expense_categories: {
+    label: 'Expense categories',
+    singular: 'expense category',
+    module: 'Reach',
+    permission: 'reach.setup',
+    readPermission: 'reach.read',
+    deletePermission: 'reach.delete',
+    softDelete: true,
+    table: 'expense_categories',
+    fields: [
+      code('Category code'),
+      name,
+      {
+        name: 'basis',
+        label: 'Worked out from',
+        type: 'enum',
+        required: true,
+        // KM reads the kilometres and the vehicle; DAILY is one day's allowance at a rate that
+        // depends on where the day was spent; NIGHTLY reads the nights and the rep's grade;
+        // ACTUAL is what was really spent, up to a cap.
+        options: ['KM', 'DAILY', 'NIGHTLY', 'ACTUAL'],
+        default: 'ACTUAL',
+      },
+      // Above this the policy insists on a receipt. Blank means it never does.
+      {
+        name: 'receipt_above',
+        label: 'Receipt needed above',
+        type: 'decimal',
+        decimals: 2,
+        min: 0,
+      },
+    ],
+    key: (v) => v.code.toLowerCase(),
+    title: (v) => `Expense category ${v.code}`,
+  },
   kyc_types: {
     label: 'KYC documents',
     singular: 'KYC document',

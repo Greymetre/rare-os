@@ -987,3 +987,310 @@ Sirf `reach.order` + `reach.collect` wale login se jaanch:
 - Stock dikhana nahi — order price se banta hai, availability se nahi
 - Order ERP ko bhejne ka asli connection nahi — "Send to ERP" status aur reference rakhta hai,
   message bhejta nahi
+
+---
+
+## RCH-6 — Expenses (TA / DA)
+
+Ye milestone ek hi line par khada hai, aur wo line milestone plan ki apni hai: **"nayi version
+hamesha aaj ke baad se shuru ho, taaki approved amount kabhi na hile."** Isko poori tarah
+seriously liya gaya hai, aur baaki sab usi se nikalta hai.
+
+Char usool:
+
+1. **Policy version aane wale kal se hi shuru ho sakti hai, aur shuru hote hi freeze ho jati
+   hai.** Jo version aaj se chal rahi hai usme ek bhi number badla to jo amount kisi ne approve
+   kar diya wo hil jayega.
+2. **Isi wajah se amount kahin store nahi hota.** Claim sirf wo rakhta hai jo rep ne kaha —
+   date, km, raatein, town, kitna maang raha hai. Policy uska kya banati hai wo har baar nikala
+   jata hai. `expense_claims` me `amount` ya `approved_amount` jaisa koi column hai hi nahi.
+3. **Attendance aur Tour Plan ka faisla chalta hai, claim ka nahi.** Jis din register kehta hai
+   rep kaam par nahi tha, us din DA zero. Aur town **plan se** aata hai — warna HQ par bitaya
+   din door ke town ka bata kar zyada DA liya ja sakta tha.
+4. **Limit se upar cap hota hai, reject nahi.** Line dono number rakhti hai: kitna maanga aur
+   kitna milega. Sirf aakhri number dikhana wo tareeka hai jisse rep total se jhagadne lagta hai.
+
+**Kahan:** `Reach → Expenses` — **My expenses**, **Expense claims**, **Expense register**.
+Setup `Reach → Customer setup` me — **Expense categories** aur **Expense policy**.
+
+### 1. Pehle ye hona chahiye
+
+| Cheez                      | Kahan                                                    |
+| -------------------------- | -------------------------------------------------------- |
+| Rep ka headquarters town   | Field setup → Field reps → `Headquarters town`           |
+| Rep ka grade               | Field setup → Rep grades (lodging ka rate grade par hai) |
+| Kya kya claim ho sakta hai | Customer setup → Expense categories                      |
+| Rates                      | Customer setup → Expense policy → New version            |
+| Rep ka login               | Field setup → Field reps (`user` bharo)                  |
+
+**Headquarters town khaali chhoda to har din "out of headquarters" padhega.** Guess nahi hota.
+
+### 2. Categories banao
+
+`Reach → Customer setup → Expense categories → Create`
+
+| Code    | Worked out from | Matlab                                              |
+| ------- | --------------- | --------------------------------------------------- |
+| `KM`    | KM              | km × vehicle ka rate                                |
+| `DA`    | DAILY           | ek din ka allowance, is hisaab se ki din kahan bita |
+| `STAY`  | NIGHTLY         | raatein × rep ke grade ka rate                      |
+| `PHONE` | ACTUAL          | jo sach me kharch hua, cap tak                      |
+
+`Receipt needed above` me 200 daalo STAY aur PHONE par.
+
+### 3. Policy version banao — aur dekho ki aaj se nahi ban sakti
+
+`Reach → Customer setup → Expense policy → New version`
+
+- `Starts on` me **aaj ki date** daal kar dekho → **refuse hona chahiye**. Message saaf batayega
+  kyun: aaj se shuru hui version aaj ke claims par pehle se lagu hai
+- Kal ki date daalo → ban jayegi, aur `Starts later · can be changed` dikhega
+- Usme rates bharo (client ke apne numbers):
+
+| Category | Key               | Rate | Limit per line | Limit per claim |
+| -------- | ----------------- | ---- | -------------- | --------------- |
+| KM       | `BIKE`            | 3.5  |                |                 |
+| KM       | `CAR`             | 9    |                |                 |
+| DA       | `HQ`              | 250  |                |                 |
+| DA       | `EX_HQ`           | 400  |                |                 |
+| DA       | `OUTSTATION`      | 600  |                |                 |
+| STAY     | rep ka grade code | 2500 | 2500           |                 |
+| PHONE    | _(khaali)_        |      | 500            | 500             |
+
+**Key wahi cheez hai jis par rate nirbhar hai** — vehicle, din kahan bita, ya rep ka grade.
+
+Jaanch: na rate na limit wali row daalo → **refuse**. Jo row kuch kehti hi nahi wo galti hai.
+
+### 4. Jo version chal rahi hai wo chhui nahi ja sakti
+
+Jab koi version aaj se pehle shuru ho chuki ho, use kholo:
+
+- `In force · frozen` dikhega
+- Rate ka box edit karne ka option hi nahi milega
+- API se zabardasti bhejoge to **409** aur message: naya version banao
+
+Yahi wo rule hai jiski wajah se amount har baar dobara nikalna surakshit hai.
+
+Naya version banate waqt `Start from the rates of` me purani version chuno — saare rates copy ho
+jate hain. Ek rate badalne ke liye barah dobara type karne ki zaroorat nahi.
+
+### 5. Milestone ka acceptance — leave wale din ka DA zero
+
+Rep ke login se `Reach → Expenses → My expenses`.
+
+Teen din chahiye: ek jis din rep kaam par tha aur plan ne **Hisar** bheja, ek jis din **approved
+leave** hai, ek jis din kaam par tha par plan ne **Rohtak** (HQ) rakha.
+
+| Line                                                       | Kya milna chahiye                                                        |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------ |
+| DA, Hisar wala din                                         | **400** (Ex-HQ)                                                          |
+| DA, leave wala din                                         | **0**, aur wajah: _"the register says the rep was not at work that day"_ |
+| DA, Rohtak wala din — par town me "Hisar" type karke dekho | **250** (HQ)                                                             |
+
+Teesra sabse zaroori hai: **rep ne Hisar likha phir bhi HQ ka rate mila**, kyunki plan us din
+Rohtak kehta hai. Agar rep ka likha hua chalta, to HQ par bitaya din door ka bata kar zyada DA
+liya ja sakta tha.
+
+### 6. Milestone ka acceptance — cap, reject nahi
+
+STAY line daalo: 2 raatein, 6000 maango.
+
+- `Asked` 6000, `Allowed` 2500
+- Wajah: _"the policy caps this"_
+- **Line gayi nahi** — dono number saath me dikhte hain
+
+PHONE ki do line daalo, 300 aur 300, jab claim ka cap 500 hai:
+
+- Pehli 300, doosri **200**, aur wajah _"the policy caps this over the whole claim"_
+- Cap **baad wale kharch** par lagta hai, kisi random line par nahi
+
+### 7. Receipt rokta hai, zero nahi karta
+
+PHONE 320 ka daalo bina receipt ke (limit 200 hai):
+
+- `Allowed` **320 hi rahega** — paisa sach me kharch hua hai
+- Par wajah me _"a receipt is needed above the policy limit"_
+- **Claim bhej hi nahi paoge** — submit par mana hoga
+
+Receipt lagao ya amount 200 se neeche karo → claim chala jayega. Kharcha kagaz ke peeche chhupaya
+nahi jata; bas claim tab tak nahi jata.
+
+### 8. Line hatana
+
+Draft me kisi line par **Take off** → reason maangega. Line claim se hat jayegi par **uski row
+rehti hai**, reason ke saath. "Claim kiya phir wapas liya" wahi cheez hai jo baad me koi poochta
+hai.
+
+### 9. Milestone ka acceptance — ek aadmi dono jagah nahi
+
+Rep claim bhejta hai → `With the manager`.
+
+1. Finance wale login se pehle hi approve karne ki koshish → **mana**, _"A manager has to pass
+   this claim before finance sees it"_
+2. Manager (maan lo admin) pass karta hai → `With finance`
+3. **Wahi admin ab finance ban kar approve kare** → **mana**: _"You passed this claim as its
+   manager, so somebody else has to approve it"_
+4. Doosre login se approve → `Approved`
+
+Teen jagah ye rule laga hai — engine, controller aur **table ka apna CHECK**. Teeno isliye ki
+yahi wo rule hai jisko koi na koi kabhi bypass karna chahega.
+
+Sending back par **reason zaroori** hai. Rep ko pata hona chahiye kya theek karna hai. Wapas aayi
+claim ko rep `Open it again to correct it` se kholta hai.
+
+### 10. Register aur payout
+
+`Reach → Expenses → Expense register`
+
+- Har claim ek row: kitna maanga, kitna milega, kitna nahi mila
+- **Payout CSV** sirf wahi deta hai jo finance ne approve kiya
+- CSV aur screen **ek hi hisaab** se bante hain, to dono kabhi alag nahi bol sakte
+
+### 11. Expense settings
+
+`Reach → Customer setup → Expense policy` ke neeche:
+
+| Setting                 | Default   | Matlab                                                      |
+| ----------------------- | --------- | ----------------------------------------------------------- |
+| Claims cover            | Fortnight | 1–15, phir baaki mahina                                     |
+| Days to send a claim in | 15        | Period khatam hone ke baad kitne din. 0 = koi deadline nahi |
+
+### 12. Permissions
+
+| Permission              | Kya milta hai                        |
+| ----------------------- | ------------------------------------ |
+| `reach.expense`         | Apni claim banana aur bhejna         |
+| `reach.expense_approve` | Manager ban kar pass karna           |
+| `reach.expense_finance` | Finance ban kar approve/reject karna |
+| `reach.setup`           | Categories, policy, settings         |
+| `reach.read`            | Register aur sabki claims            |
+
+Sirf `reach.expense` wale login se: **Expense register** aur **Expense claims** menu me dikhne hi
+nahi chahiye, aur doosre rep ki claims maangne par mana hona chahiye.
+
+### Jo RCH-6 mein nahi hai
+
+- **Paisa yahan se nahi jata.** Approve hona record hota hai aur payout file banti hai; transfer
+  nahi hota
+- Advance / imprest nahi — sirf kharch ke baad ka claim
+- **Line save karne se _pehle_ preview nahi hai**, aur ye jaan boojh kar hai. Plan kehta hai
+  result pehle dikhe; seedha tareeka hota browser me hisaab karna, par DA is par nirbhar hai ki
+  us din register kya kehta hai aur plan ne kis town bheja — browser ko dono nahi pata. Jo number
+  zyadatar sahi ho wo bina number se bura hai. To line add hote hi **server** jawab deta hai, aur
+  line claim jaane tak badli ya hataai ja sakti hai
+- Week-off ya holiday par kaam karke DA — abhi nahi milega. RCH-2 week-off ko punch se pehle hi
+  tay kar deta hai, to aisa din `WEEK_OFF` hi padhta hai. Ye RCH-2 ki shakal hai, yahan ka faisla
+  nahi — **client se poochhne layak**
+
+---
+
+## RCH-7 — Reach dashboard, alerts aur live cutover
+
+**Is milestone me ek bhi nayi table nahi hai.** Ye koi bachat nahi — yahi iska design hai.
+
+Milestone ka apna acceptance do line hai: _"Har tile ka number neeche ki asli activity se mile"_
+aur _"koi bhi proposal bina approval ke kuch na badle."_ Dono tab apne aap sach ho jate hain jab
+overview kahin store hi na ho:
+
+- Tile aur uske neeche ki list **ek hi query se, ek hi request me** nikalte hain. Alag ho hi nahi
+  sakte
+- Proposal ek **padhai** hai aur us screen ka naam jahan insaan faisla karta hai. Is module me
+  **ek bhi route aisa nahi hai jo kuch likhta ho** — `reach-overview.controller.ts` me ek bhi
+  `@Post` nahi, aur `reach-overview-db.mjs` me ek bhi INSERT/UPDATE/DELETE nahi. Proposal act
+  kar hi nahi sakta
+
+**Kahan:** `Reach → Overview` — **Overview**, **Waiting for a decision**, **Going live**,
+**Reach audit trail**.
+
+### 1. Overview
+
+`Reach → Overview → Overview`
+
+Upar aaj ke tiles: kitne rep ne din shuru kiya (kitno me se), kitne abhi tak band nahi hue, kitne
+call hue, kitne abhi dukaan ke andar hain, kitne order, kitne ka order, kitna collect hua, aur
+kitna faisle ka intezaar me hai.
+
+Neeche teen hisse — **Waiting for a decision**, **Worth acting on**, **Worth a look**.
+
+System chaudah cheezein dekhta hai:
+
+| Kya                         | Kab                                                  |
+| --------------------------- | ---------------------------------------------------- |
+| Din shuru nahi hua          | Shift khatam hue company ki tay der se zyada ho gayi |
+| Leave / correction waiting  | Koi faisla nahi hua                                  |
+| Plan late                   | Agle mahine ka plan due day tak nahi aaya            |
+| Plan / day change waiting   | Approval chahiye                                     |
+| Check-in flag               | Dukaan se door se hua                                |
+| Report adhoori              | Type ke required sawal chhoote                       |
+| Customer / location waiting | Approval chahiye                                     |
+| KYC waiting                 | Document check hona hai                              |
+| Order hold                  | Credit ya KYC ne roka                                |
+| Shop overdue                | Bill uske terms se purana                            |
+| Expense claim waiting       | Kisi desk par ruki hai                               |
+
+**Jo cheez zero hai wo dikhti hi nahi.** System chup rehta hai, "sab theek hai" nahi bolta.
+
+**Aur jis screen ko aap khol hi nahi sakte, uska proposal aapko dikhta hi nahi.** Sirf `reach.read`
+wale login se dekho — leave ka count dikhega par use _decide karne ko_ nahi kaha jayega.
+
+### 2. Acceptance 1 — tile aur list ka number ek
+
+Ek leave request pending banao aur ek customer approval me daalo. Phir:
+
+- Overview par `Waiting for a decision` ka number badhega
+- `Reach → Attendance → Leave` (status Pending) me **utni hi** rows hongi
+- `Reach → Customers → Approvals` me **utne hi** accounts honge
+
+Queue ka total hamesha uske apne rows ka jod hota hai — ye code ki ek line hai, bharosa nahi.
+
+### 3. Acceptance 2 — proposal kuch badalta nahi
+
+Kisi bhi proposal par sirf ek hi button hai: **Go there**. Wo aapko us screen par le jata hai
+jahan faisla hota hai. Koi "approve from here", koi "dismiss", kuch nahi.
+
+Jaanch: overview kholo, refresh karo, phir leave request ka status DB me dekho — `PENDING` hi
+rahega. Spec isse aur aage le jata hai: har tarah ki POST/PUT/PATCH/DELETE request in raaston par
+bhejta hai aur sab **404** aati hain, kyunki wo route hain hi nahi.
+
+### 4. Waiting for a decision — ek hi queue
+
+`Reach → Overview → Waiting for a decision`
+
+Pehle har module ki apni queue thi — leave alag, approvals alag, KYC alag, held orders alag,
+claims alag. Ab sab ek jagah, aur sirf wahi jo aap decide kar sakte hain.
+
+### 5. Going live
+
+`Reach → Overview → Going live`
+
+Saat line, har ek **data se padhi gayi**, kisi ke tick karne se nahi:
+
+| Line                               | Blocking? |
+| ---------------------------------- | --------- |
+| Reps hain aur unke login jude hain | Haan      |
+| Customers load ho gaye             | Haan      |
+| Rounds bane aur unme outlets hain  | Haan      |
+| Shops tag ho gaye                  | Haan      |
+| Shift set hai                      | Haan      |
+| Price list chal rahi hai           | Nahi      |
+| Expense policy chal rahi hai       | Nahi      |
+
+Client ka apna data usi **file import** se aata hai jo baaki har master use karta hai — column
+map karo, jo pehle se hai usse milao, phir commit. To live jaane ka matlab hai aakhri data load
+karna aur in line ko badalte dekhna.
+
+### 6. Reach audit trail
+
+`Reach → Overview → Reach audit trail` (ismein `audit.read` chahiye, `reach.read` kaafi nahi)
+
+Ye **doosra trail nahi** hai — wahi ek audit record hai jo poora system rakhta hai, bas Reach ke
+aakar se dekha gaya. Isliye "kya hua" ka jawab hamesha ek hi rehta hai.
+
+### Jo RCH-7 mein nahi hai
+
+- Email ya push alert nahi — proposal screen par hai, bheja nahi jata
+- Proposal ko "dekha" mark karne ka tareeka nahi: wo apne aap band ho jata hai jab wajah khatam
+  hoti hai. Ye jaan boojh kar hai — "dekh liya" wala flag ek store ki hui cheez hai jo sach se
+  alag ho jati hai
+- Trend ya graph nahi — aaj ka haal hai, itihaas nahi
+- RCH-8 (mobile app) abhi bacha hai

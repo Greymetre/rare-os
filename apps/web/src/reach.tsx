@@ -22,6 +22,8 @@ import {
 import { Adherence, MyPlan, PlanBoard, PlanChanges, TourSetup } from './reach-tour';
 import { FieldApp, VisitBoard, VisitList, VisitSetup } from './reach-visit';
 import { Customer360, KycQueue, OrderList, TakeOrder, TradeSetup } from './reach-trade';
+import { ExpenseClaims, ExpenseRegister, ExpenseSetup, MyExpenses } from './reach-expense';
+import { ReachAudit, ReachCutover, ReachOverview, ReachQueue } from './reach-overview';
 
 // The order the masters are set up in: a rep needs a grade and a territory to exist first, and a
 // beat needs a territory. The customer's own shape is a separate concern, under Setup.
@@ -46,6 +48,7 @@ const CUSTOMER_SETUP = [
   'kyc_rules',
   'price_list_items',
   'trade_schemes',
+  'expense_categories',
 ];
 const MASTER_ORDER = [...FIELD_MASTERS, ...CUSTOMER_SETUP];
 // What a phone sends after the browser has scaled the photo down. A selfie does not need to be
@@ -259,6 +262,14 @@ export function reachMenu(permissions: string[], kinds: KindInfo[]) {
       .filter(Boolean)
       .map((label) => [label, 'reach.read'] as [string, string]);
   // The register, the rounds and the decisions: the screens the field organisation works in.
+  // RCH-7. Where a manager starts: what is happening, what is waiting, and whether the company
+  // is ready to run on this at all.
+  const OVERVIEW: [string, string][] = [
+    ['Overview', 'reach.read'],
+    ['Waiting for a decision', 'reach.read'],
+    ['Going live', 'reach.read'],
+    ['Reach audit trail', 'audit.read'],
+  ];
   const CUSTOMERS: [string, string][] = [
     ['Customer register', 'reach.read'],
     ['Beat round', 'reach.read'],
@@ -303,6 +314,13 @@ export function reachMenu(permissions: string[], kinds: KindInfo[]) {
     ['Orders', 'reach.order'],
     ['Paperwork', 'reach.read'],
   ];
+  // What a rep spent on the road. Making a claim is a rep's own right, like marking their own
+  // day; passing one and paying it are two further rights, deliberately apart.
+  const EXPENSES: [string, string][] = [
+    ['My expenses', 'reach.expense'],
+    ['Expense claims', 'reach.expense_approve'],
+    ['Expense register', 'reach.read'],
+  ];
   // What a customer is: its types, its questions, and the distances every tag is measured against.
   const SETUP: [string, string][] = [
     ...labelsOf(CUSTOMER_SETUP),
@@ -311,14 +329,17 @@ export function reachMenu(permissions: string[], kinds: KindInfo[]) {
     ['Tour plan settings', 'reach.read'],
     ['Visit settings', 'reach.read'],
     ['Customer 360 settings', 'reach.read'],
+    ['Expense policy', 'reach.read'],
   ];
   const allowed = (list: [string, string][]) => list.filter(([, p]) => has(p)).map(([t]) => t);
   const groups: [string, string, string[]][] = [
+    ['Overview', 'what is happening, and what is waiting for somebody', allowed(OVERVIEW)],
     ['Customers', 'the register, the rounds and the decisions', allowed(CUSTOMERS)],
     ['Attendance', 'the working day, leave and what it adds up to', allowed(ATTENDANCE)],
     ['Tour plan', 'the month ahead, and how the last one read', allowed(TOUR)],
     ['Field work', 'the round as it is walked, and the report at each door', allowed(VISITS)],
     ['Trade', 'what the shop owes, orders and pays', allowed(TRADE)],
+    ['Expenses', 'what the road cost, and who signed for it', allowed(EXPENSES)],
     ['Field setup', 'the masters every Reach screen reads', allowed(FIELD)],
     ['Customer setup', 'the shape of a customer', allowed(SETUP)],
   ];
@@ -346,7 +367,7 @@ export function Reach({
   const call = useApi(csrf);
   const [kinds, setKinds] = useState<KindInfo[] | null>(null),
     [error, setError] = useState(''),
-    [ownTab, setOwnTab] = useState('Readiness'),
+    [ownTab, setOwnTab] = useState('Overview'),
     [revision, setRevision] = useState(0);
   const tab = tabProp ?? ownTab;
   const setTab = onTab ?? setOwnTab;
@@ -503,6 +524,24 @@ export function Reach({
       {tab === 'Customer 360 settings' && (
         <TradeSetup csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
       )}
+      {tab === 'My expenses' && <MyExpenses csrf={csrf} refreshKey={refreshKey + revision} />}
+      {tab === 'Expense claims' && (
+        <ExpenseClaims csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Expense register' && (
+        <ExpenseRegister csrf={csrf} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Expense policy' && (
+        <ExpenseSetup csrf={csrf} permissions={permissions} refreshKey={refreshKey + revision} />
+      )}
+      {tab === 'Overview' && (
+        <ReachOverview csrf={csrf} refreshKey={refreshKey + revision} onGo={setTab} />
+      )}
+      {tab === 'Waiting for a decision' && (
+        <ReachQueue csrf={csrf} refreshKey={refreshKey + revision} onGo={setTab} />
+      )}
+      {tab === 'Going live' && <ReachCutover csrf={csrf} refreshKey={refreshKey + revision} />}
+      {tab === 'Reach audit trail' && <ReachAudit csrf={csrf} refreshKey={refreshKey + revision} />}
       {current && (
         <MasterTable
           key={current.kind}

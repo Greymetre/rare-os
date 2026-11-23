@@ -40,6 +40,8 @@ const REF_QUERIES = {
     'SELECT id,field_key AS code,active,input FROM visit_form_fields WHERE field_key=ANY($1::text[]) AND deleted_at IS NULL',
   kyc_types:
     'SELECT id,code,active FROM kyc_types WHERE lower(code)=ANY($1::text[]) AND deleted_at IS NULL',
+  expense_categories:
+    'SELECT id,code,active FROM expense_categories WHERE lower(code)=ANY($1::text[]) AND deleted_at IS NULL',
 };
 
 const REF_NOUNS = {
@@ -56,6 +58,7 @@ const REF_NOUNS = {
   shifts: 'Shift',
   visit_form_fields: 'Report field',
   kyc_types: 'KYC document',
+  expense_categories: 'expense category',
 };
 // What to do about a reference that is not there. For masters it is "create it first"; a login is
 // not created here at all, it is invited on the Users screen.
@@ -430,7 +433,7 @@ const SQL = {
     select:
       'SELECT x.id,x.code,x.name,g.code AS grade,x.grade_id,t.code AS territory,x.territory_id,' +
       'coalesce(u.email,\'\') AS "user",x.user_id,x.photo_file_id,x.email,x.phone,' +
-      "to_char(x.joined_on,'YYYY-MM-DD') AS joined_on," +
+      "to_char(x.joined_on,'YYYY-MM-DD') AS joined_on,x.hq_town," +
       "coalesce(sh.code,'') AS shift,x.shift_id,x.active,x.version,x.updated_at " +
       'FROM field_reps x JOIN rep_grades g ON g.id=x.grade_id ' +
       'JOIN territories t ON t.id=x.territory_id LEFT JOIN app_users u ON u.id=x.user_id ' +
@@ -447,6 +450,7 @@ const SQL = {
       v.email === r.email &&
       v.phone === r.phone &&
       (v.joined_on ?? null) === r.joined_on &&
+      v.hq_town === r.hq_town &&
       (v.shift_id ?? null) === r.shift_id,
     columns: [
       'code',
@@ -457,9 +461,10 @@ const SQL = {
       'email',
       'phone',
       'joined_on',
+      'hq_town',
       'shift_id',
     ],
-    types: ['text', 'text', 'uuid', 'uuid', 'uuid', 'text', 'text', 'date', 'uuid'],
+    types: ['text', 'text', 'uuid', 'uuid', 'uuid', 'text', 'text', 'date', 'text', 'uuid'],
     conflict: '(tenant_id,lower(code)) WHERE deleted_at IS NULL',
     mutable: [
       'name',
@@ -469,6 +474,7 @@ const SQL = {
       'email',
       'phone',
       'joined_on',
+      'hq_town',
       'shift_id',
     ],
     softDelete: true,
@@ -754,6 +760,25 @@ const SQL = {
     types: ['uuid', 'uuid', 'text', 'text'],
     conflict: '(tenant_id,type_id,field_id) WHERE deleted_at IS NULL',
     mutable: ['requirement', 'label_override'],
+    softDelete: true,
+  },
+  expense_categories: {
+    select:
+      'SELECT x.id,x.code,x.name,x.basis,x.receipt_above,x.active,x.version,x.updated_at ' +
+      'FROM expense_categories x',
+    sort: ['lower(x.code)'],
+    search: '(starts_with(lower(x.code),$q) OR starts_with(lower(x.name),$q))',
+    keyWhere: 'lower(x.code)=ANY($1::text[])',
+    keyArgs: (rows) => [rows.map((r) => r.value.code.toLowerCase())],
+    keyOf: (r) => lc(r.code),
+    same: (v, r) =>
+      v.name === r.name &&
+      v.basis === r.basis &&
+      String(v.receipt_above) === String(r.receipt_above),
+    columns: ['code', 'name', 'basis', 'receipt_above'],
+    types: ['text', 'text', 'text', 'numeric'],
+    conflict: '(tenant_id,lower(code)) WHERE deleted_at IS NULL',
+    mutable: ['name', 'basis', 'receipt_above'],
     softDelete: true,
   },
   kyc_types: {
@@ -1067,6 +1092,10 @@ const DEPENDANTS = {
   ],
   customer_form_fields: [['customer_form_rules', 'field_id', 'form rule', 'form rules']],
   visit_form_fields: [['visit_form_rules', 'field_id', 'report rule', 'report rules']],
+  expense_categories: [
+    ['expense_policy_rates', 'category_id', 'policy rate', 'policy rates'],
+    ['expense_lines', 'category_id', 'claim line', 'claim lines'],
+  ],
   kyc_types: [
     ['kyc_rules', 'kyc_type_id', 'KYC rule', 'KYC rules'],
     ['kyc_documents', 'kyc_type_id', 'uploaded document', 'uploaded documents'],
@@ -1087,6 +1116,8 @@ const DEPENDANTS = {
 // filter on. A dependant count against one of these asks "is this referred to at all?".
 const PERMANENT = new Set([
   'attendance_days',
+  'expense_policies',
+  'expense_claims',
   'leave_requests',
   'attendance_edits',
   'tour_plans',

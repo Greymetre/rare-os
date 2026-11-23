@@ -96,7 +96,7 @@ function App() {
   // A module keeps its own screens in the sidebar, under the module, as the handover does.
   const [availabilityTab, setAvailabilityTab] = useState('Readiness');
   const [availabilityNav, setAvailabilityNav] = useState<[string, string, string[]][]>([]);
-  const [reachTab, setReachTab] = useState('Readiness');
+  const [reachTab, setReachTab] = useState('Overview');
   const [reachNav, setReachNav] = useState<[string, string, string[]][]>([]);
   const [collapsed, setCollapsed] = useState('');
   // Every module with screens of its own, so the sidebar draws them all the same way.
@@ -325,7 +325,11 @@ function App() {
     // Every right that opens a Reach screen of its own, including the ones a rep holds alone:
     // a login that may only take an order or bank a collection still has to be able to reach
     // the module, or the screens its own permissions unlock are behind a door it cannot open.
-    ['Reach', '◎', 'reach.read|reach.attend|reach.plan|reach.visit|reach.order|reach.collect'],
+    [
+      'Reach',
+      '◎',
+      'reach.read|reach.attend|reach.plan|reach.visit|reach.order|reach.collect|reach.expense',
+    ],
     ['Audit log', '≡', 'audit.read'],
   ];
   return (

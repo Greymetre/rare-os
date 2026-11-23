@@ -73,6 +73,12 @@ export const permissions = [
   ['reach.kyc', 'Reach', 'Verify or reject a customer KYC document'],
   ['reach.credit', 'Reach', 'Release an order held for credit'],
   ['reach.invoice', 'Reach', 'Raise an invoice from here, and record or cancel a bill'],
+  // Making a claim is a rep's own right and stands alone, like marking your own attendance.
+  // Passing one and paying it are two further rights, deliberately apart: the milestone's own
+  // acceptance case is that one person cannot do both on the same claim.
+  ['reach.expense', 'Reach', 'Make and submit an expense claim of your own'],
+  ['reach.expense_approve', 'Reach', 'Pass an expense claim as its manager'],
+  ['reach.expense_finance', 'Reach', 'Approve or reject a passed expense claim as finance'],
 ];
 
 export const requiredPermissions = {
@@ -145,6 +151,8 @@ export const requiredPermissions = {
   // is why it rests on reading the module rather than on taking orders: the person who bills is
   // not usually the person at the counter.
   'reach.invoice': ['reach.read'],
+  'reach.expense_approve': ['reach.read'],
+  'reach.expense_finance': ['reach.read'],
 };
 export const livePermissionCodes = [
   'dashboard.read',
@@ -210,6 +218,9 @@ export const livePermissionCodes = [
   'reach.kyc',
   'reach.credit',
   'reach.invoice',
+  'reach.expense',
+  'reach.expense_approve',
+  'reach.expense_finance',
 ];
 
 // Where a permission is actually felt: the module in the sidebar, and the screens it opens or
@@ -291,6 +302,9 @@ export const permissionScreens = {
   'reach.kyc': ['Reach', 'Customer 360 → verify or reject a KYC document'],
   'reach.credit': ['Reach', 'Held orders → release an order held for credit'],
   'reach.invoice': ['Reach', 'Customer 360 → raise an invoice, record or cancel a bill'],
+  'reach.expense': ['Reach', 'Expenses → my claim'],
+  'reach.expense_approve': ['Reach', 'Expenses → claims to pass'],
+  'reach.expense_finance': ['Reach', 'Expenses → claims to approve and pay'],
 };
 
 // The module and screens a permission belongs to, falling back to its catalogue module.

@@ -37,6 +37,10 @@ export const SETTING_DEFAULTS = {
   ageing_buckets: '30,60,90',
   fy_start_month: 4,
   dso_window_days: 90,
+  // RCH-6. Whether a claim covers a fortnight or a whole month, and how long after a period
+  // closes a rep may still send its claim in. Zero days means no deadline.
+  expense_fortnightly: true,
+  expense_window_days: 15,
 };
 
 export async function reachSettings(db) {
