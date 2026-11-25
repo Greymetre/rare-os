@@ -641,6 +641,119 @@ test('RCH-7 counts what is there and has no way to change any of it', () => {
   assert.doesNotMatch(engine, /acknowledged|dismissed|marked_done/i);
 });
 
+test('RCH-8 lets a phone in on its own token, and never twice on the same work', () => {
+  const auth = read('apps/api/src/device-auth.ts');
+  // A device token is its own client. Without this, a browser's token would be a permanent
+  // field login and "sign every phone out" would be impossible.
+  assert.match(auth, /DEVICE_CLIENT_ID = 'rare-os-mobile'/);
+  assert.match(auth, /audience: DEVICE_CLIENT_ID/);
+  assert.match(auth, /algorithms: \['RS256'\]/);
+  assert.match(auth, /issuer: authUrl \+ realm/);
+  // `azp` as well as the audience, so a token merely listing this client cannot be spent here.
+  assert.match(auth, /p\.azp !== DEVICE_CLIENT_ID/);
+  // The same revocation record a browser session checks. A long-lived field login without this
+  // would be a door with no lock.
+  assert.match(auth, /rare:revoked:sid:/);
+  assert.match(auth, /rare:revoked:subject:/);
+  // A second factor cannot be asked for mid-request, so an account that needs one is refused
+  // rather than quietly let past it.
+  assert.match(auth, /requiresMfa\(subject\)/);
+  assert.match(auth, /MFA_NOT_SUPPORTED_ON_DEVICE/);
+  // One login, one company: a phone has no company picker, so two memberships is a refusal and
+  // never a guess about whose books the day belongs in.
+  assert.match(auth, /memberships\.length !== 1/);
+
+  // A phone is never a platform administrator.
+  const core = read('apps/api/src/core.ts');
+  assert.match(core, /platformCompanyVersion: undefined as number \| undefined/);
+
+  // CSRF is skipped for bearer requests and for nothing else.
+  const api = read('apps/api/src/main.ts');
+  assert.match(api, /if \(isDeviceRequest\(req\)\) return next\(\);/);
+  // The one unauthenticated route the app needs says where to sign in and nothing more.
+  assert.doesNotMatch(api, /mobileConfig[\s\S]{0,200}(clientSecret|OIDC_CLIENT_SECRET)/);
+
+  // Exactly once, where a repeat would otherwise become a second record.
+  const migration = read('db/migrations/036_reach_sync.sql');
+  for (const table of ['trade_orders', 'trade_receipts', 'stored_files'])
+    assert.match(
+      migration,
+      new RegExp(
+        `CREATE UNIQUE INDEX ${table}_client_ref_idx[\\s\\S]{0,120}WHERE client_ref <> ''`,
+      ),
+      `${table} may hold two rows for one device reference`,
+    );
+  // A heartbeat is contact, not content. Read the table definition itself, not the comments
+  // around it, and check that nothing from a rep's actual work can be written to it.
+  const deviceTable = /CREATE TABLE device_syncs \(([\s\S]*?)\n\);/.exec(migration);
+  assert.ok(deviceTable, 'device_syncs is not defined where it was expected');
+  assert.doesNotMatch(deviceTable[1], /amount|payload|report|lines|latitude|longitude|photo/i);
+  assert.match(migration, /GRANT SELECT, INSERT, UPDATE ON device_syncs TO rare_app/);
+  assert.doesNotMatch(migration, /GRANT[^;]*DELETE[^;]*device_syncs/);
+
+  // The engine sends a reference only where the route reads one. The write routes refuse unknown
+  // fields, so getting this wrong would block a rep's whole morning behind a 400.
+  const engine = read('packages/engines/sync-queue.mjs');
+  assert.match(
+    engine,
+    /payload: spec\.ref \? \{ \.\.\.payload, client_ref: clientRef \} : \{ \.\.\.payload \}/,
+  );
+  // A refusal the server understood is never retried; an unknown outcome always is.
+  assert.match(engine, /status >= 400 && status < 500 && status !== 408 && status !== 429/);
+  // Nothing is ever dropped: every item ends in one of three named states.
+  assert.match(engine, /OUTBOX_STATES = \['QUEUED', 'SENT', 'BLOCKED'\]/);
+  // An unresolved local id is named, never sent.
+  assert.match(engine, /missing\.push\(value\)/);
+
+  // The camera and the location are opened for the field app alone. The desk app keeps "not
+  // even our own page may ask", and the whole point of scoping it to one location is that a
+  // screen added to the desk app later cannot quietly start asking for either.
+  const nginx = read('infra/docker/nginx.conf');
+  const server = nginx.slice(0, nginx.indexOf('location /mobile/'));
+  assert.match(
+    server,
+    /add_header Permissions-Policy "camera=\(\), microphone=\(\), geolocation=\(\)" always;/,
+  );
+  const mobileBlock = /location \/mobile\/ \{([\s\S]*?)\n \}/.exec(nginx);
+  assert.ok(mobileBlock, 'the field app no longer has a location of its own');
+  assert.match(mobileBlock[1], /camera=\(self\), microphone=\(\), geolocation=\(self\)/);
+  // A location's add_header replaces the inherited set, so every other header must be repeated
+  // there or it is silently lost for the app that runs on an unlocked phone.
+  for (const header of [
+    'X-Content-Type-Options',
+    'X-Frame-Options',
+    'Referrer-Policy',
+    'Content-Security-Policy',
+  ])
+    assert.ok(mobileBlock[1].includes(header), `the field app is served without ${header}`);
+  // Nothing is opened to the whole web.
+  assert.doesNotMatch(mobileBlock[1], /=\*/);
+  // The two Keycloak endpoints are proxied same-origin, and only those two.
+  assert.match(nginx, /openid-connect\/\(token\|logout\)\$/);
+
+  // The service worker caches the shell and never the data: a cached outstanding is a wrong one.
+  const worker = read('apps/mobile/public/sw.js');
+  assert.match(worker, /url\.pathname\.startsWith\('\/api\/'\)/);
+  assert.doesNotMatch(worker, /caches\.open[\s\S]{0,200}\/api\//);
+
+  // The phone holds a refresh token, so signing out must reach the server, and signing out must
+  // never throw away work the rep has not sent.
+  const clientAuth = read('apps/mobile/src/auth.ts');
+  assert.match(clientAuth, /code_challenge_method', 'S256'/);
+  assert.match(clientAuth, /offline_access/);
+  assert.match(clientAuth, /openid-connect\/logout/);
+  // Signing out must not be able to throw away work the rep has not sent. Checked at the import
+  // line rather than in prose: this file may only reach the auth store, so there is no way for
+  // it to touch the outbox even by accident.
+  const storeImport = /import \{([^}]*)\} from '\.\/store';/.exec(clientAuth);
+  assert.ok(storeImport, 'the field app auth module no longer imports from the store');
+  for (const name of storeImport[1]
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean))
+    assert.match(name, /Auth$/, `signing out can reach ${name}, which is not auth-only storage`);
+});
+
 test('production gateways and images retain baseline VAPT hardening', () => {
   const nginx = read('infra/docker/nginx.conf');
   for (const required of [

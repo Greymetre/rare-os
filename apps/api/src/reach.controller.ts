@@ -9,7 +9,7 @@ import type { Request, Response } from 'express';
 import { access as fsAccess, constants } from 'node:fs/promises';
 import type { PoolClient } from 'pg';
 import { access, fail, scoped } from './core.js';
-import { audit, body, id, mutate } from './access.controller.js';
+import { audit, body, id, mutate, text } from './access.controller.js';
 import {
   MAX_FILE_BYTES,
   inspect,
@@ -197,18 +197,44 @@ export class ReachController {
       );
     const checked = inspect(req.body as Buffer, String(req.headers['content-type'] ?? ''));
     const name = uploadName(req.query.name, checked.storageKey.split('.').pop()!);
+    // RCH-8: the phone's own name for this photo. It travels in the query string because the
+    // body is the photo itself. The bytes were already stored once — the path is their sha256 —
+    // but the row was not, so without this a retried selfie left an orphan behind it. Harmless
+    // to the books, untrue to the promise that everything arrives exactly once.
+    const clientRef = req.query.ref === undefined ? '' : text(req.query.ref, 'Reference', 0, 80);
     // Everything from here is inside mutate, which checks the permission before the callback runs:
     // nothing reaches the volume until the caller is allowed to put it there. Within the callback
     // the bytes go down before the row, so a failed insert leaves an orphan the next upload of the
     // same photo reuses, rather than a row pointing at a file that is not there.
     return mutate(req, 'files.upload', async (db, actor) => {
+      if (clientRef) {
+        const already = (
+          await db.query(
+            'SELECT id,file_no,purpose,content_type,file_name,byte_size,pixel_width,pixel_height FROM stored_files WHERE client_ref=$1',
+            [clientRef],
+          )
+        ).rows[0];
+        if (already)
+          return {
+            id: already.id,
+            fileNo: Number(already.file_no),
+            purpose: already.purpose,
+            contentType: already.content_type,
+            fileName: already.file_name,
+            byteSize: Number(already.byte_size),
+            pixelWidth: already.pixel_width,
+            pixelHeight: already.pixel_height,
+            repeat: true,
+            message: `${already.file_name} was already uploaded.`,
+          };
+      }
       await save(checked.storageKey, req.body as Buffer);
       const no = (await db.query("SELECT next_number('stored_file') AS n")).rows[0].n;
       const row = (
         await db.query(
           `INSERT INTO stored_files(id,tenant_id,file_no,purpose,content_type,file_name,byte_size,
-             sha256,storage_key,pixel_width,pixel_height,uploaded_by,uploaded_by_subject)
-           VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id,file_no`,
+             sha256,storage_key,pixel_width,pixel_height,uploaded_by,uploaded_by_subject,client_ref)
+           VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id,file_no`,
           [
             actor.tenant_id,
             no,
@@ -222,6 +248,7 @@ export class ReachController {
             checked.pixelHeight,
             actor.id,
             actor.actor_subject ?? null,
+            clientRef,
           ],
         )
       ).rows[0];

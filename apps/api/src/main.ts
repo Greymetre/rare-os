@@ -22,6 +22,7 @@ import pg, { type PoolClient } from 'pg';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import helmet from 'helmet';
 import { receiveLogout, requiresMfa } from './session-security.js';
+import { DEVICE_CLIENT_ID, isDeviceRequest } from './device-auth.js';
 import { identity } from './identity.js';
 import { requestLimits } from './rate-limits.js';
 
@@ -66,6 +67,7 @@ import { ReachVisitController } from './reach-visit.controller.js';
 import { ReachTradeController } from './reach-trade.controller.js';
 import { ReachExpenseController } from './reach-expense.controller.js';
 import { ReachOverviewController } from './reach-overview.controller.js';
+import { ReachDeviceController } from './reach-device.controller.js';
 import { MAX_FILE_BYTES, UPLOAD_TYPES } from './file-store.js';
 @Catch()
 class Errors implements ExceptionFilter {
@@ -122,6 +124,14 @@ class AppController {
     await pool.query('SELECT 1');
     await redis.ping();
     return { status: 'ok', service: 'rare-os-api' };
+  }
+  // RCH-8: the one thing the field app has to know before it can sign anybody in — where the
+  // identity server is. Unauthenticated by necessity: there is no way to ask for it once signed
+  // in, because signing in is what it is for. Nothing here is a secret. The address of the
+  // identity server is public DNS, and the client id appears in every sign-in URL a browser
+  // shows. No client secret exists for this client, which is the point of it being public.
+  @Get('mobile/config') async mobileConfig() {
+    return { authUrl, clientId: DEVICE_CLIENT_ID, realm: 'rare-os' };
   }
   @Post('auth/backchannel-logout') async backchannel(@Req() req: Request, @Res() res: Response) {
     await receiveLogout(req.body?.logout_token);
@@ -418,6 +428,7 @@ class AppController {
     ReachTradeController,
     ReachExpenseController,
     ReachOverviewController,
+    ReachDeviceController,
   ],
 })
 class AppModule {}
@@ -469,6 +480,13 @@ app.use(
 app.use(...requestLimits());
 app.use((req: Request, res: Response, next: () => void) => {
   if (req.path === '/api/auth/backchannel-logout' && req.method === 'POST') return next();
+  // RCH-8: a request that carries its own bearer token is not vulnerable to this attack and
+  // cannot defend against it either. Cross-site request forgery works by a third-party page
+  // making the browser spend a cookie it is holding; a token the app reads from its own storage
+  // and puts in a header is never sent on somebody else's behalf. A phone also has no Origin to
+  // match and no CSRF token to have been handed, so keeping the check here would not make the
+  // mobile app safer — it would only make it impossible.
+  if (isDeviceRequest(req)) return next();
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     if (
       req.headers.origin !== appUrl ||

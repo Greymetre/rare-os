@@ -410,6 +410,20 @@ export async function orderLines(db, orderId) {
   }));
 }
 
+// RCH-8: the order a phone already sent.
+//
+// A device that lost the reply retries, and this is what makes that free. It is deliberately not
+// a general search: an empty reference matches nothing, because the web writes no reference and
+// every one of those rows would otherwise look like the same order.
+export async function orderByClientRef(db, clientRef) {
+  const ref = String(clientRef ?? '').trim();
+  if (!ref) return null;
+  const row = (
+    await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.client_ref=$1`, [ref])
+  ).rows[0];
+  return row ? asOrder(row) : null;
+}
+
 export async function findOrder(db, orderId) {
   const row = (
     await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id=$1`, [orderId])
@@ -423,12 +437,12 @@ export async function findOrder(db, orderId) {
 export async function createOrder(
   db,
   tenantId,
-  { id, orderNo, customerId, repId, visitId, orderDate, route, note, priced, credit },
+  { id, orderNo, customerId, repId, visitId, orderDate, route, note, priced, credit, clientRef },
 ) {
   await db.query(
     `INSERT INTO trade_orders(id,tenant_id,order_no,customer_id,rep_id,visit_id,order_date,
-       status,route,gross,discount,taxable,gst,total,hold_reasons,note)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+       status,route,gross,discount,taxable,gst,total,hold_reasons,note,client_ref)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
     [
       id,
       tenantId,
@@ -446,6 +460,7 @@ export async function createOrder(
       priced.totals.total,
       credit.reasons.join(','),
       note ?? '',
+      clientRef ?? '',
     ],
   );
   let lineNo = 0;
@@ -730,12 +745,13 @@ export async function recordReceipt(
     fileId,
     at,
     note,
+    clientRef,
   },
 ) {
   await db.query(
     `INSERT INTO trade_receipts(id,tenant_id,receipt_no,customer_id,rep_id,invoice_id,received_on,
-       amount,mode,reference,file_id,latitude,longitude,note)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+       amount,mode,reference,file_id,latitude,longitude,note,client_ref)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
     [
       id,
       tenantId,
@@ -751,9 +767,27 @@ export async function recordReceipt(
       at?.latitude ?? null,
       at?.longitude ?? null,
       note ?? '',
+      clientRef ?? '',
     ],
   );
   return id;
+}
+
+// RCH-8: the collection a phone already sent. Two collections of the same amount from the same
+// shop on the same day are ordinary, so nothing but the device's own reference can tell a retry
+// from a second payment — and crediting a shop twice is the worst mistake this module could make.
+export async function receiptByClientRef(db, clientRef) {
+  const ref = String(clientRef ?? '').trim();
+  if (!ref) return null;
+  const row = (
+    await db.query(
+      `SELECT r.id, r.receipt_no, r.amount, r.mode, r.reference,
+              to_char(r.received_on,'YYYY-MM-DD') AS received_on
+         FROM trade_receipts r WHERE r.client_ref=$1`,
+      [ref],
+    )
+  ).rows[0];
+  return row ? { ...row, amount: Number(row.amount) } : null;
 }
 
 export async function findReceipt(db, id) {

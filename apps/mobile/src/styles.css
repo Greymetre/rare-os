@@ -1,0 +1,343 @@
+/* RCH-8: a phone, held in one hand, in sunlight.
+ *
+ * Everything here follows from that. Targets are large because the rep is standing. Contrast is
+ * high because the screen is outdoors. There is one column because there is one thumb. Nothing
+ * animates, because a salesman in a shop is not waiting to be delighted.
+ *
+ * The queue bar is the only thing that is always on screen, and it is the only thing that uses
+ * colour to mean something: green is sent, amber is waiting, red needs the rep. */
+
+:root {
+  --ink: #0f172a;
+  --paper: #f8fafc;
+  --card: #ffffff;
+  --line: #cbd5e1;
+  --muted: #475569;
+  --accent: #0369a1;
+  --good: #15803d;
+  --wait: #b45309;
+  --bad: #b91c1c;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font:
+    16px/1.45 system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+#root {
+  min-height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+h1 {
+  font-size: 1.35rem;
+  margin: 0;
+}
+h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.6rem;
+}
+p {
+  margin: 0.4rem 0;
+}
+small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.muted {
+  color: var(--muted);
+}
+.center {
+  text-align: center;
+}
+
+/* ---- The bar that is always there ---- */
+
+.queuebar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.6rem 0.75rem;
+  padding-top: calc(0.6rem + env(safe-area-inset-top));
+  background: var(--ink);
+  color: #fff;
+}
+.queuebar-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0.35rem 0;
+}
+.queuebar .dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  flex: none;
+  background: var(--good);
+}
+.queuebar.wait .dot {
+  background: #fbbf24;
+}
+.queuebar.bad .dot {
+  background: #f87171;
+}
+.queuebar-send {
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.8rem;
+  font: inherit;
+  min-height: 2.5rem;
+}
+.queuebar-send:disabled {
+  opacity: 0.55;
+}
+
+/* ---- Screens ---- */
+
+.screen {
+  padding: 0.9rem;
+  max-width: 34rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.screen.center {
+  min-height: 70dvh;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.dayhead {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.back {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 0.5rem;
+  width: 2.75rem;
+  height: 2.75rem;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.card.bad {
+  border-color: var(--bad);
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+input,
+select {
+  font: inherit;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: #fff;
+  color: var(--ink);
+  min-height: 2.9rem;
+}
+
+button {
+  cursor: pointer;
+}
+.big {
+  min-height: 3.1rem;
+  border: 0;
+  border-radius: 0.6rem;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  padding: 0 1rem;
+}
+.big:disabled {
+  background: var(--line);
+  color: var(--muted);
+}
+.big.ghost {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+.link {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+}
+
+/* ---- The round ---- */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.stop,
+.qrow {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  padding: 0.7rem;
+  font: inherit;
+  color: inherit;
+  min-height: 3.4rem;
+}
+.stop.done {
+  opacity: 0.65;
+}
+.stop.open {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+.seq {
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 0.85rem;
+}
+.stopbody {
+  flex: 1;
+  min-width: 0;
+}
+.state {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+}
+.tabs button {
+  flex: 1;
+  min-height: 2.8rem;
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 0.5rem;
+  font: inherit;
+  color: var(--muted);
+}
+.tabs button.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+.items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 55dvh;
+  overflow: auto;
+}
+.itemrow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.itemrow span {
+  flex: 1;
+  min-width: 0;
+}
+.itemrow input {
+  flex: none;
+  width: 5rem;
+  text-align: right;
+}
+.total {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.qrow.sent .state {
+  color: var(--good);
+}
+.qrow.blocked {
+  border-color: var(--bad);
+}
+.qrow.blocked .state {
+  color: var(--bad);
+}
+.qrow .state {
+  font-size: 1.2rem;
+  width: 1.5rem;
+  text-align: center;
+}
+.problem {
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
+.error {
+  background: #fef2f2;
+  border: 1px solid var(--bad);
+  color: #7f1d1d;
+  padding: 0.7rem;
+  border-radius: 0.5rem;
+}
+
+.foot {
+  padding: 1.5rem 0.9rem calc(1.5rem + env(safe-area-inset-bottom));
+  text-align: center;
+}

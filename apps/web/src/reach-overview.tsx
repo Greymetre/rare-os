@@ -429,3 +429,104 @@ export function ReachAudit({ csrf, refreshKey }: { csrf: string; refreshKey: num
     </section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// The phones
+// ---------------------------------------------------------------------------
+
+// RCH-8. This screen exists for one conversation: a rep says the day they worked never arrived.
+//
+// Before the field app there was no way to answer that except to look for the work and shrug
+// when it was not there. Now there is a plainer question underneath it — has that phone reached
+// us at all, and when — and this answers it from the phone's own heartbeat.
+//
+// What is here is counts and a timestamp. None of the rep's work is stored on a heartbeat, so
+// nothing on this screen is evidence of anything a rep did; it is evidence of whether their
+// phone has been able to speak to us.
+export function ReachDevices({ csrf, refreshKey }: { csrf: string; refreshKey: number }) {
+  const call = useApi(csrf);
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    setError('');
+    setData(null);
+    call('reach/device/seen')
+      .then((d) => live && setData(d))
+      .catch((e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [refreshKey]);
+
+  if (error)
+    return (
+      <div className="error" role="alert">
+        {error}
+      </div>
+    );
+  if (!data) return <p role="status">Reading what the phones have said…</p>;
+
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <h2>Field phones</h2>
+        <span className="badge">{data.items.length}</span>
+      </div>
+
+      {data.items.length === 0 ? (
+        <div className="empty">
+          <strong>No phone has reported in yet.</strong>
+          <p>
+            A rep installs the field app by opening <code>/mobile/</code> on their phone and adding
+            it to the home screen. Nothing has to be granted for it: a rep who may take an order may
+            take it at the counter.
+          </p>
+        </div>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Rep</th>
+              <th>Last heard from</th>
+              <th>Still waiting</th>
+              <th>Stopped</th>
+              <th>App</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.map((row: any) => (
+              <tr key={row.id} data-status={row.blocked > 0 ? 'missing' : 'ready'}>
+                <td>
+                  <strong>{row.rep}</strong>
+                  <span className="hint"> {row.rep_name}</span>
+                </td>
+                <td>{row.last_seen_at}</td>
+                <td>{row.queued}</td>
+                <td>
+                  {row.blocked > 0 ? (
+                    <span className="status-pill missing">{row.blocked}</span>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td className="hint">
+                  {row.platform || '—'} {row.app_version}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <p className="hint">
+        A phone reports counts, never work. &ldquo;Still waiting&rdquo; is what that phone had not
+        yet managed to send when it last reached us; &ldquo;stopped&rdquo; is what it will not
+        retry, because the server refused it in a way that trying again cannot fix. A rep whose
+        phone has not been heard from for a long time has not necessarily lost anything — their work
+        is on the handset until it sends.
+      </p>
+    </section>
+  );
+}

@@ -181,13 +181,13 @@ export async function listVisits(
 export async function checkIn(
   db,
   tenantId,
-  { id, repId, customer, workDate, at, clientRef = '', note = '', beatId = null },
+  { id, repId, customer, workDate, at, clientRef = '', note = '', beatId = null, fileId = null },
 ) {
   const fence = fenceVerdict({ customer, at, radius: customer.checkin_radius_m });
   await db.query(
     `INSERT INTO visits(id,tenant_id,rep_id,customer_id,visit_date,checked_in_at,
-       latitude,longitude,accuracy_m,source,distance_m,out_of_fence,note,client_ref,beat_id)
-     VALUES($1,$2,$3,$4,$5,now(),$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+       latitude,longitude,accuracy_m,source,distance_m,out_of_fence,note,client_ref,beat_id,file_id)
+     VALUES($1,$2,$3,$4,$5,now(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
     [
       id,
       tenantId,
@@ -203,6 +203,7 @@ export async function checkIn(
       note ?? '',
       clientRef ?? '',
       beatId ?? customer.beat_id ?? null,
+      fileId ?? null,
     ],
   );
   return { id, ...fence };

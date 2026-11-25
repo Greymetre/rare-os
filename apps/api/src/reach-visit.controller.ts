@@ -186,11 +186,15 @@ export class ReachVisitController {
       'accuracy_m',
       'source',
       'client_ref',
+      'file_id',
       'note',
     ]);
     const customerId = id(raw.customer_id);
     const at = placeOf(raw);
     const clientRef = raw.client_ref === undefined ? '' : text(raw.client_ref, 'Reference', 0, 80);
+    // RCH-8: a photo taken at the counter. Optional, and its absence never refuses the call —
+    // the same rule that lets a check-in stand from outside the fence.
+    const fileId = raw.file_id === undefined || raw.file_id === null ? null : id(raw.file_id);
     const note = raw.note === undefined ? '' : text(raw.note, 'Note', 0, 300);
 
     return mutate(req, 'reach.visit', async (db, actor) => {
@@ -226,6 +230,7 @@ export class ReachVisitController {
         workDate: date,
         at,
         clientRef,
+        fileId,
         note,
       });
       await audit(db, actor, 'visit.checked_in', 'visits', visitId, null, {

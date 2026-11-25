@@ -97,6 +97,7 @@ export function checkIn(
       source?: string;
     };
     clientRef?: string;
+    fileId?: string | null;
     note?: string;
     beatId?: string | null;
   },

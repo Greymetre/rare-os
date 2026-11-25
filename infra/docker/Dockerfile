@@ -4,6 +4,7 @@ COPY package*.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/workers/package.json apps/workers/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
 RUN npm ci
 COPY . .
 RUN npm run build && npm prune --omit=dev && chmod -R a+rX /app
@@ -30,6 +31,10 @@ FROM alpine:3.23 AS web
 RUN apk upgrade --no-cache && apk add --no-cache nginx
 COPY infra/docker/nginx.conf /etc/nginx/http.d/default.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
+# RCH-8: the field app is its own single-page app, served from the same origin under /mobile/.
+# Same origin is not a convenience — it is what lets the service worker, the manifest, the API
+# and the proxied token endpoint all be 'self', so nothing has to be widened to let the phone work.
+COPY --from=build /app/apps/mobile/dist /usr/share/nginx/html/mobile
 USER nginx
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]

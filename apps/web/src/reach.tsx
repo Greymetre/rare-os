@@ -23,7 +23,13 @@ import { Adherence, MyPlan, PlanBoard, PlanChanges, TourSetup } from './reach-to
 import { FieldApp, VisitBoard, VisitList, VisitSetup } from './reach-visit';
 import { Customer360, KycQueue, OrderList, TakeOrder, TradeSetup } from './reach-trade';
 import { ExpenseClaims, ExpenseRegister, ExpenseSetup, MyExpenses } from './reach-expense';
-import { ReachAudit, ReachCutover, ReachOverview, ReachQueue } from './reach-overview';
+import {
+  ReachAudit,
+  ReachCutover,
+  ReachDevices,
+  ReachOverview,
+  ReachQueue,
+} from './reach-overview';
 
 // The order the masters are set up in: a rep needs a grade and a territory to exist first, and a
 // beat needs a territory. The customer's own shape is a separate concern, under Setup.
@@ -268,6 +274,7 @@ export function reachMenu(permissions: string[], kinds: KindInfo[]) {
     ['Overview', 'reach.read'],
     ['Waiting for a decision', 'reach.read'],
     ['Going live', 'reach.read'],
+    ['Field phones', 'reach.read'],
     ['Reach audit trail', 'audit.read'],
   ];
   const CUSTOMERS: [string, string][] = [
@@ -541,6 +548,7 @@ export function Reach({
         <ReachQueue csrf={csrf} refreshKey={refreshKey + revision} onGo={setTab} />
       )}
       {tab === 'Going live' && <ReachCutover csrf={csrf} refreshKey={refreshKey + revision} />}
+      {tab === 'Field phones' && <ReachDevices csrf={csrf} refreshKey={refreshKey + revision} />}
       {tab === 'Reach audit trail' && <ReachAudit csrf={csrf} refreshKey={refreshKey + revision} />}
       {current && (
         <MasterTable

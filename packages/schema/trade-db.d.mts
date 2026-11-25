@@ -215,8 +215,13 @@ export function createOrder(
     note?: string;
     priced: { lines: any[]; totals: any };
     credit: Credit;
+    clientRef?: string;
   },
 ): Promise<string>;
+
+// RCH-8: the order, or the collection, a device already sent. An empty reference matches
+// nothing — the web writes none, and every one of those rows would otherwise look alike.
+export function orderByClientRef(db: Db, clientRef: string): Promise<any | null>;
 export function releaseOrder(
   db: Db,
   actorId: string | null,
@@ -329,8 +334,20 @@ export function recordReceipt(
     fileId?: string | null;
     at?: { latitude: number | null; longitude: number | null };
     note?: string;
+    clientRef?: string;
   },
 ): Promise<string>;
+export function receiptByClientRef(
+  db: Db,
+  clientRef: string,
+): Promise<{
+  id: string;
+  receipt_no: string;
+  amount: number;
+  mode: string;
+  reference: string;
+  received_on: string;
+} | null>;
 export function findReceipt(
   db: Db,
   id: string,

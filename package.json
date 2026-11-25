@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @rare-os/api && npm run build -w @rare-os/workers && npm run build -w @rare-os/web",
+    "build": "npm run build -w @rare-os/api && npm run build -w @rare-os/workers && npm run build -w @rare-os/web && npm run build -w @rare-os/mobile",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "node scripts/regression.mjs",
