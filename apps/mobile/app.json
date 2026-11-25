@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "RARE OS Field",
+    "slug": "rare-os-field",
+    "version": "0.1.0",
+    "scheme": "rareos",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#f2f1ec",
+    "primaryColor": "#20264a",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "bundleIdentifier": "io.greymetre.rareos.field",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Your location is recorded when you start the day and when you check in at a shop, so a visit can be shown against the right shop.",
+        "NSCameraUsageDescription": "The camera is used to take the shelf photo and the day-start selfie that go with a visit.",
+        "NSPhotoLibraryUsageDescription": "Pick a photo for a visit when you have already taken it."
+      }
+    },
+    "android": {
+      "package": "io.greymetre.rareos.field",
+      "adaptiveIcon": {
+        "backgroundColor": "#20264a"
+      },
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "CAMERA"]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Your location is recorded when you start the day and when you check in at a shop."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "The camera is used to take the shelf photo that goes with a visit.",
+          "photosPermission": "Pick a photo for a visit when you have already taken it."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

@@ -6,6 +6,15 @@ import { extname, join, relative } from 'node:path';
 const root = process.cwd();
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
+// The same file with its comments taken out. Assertions of the form "this word appears nowhere"
+// have to run over this and not over the raw text: the comment that explains a rule contains
+// the very words the rule forbids, so a regex over the whole file fails on a file that is
+// correct. That has now happened three times in this suite, in three different milestones.
+const code = (path) =>
+  read(path)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
 function sourceFiles() {
   const roots = ['apps', 'packages', 'scripts', 'db', 'infra', '.github'];
   const allowed = new Set([
@@ -639,6 +648,157 @@ test('RCH-7 counts what is there and has no way to change any of it', () => {
   assert.match(engine, /total: waiting\.reduce/);
   // Going live is read from the data, never from somebody having ticked a box.
   assert.doesNotMatch(engine, /acknowledged|dismissed|marked_done/i);
+});
+
+test('RCH-8 lets a phone in on its own token, and never twice on the same work', () => {
+  const auth = read('apps/api/src/device-auth.ts');
+  // A device token is its own client. Without this, a browser's token would be a permanent
+  // field login and "sign every phone out" would be impossible.
+  assert.match(auth, /DEVICE_CLIENT_ID = 'rare-os-mobile'/);
+  assert.match(auth, /audience: DEVICE_CLIENT_ID/);
+  assert.match(auth, /algorithms: \['RS256'\]/);
+  assert.match(auth, /issuer: authUrl \+ realm/);
+  // `azp` as well as the audience, so a token merely listing this client cannot be spent here.
+  assert.match(auth, /p\.azp !== DEVICE_CLIENT_ID/);
+  // The same revocation record a browser session checks. A long-lived field login without this
+  // would be a door with no lock.
+  assert.match(auth, /rare:revoked:sid:/);
+  assert.match(auth, /rare:revoked:subject:/);
+  // A second factor cannot be asked for mid-request, so an account that needs one is refused
+  // rather than quietly let past it.
+  assert.match(auth, /requiresMfa\(subject\)/);
+  assert.match(auth, /MFA_NOT_SUPPORTED_ON_DEVICE/);
+  // One login, one company: a phone has no company picker, so two memberships is a refusal and
+  // never a guess about whose books the day belongs in.
+  assert.match(auth, /memberships\.length !== 1/);
+
+  // A phone is never a platform administrator.
+  const core = read('apps/api/src/core.ts');
+  assert.match(core, /platformCompanyVersion: undefined as number \| undefined/);
+
+  // CSRF is skipped for bearer requests and for nothing else.
+  const api = read('apps/api/src/main.ts');
+  assert.match(api, /if \(isDeviceRequest\(req\)\) return next\(\);/);
+  // The one unauthenticated route the app needs says where to sign in and nothing more.
+  assert.doesNotMatch(api, /mobileConfig[\s\S]{0,200}(clientSecret|OIDC_CLIENT_SECRET)/);
+
+  // Exactly once, where a repeat would otherwise become a second record.
+  const migration = read('db/migrations/036_reach_sync.sql');
+  for (const table of ['trade_orders', 'trade_receipts', 'stored_files'])
+    assert.match(
+      migration,
+      new RegExp(
+        `CREATE UNIQUE INDEX ${table}_client_ref_idx[\\s\\S]{0,120}WHERE client_ref <> ''`,
+      ),
+      `${table} may hold two rows for one device reference`,
+    );
+  // A heartbeat is contact, not content. Read the table definition itself, not the comments
+  // around it, and check that nothing from a rep's actual work can be written to it.
+  const deviceTable = /CREATE TABLE device_syncs \(([\s\S]*?)\n\);/.exec(migration);
+  assert.ok(deviceTable, 'device_syncs is not defined where it was expected');
+  assert.doesNotMatch(deviceTable[1], /amount|payload|report|lines|latitude|longitude|photo/i);
+  assert.match(migration, /GRANT SELECT, INSERT, UPDATE ON device_syncs TO rare_app/);
+  assert.doesNotMatch(migration, /GRANT[^;]*DELETE[^;]*device_syncs/);
+
+  // The engine sends a reference only where the route reads one. The write routes refuse unknown
+  // fields, so getting this wrong would block a rep's whole morning behind a 400.
+  const engine = read('packages/engines/sync-queue.mjs');
+  assert.match(
+    engine,
+    /payload: spec\.ref \? \{ \.\.\.payload, client_ref: clientRef \} : \{ \.\.\.payload \}/,
+  );
+  // A refusal the server understood is never retried; an unknown outcome always is.
+  assert.match(engine, /status >= 400 && status < 500 && status !== 408 && status !== 429/);
+  // Nothing is ever dropped: every item ends in one of three named states.
+  assert.match(engine, /OUTBOX_STATES = \['QUEUED', 'SENT', 'BLOCKED'\]/);
+  // An unresolved local id is named, never sent.
+  assert.match(engine, /missing\.push\(value\)/);
+
+  // ---- The field app is an installed app, so none of it is served or shipped here ----
+
+  // The desk app keeps "not even our own page may ask" for a camera or a location. When the
+  // field app was a page in this origin that had to be widened for one path; now that it is an
+  // installed app it does not, and the strict policy stands alone again.
+  const nginx = read('infra/docker/nginx.conf');
+  assert.match(
+    nginx,
+    /add_header Permissions-Policy "camera=\(\), microphone=\(\), geolocation=\(\)" always;/,
+  );
+  assert.doesNotMatch(nginx, /camera=\(self\)|geolocation=\(self\)/);
+  // Nothing of the field app is served from this origin any more, so there is no service worker
+  // to go stale and no second single-page app to keep headers in step with.
+  assert.doesNotMatch(nginx, /location \/mobile\//);
+  assert.doesNotMatch(nginx, /sw\.js/);
+
+  // Nor does any of it reach the containers. This is the whole reason the app is not an npm
+  // workspace: Expo's bundler and command line are build tooling, and calling them production
+  // dependencies of the API image would have been a lie that the dependency gate then had to be
+  // bent around.
+  const dockerfile = read('infra/docker/Dockerfile');
+  assert.doesNotMatch(dockerfile, /apps\/mobile/);
+
+  const root = JSON.parse(read('package.json'));
+  assert.ok(
+    !root.workspaces.includes('apps/*') && !root.workspaces.includes('apps/mobile'),
+    'the field app is back inside the npm workspaces, which puts Expo in the container tree',
+  );
+  const rootLock = read('package-lock.json');
+  assert.doesNotMatch(rootLock, /node_modules\/(expo|react-native)[/"]/);
+
+  // Leaving the workspace must not mean leaving the gate. The field app has its own lockfile and
+  // the gate audits it on its own terms; a missing lockfile is a failure there, never a pass,
+  // because an unaudited tree must never read as a clean one.
+  const audit = read('scripts/audit.mjs');
+  assert.match(audit, /const FIELD_APP = 'apps\/mobile'/);
+  assert.match(audit, /existsSync\(`\$\{FIELD_APP\}\/package-lock\.json`\)/);
+  assert.match(audit, /ACCEPTED_FIELD_APP/);
+  assert.ok(
+    read('apps/mobile/package-lock.json').length > 0,
+    'the field app has no lockfile, so its dependencies are not audited',
+  );
+  // Nothing in the production half can ever be excused, in either tree.
+  const productionHalf = audit.slice(
+    audit.indexOf('// ---------- What ships ----------'),
+    audit.indexOf('// ---------- Everything, build toolchain included ----------'),
+  );
+  assert.doesNotMatch(productionHalf, /ACCEPTED/);
+
+  // ---- The phone's own secrets ----
+
+  const clientAuth = read('apps/mobile/src/auth.ts');
+  // Authorization Code with PKCE. There is no secret in an app a rep can install, so the proof
+  // has to be the verifier this app generated.
+  assert.match(clientAuth, /usePKCE: true/);
+  assert.match(clientAuth, /offline_access/);
+  // The refresh token lives in the operating system's keystore, which is the one real security
+  // improvement that came with leaving the browser: in the page version it had to sit in
+  // IndexedDB, where any script in the page could read it.
+  assert.match(clientAuth, /expo-secure-store/);
+  assert.match(clientAuth, /SecureStore\.setItemAsync\(REFRESH_KEY/);
+  // Signing out reaches the server, so the token is dead and not merely forgotten.
+  assert.match(clientAuth, /revokeAsync/);
+  // And it must not be able to throw away work the rep has not sent. Checked at the import lines
+  // rather than in prose — a regex over the whole file matches the comment that explains the
+  // rule, which is how this assertion was wrong the first time it was written. The module's own
+  // imports are the real guarantee: it cannot reach the outbox, so it cannot clear it by
+  // accident or by a later edit.
+  const authImports = [...clientAuth.matchAll(/^import .*? from '([^']+)';$/gm)].map((m) => m[1]);
+  assert.deepEqual(
+    authImports.filter((from) => from.startsWith('.')),
+    ['./config'],
+    'the field app auth module can now reach something other than its own configuration',
+  );
+
+  // The database holds the day and the outbox. It must never hold a token: a database file is
+  // not a keystore, and WAL copies would outlive a sign-out.
+  const store = code('apps/mobile/src/db.ts');
+  assert.doesNotMatch(store, /refresh|access_token|accessToken|bearer/i);
+  // Losing a row here loses a real order, so a pass is written in one transaction.
+  assert.match(store, /withExclusiveTransactionAsync/);
+
+  // The app talks to one server, named at build time, and never carries a client secret.
+  const config = code('apps/mobile/src/config.ts');
+  assert.doesNotMatch(config, /secret|password|client_secret/i);
 });
 
 test('production gateways and images retain baseline VAPT hardening', () => {

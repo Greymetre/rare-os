@@ -50,6 +50,8 @@ import {
   raiseInvoiceFromOrder,
   ratesFor,
   recordInvoice,
+  orderByClientRef,
+  receiptByClientRef,
   recordReceipt,
   releaseOrder,
   routeOrder,
@@ -447,12 +449,29 @@ export class ReachTradeController {
     @Param('id') customerId: string,
   ) {
     id(customerId);
-    const raw = body(req, ['lines', 'visit_id', 'note']);
+    const raw = body(req, ['lines', 'visit_id', 'note', 'client_ref']);
     const lines = basketOf(raw.lines);
     const visitId = raw.visit_id === undefined || raw.visit_id === null ? null : id(raw.visit_id);
     const note = raw.note === undefined ? '' : text(raw.note, 'Note', 0, 300);
+    // RCH-8: the phone's own name for this order, minted before it was ever sent.
+    const clientRef = raw.client_ref === undefined ? '' : text(raw.client_ref, 'Reference', 0, 80);
 
     return mutate(req, 'reach.order', async (db, actor) => {
+      // A rep may take two identical orders at one counter in one morning, so nothing in the
+      // content can tell a retry from a second order. The reference can, and this runs inside
+      // the same transaction and tenant lock as the write, so two retries racing each other
+      // still produce one order.
+      const already = clientRef ? await orderByClientRef(db, clientRef) : null;
+      if (already)
+        return {
+          id: already.id,
+          order_no: already.order_no,
+          status: already.status,
+          total: already.total,
+          credit: { hold: already.status === 'HELD', reasons: [], message: '' },
+          repeat: true,
+          message: `Order ${already.order_no} was already taken.`,
+        };
       const settings = await tradeSettings(db);
       const rep = await this.me(db, actor);
       const customer = await this.shop(db, customerId);
@@ -483,6 +502,7 @@ export class ReachTradeController {
         note,
         priced,
         credit: state.credit,
+        clientRef,
       });
       await audit(
         db,
@@ -830,6 +850,7 @@ export class ReachTradeController {
       'latitude',
       'longitude',
       'note',
+      'client_ref',
     ]);
     const value = amount(raw.amount, 'Amount');
     const mode = String(raw.mode ?? '');
@@ -843,6 +864,8 @@ export class ReachTradeController {
       raw.invoice_id === undefined || raw.invoice_id === null ? null : id(raw.invoice_id);
     const fileId = raw.file_id === undefined || raw.file_id === null ? null : id(raw.file_id);
     const note = raw.note === undefined ? '' : text(raw.note, 'Note', 0, 300);
+    // RCH-8: the phone's own name for this collection, minted before it was ever sent.
+    const clientRef = raw.client_ref === undefined ? '' : text(raw.client_ref, 'Reference', 0, 80);
     const place = (value: unknown, label: string, bound: number) => {
       if (value === undefined || value === null || value === '') return null;
       const n = Number(value);
@@ -858,6 +881,22 @@ export class ReachTradeController {
       fail(400, 'VALIDATION_ERROR', 'A location needs both a latitude and a longitude.');
 
     return mutate(req, 'reach.collect', async (db, actor) => {
+      // Two collections of the same amount from the same shop on the same day are ordinary, so
+      // only the device's own reference can tell a retry from a second payment. Crediting a shop
+      // twice is the worst mistake this module could make, and this is what prevents it.
+      const repeated = clientRef ? await receiptByClientRef(db, clientRef) : null;
+      if (repeated) {
+        const settled = await tradeSettings(db);
+        const on = await todayFor(db, settled);
+        const now = await outstandingFor(db, customerId, on, settled);
+        return {
+          id: repeated.id,
+          receipt_no: repeated.receipt_no,
+          outstanding: now.outstanding,
+          repeat: true,
+          message: `${repeated.amount} from this device was already recorded as ${repeated.receipt_no}.`,
+        };
+      }
       const settings = await tradeSettings(db);
       const customer = await this.shop(db, customerId);
       const own = await repForUser(db, actor.id);
@@ -892,6 +931,7 @@ export class ReachTradeController {
         fileId,
         at,
         note,
+        clientRef,
       });
       await audit(db, actor, 'trade.collected', 'trade_receipts', receiptId, null, {
         customer: customer.code,

@@ -75,6 +75,78 @@ let clients = await (await admin('/realms/rare-os/clients?clientId=rare-os-web')
 if (!clients.length) await admin('/realms/rare-os/clients', 'POST', client);
 else await admin('/realms/rare-os/clients/' + clients[0].id, 'PUT', client);
 
+// RCH-8: the field app's own Keycloak client.
+//
+// Public, with no secret. A secret shipped inside something anybody can download is not a
+// secret, and pretending otherwise is worse than not having one — PKCE is what actually proves
+// the app asking for the token is the app that started the sign-in.
+//
+// It is a separate client from the web on purpose. It means a token minted for a browser cannot
+// open the device door and a device token cannot act as a web session, and it means "sign every
+// phone out" is something an administrator can do without signing out every desk.
+//
+// The app is installed, not served, so where Keycloak sends the rep back is the app's own
+// address: `rareos://auth`, from `scheme` in `apps/mobile/app.json`. There is no web origin at
+// all — a native app's requests carry no Origin header, and leaving one here would only widen
+// CORS for a browser that is no longer part of this.
+//
+// `exp://*` is added **only outside production**, because that is the address Expo Go answers on
+// while the app is being developed and its host and port change with the laptop. In production
+// it would mean any copy of Expo Go could receive an authorization code; PKCE still stops that
+// code being spent, but an unnecessary door is an unnecessary door.
+const isProduction = /^https:\/\//.test(env.APP_URL) && !/localhost|127\.0\.0\.1/.test(env.APP_URL);
+const mobileRedirects = ['rareos://*', ...(isProduction ? [] : ['exp://*'])];
+const mobileClient = {
+  clientId: 'rare-os-mobile',
+  name: 'RARE OS Field App',
+  enabled: true,
+  publicClient: true,
+  standardFlowEnabled: true,
+  directAccessGrantsEnabled: false,
+  redirectUris: mobileRedirects,
+  webOrigins: [],
+  attributes: {
+    'pkce.code.challenge.method': 'S256',
+    'post.logout.redirect.uris': mobileRedirects.join('##'),
+    'backchannel.logout.url': 'http://api:4000/api/auth/backchannel-logout',
+    'backchannel.logout.session.required': 'true',
+    // A rep's day is spent out of coverage; a thirty-minute idle timeout would sign the phone
+    // out before the first beat was finished. The access token stays short — five minutes, the
+    // realm default — so the long life belongs to the refresh token alone, and revoking it
+    // still closes the device within that five minutes.
+    'client.offline.session.idle.timeout': String(30 * 24 * 60 * 60),
+    'client.offline.session.max.lifespan': String(90 * 24 * 60 * 60),
+  },
+};
+let mobile = await (await admin('/realms/rare-os/clients?clientId=rare-os-mobile')).json();
+if (!mobile.length) {
+  await admin('/realms/rare-os/clients', 'POST', mobileClient);
+  mobile = await (await admin('/realms/rare-os/clients?clientId=rare-os-mobile')).json();
+} else await admin('/realms/rare-os/clients/' + mobile[0].id, 'PUT', mobileClient);
+
+// Without this the access token's audience is Keycloak's own `account`, and the API would have
+// to accept a token that does not name it — which is the whole protection this client exists to
+// provide. The mapper puts `rare-os-mobile` in `aud`, and `device-auth.ts` insists on it.
+const audiencePath = '/realms/rare-os/clients/' + mobile[0].id + '/protocol-mappers/models';
+const audienceMapper = {
+  name: 'RARE device audience',
+  protocol: 'openid-connect',
+  protocolMapper: 'oidc-audience-mapper',
+  config: {
+    'included.client.audience': 'rare-os-mobile',
+    'access.token.claim': 'true',
+    'id.token.claim': 'false',
+  },
+};
+const existingAudience = (await (await admin(audiencePath)).json()).find(
+  (m) => m.name === audienceMapper.name,
+);
+await admin(
+  existingAudience ? audiencePath + '/' + existingAudience.id : audiencePath,
+  existingAudience ? 'PUT' : 'POST',
+  existingAudience ? { ...audienceMapper, id: existingAudience.id } : audienceMapper,
+);
+
 if (!env.IDENTITY_CLIENT_SECRET) throw Error('IDENTITY_CLIENT_SECRET is required');
 const adminClient = {
   clientId: 'rare-os-identity',

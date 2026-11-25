@@ -4,12 +4,14 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "apps/*",
+    "apps/api",
+    "apps/web",
+    "apps/workers",
     "packages/*"
   ],
   "scripts": {
     "build": "npm run build -w @rare-os/api && npm run build -w @rare-os/workers && npm run build -w @rare-os/web",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present && npm --prefix apps/mobile run typecheck",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "node scripts/regression.mjs",
     "db:migrate": "node scripts/migrate.mjs",
@@ -23,7 +25,9 @@
     "security:check": "npm run security:dependencies && node --test tests/security-baseline.test.mjs",
     "security:containers": "scripts/security-scan-containers.sh",
     "verify:quick": "npm run format:check && npm run typecheck && npm test && npm run security:dependencies && npm run build",
-    "security:platform": "scripts/security-scan-containers.sh --platform"
+    "security:platform": "scripts/security-scan-containers.sh --platform",
+    "mobile:install": "npm --prefix apps/mobile install",
+    "mobile:start": "npm --prefix apps/mobile start"
   },
   "dependencies": {
     "pg": "8.16.3"

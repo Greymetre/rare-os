@@ -1294,3 +1294,209 @@ aakar se dekha gaya. Isliye "kya hua" ka jawab hamesha ek hi rehta hai.
   alag ho jati hai
 - Trend ya graph nahi — aaj ka haal hai, itihaas nahi
 - RCH-8 (mobile app) abhi bacha hai
+
+---
+
+## RCH-8 — Field app (phone par, bina network ke)
+
+Milestone plan ka apna acceptance ek hi line hai:
+
+> _"Airplane mode mein poora beat complete karo — check-in, order, photo. App band karo, kholo,
+> kharab network par jodo — sab kuch exactly ek baar pahunche."_
+
+Poora milestone isi ek line ke liye bana hai. Neeche usi ko haath se karne ka tarika hai.
+
+**Kya hai:** **Expo / React Native app**, jaisa handover ka `04_TECH_STACK.md` aur milestone
+plan dono maangte hain. Browser ka page nahi — phone me install hone wali app.
+
+### Phone par kaise chadhegi
+
+Abhi store par nahi jaati. **Expo Go** se chalti hai, jo development ka tareeka hai:
+
+1. Phone me Play Store/App Store se **Expo Go** install karo
+2. Phone aur Mac **ek hi Wi-Fi** par hon
+3. Mac ka us Wi-Fi par pata nikalo: `ipconfig getifaddr en0`
+4. Repo ki jad me:
+
+```sh
+npm run mobile:install
+EXPO_PUBLIC_API_URL=http://<Mac-ka-pata>:4000 npm run mobile:start
+```
+
+5. Terminal me QR code aayega → Expo Go se scan karo
+
+> `localhost` **mat** likhna. Phone par `localhost` ka matlab khud phone hai, aapka Mac nahi.
+> Pata galat hua to app sign-in par ruk jaayegi — aur yahi sahi vyavhaar hai, chup-chaap kuch
+> aur server se baat karne se behtar.
+
+LIVE par dekhna ho to `EXPO_PUBLIC_API_URL` chhod do; app `https://rare.greymetre.io` se baat
+karti hai.
+
+### 0. Pehli baar — ek baar signal me
+
+1. Expo Go me app khulo
+2. **Sign in** dabao → phone ka browser khulega Keycloak ke apne page par, apne address bar ke
+   saath → rep ka email aur password
+3. Wapas aate hi rep ka naam, aaj ki date aur **aaj ka round** dikhega
+
+> Yahan app me koi username/password ka khana nahi hai, aur ye jaan boojh kar hai: app ke andar
+> ka login form wo form hai jo dikha nahi sakta ki password kahan ja raha hai.
+
+Yahan ek baat dhyan se dekho: **poora din ek hi request me aata hai.** Round, dukaanein, un
+dukaanon ke aaj ke rate, visit form ke sawal, aur har dukaan par kitna bakaya hai — sab. Weak
+line par aath request matlab aath jagah aadha din reh jaane ka mauka; isliye ek.
+
+> Agar yahan `This login is not linked to a field rep` aaye, to us user ko kisi field rep se joda
+> nahi gaya hai. Masters → Field reps → us rep ka user set karo.
+
+### 1. Airplane mode — poora beat
+
+Ab **phone ko airplane mode par daal do.** Wi-Fi bhi band. (Expo Go se chal rahi ho to app
+pehle se load ho chuki hai, to airplane mode usse nahi rokta — bas Metro se reload mat karna.)
+
+1. **Start day** → kaam ka type chuno → dabao
+2. Upar ka patti turant kahegi **"1 item waiting to send"**
+3. **Beat** tab → pehli dukaan par tap karo
+4. **Check in** dabao → camera khulega, shelf ka photo lo (camera mana karne par bhi check-in
+   ho jaata hai — photo marzi ki cheez hai, call nahi)
+5. **Take the order** → `+` / `−` se units badhao. Neeche lines aur total dikhega
+6. **Collect payment** → amount aur tarika → **Save the collection**
+7. **Check out** → form bharo → **Check out**
+8. Agli dukaan par wahi
+
+**Yahan ek bhi jagah ghumta hua circle nahi dikhega.** Har tap turant ho jaata hai — phone par
+likha gaya, ho gaya, line me laga diya. Jo app kharab signal me ghoomta rehta hai, woh salesman
+ko app chhodna sikha deta hai.
+
+Patti par tap karke dekho: har cheez apne naam se list me hai, sab **waiting**.
+
+### 2. App band karo, kholo — abhi bhi airplane mode me
+
+App ko poora band karo (recent apps se hata do), phir se kholo.
+
+**Sab kuch waisa hi hona chahiye** — utne hi item, utne hi waiting, 0 sent. Kuch bhi memory me
+nahi hai; sab phone ke **SQLite** me likha gaya hai, ek transaction me. Handover ki apni baat
+yahi thi: _"offline-first with a local SQLite and an outbox sync"_.
+
+Aur ye bhi dekho: app poori khulti hai aur aaj ka round dikhta hai, jo signal me utara gaya tha.
+
+> **Bakaya kabhi cache se nahi aata.** Jo number dikh raha hai wo us waqt ka hai jab phone ne
+> aakhri baar network dekha tha, aur screen par wahi likha hai. Agar app purana bakaya naye jaisa
+> dikhati, to rep galat number par paisa maangta — isliye din ka data sirf wahan hai jahan app ne
+> khud rakha hai aur jiski umar usko pata hai.
+
+### 3. Signal wapas — sab kuch ek baar
+
+Airplane mode band karo.
+
+App khud bhej dega — phone batata hai ki network aa gaya. Ya **Me** tab ya kataar se
+**Send now** dabao.
+
+Patti **"Everything is in"** par aani chahiye, aur kataar me har cheez **In** par.
+
+> **Send now** jaan boojh kar intezaar ka niyam tod deta hai. Poora din bina signal ke beeta ho
+> to har item kai nakaam koshishon ke baad minaton ka intezaar le kar baitha hota hai; rep ke tap
+> ka matlab hai "abhi bhejo", aur button ka kuch na karna dikhna sabse bura jawab hai.
+
+Ab desk wale app me jaakar milan karo:
+
+| Kahan                             | Kya dikhna chahiye                             |
+| --------------------------------- | ---------------------------------------------- |
+| `Reach → Attendance → Register`   | Us rep ka aaj ka din, ek hi baar               |
+| `Reach → Visits → Visits`         | Har dukaan ka ek visit, check-out ke saath     |
+| `Reach → Trade → Orders`          | Har order ek baar, **aur usme visit juda hua** |
+| `Reach → Customer 360 → Receipts` | Collection ek baar                             |
+
+**Us order me visit ka jud jaana sabse badi baat hai.** Jab rep ne order liya tha, us visit ka
+server par koi naam hi nahi tha — sirf phone ka apna local naam. Queue ne pehle check-in bheja,
+server se asli id li, aur phir order me local naam ki jagah asli id daal kar bheja.
+
+### 4. "Exactly once" — ise jaan boojh kar todne ki koshish karo
+
+Ye sabse zaroori test hai, kyunki poori retry strategy isi par tiki hai.
+
+Sabse aasan tarika: **order lete waqt beech me hi airplane mode on kar do.** Phone ko pata hi
+nahi chalega ki server ne order liya ya nahi. Woh dobara bhejega.
+
+`Reach → Trade → Orders` me **ek hi order hona chahiye.**
+
+Wajah: har aisi cheez jiska dobara bhejna sach me do record bana sakta hai, uske saath phone ka
+apna reference jaata hai, jo retry par badalta nahi. Server us reference ko pehchaan kar wahi
+purana record wapas kar deta hai.
+
+| Kya             | Reference jaata hai? | Kyun                                                                                  |
+| --------------- | -------------------- | ------------------------------------------------------------------------------------- |
+| Order           | **Haan**             | Ek hi counter par do bilkul same order lena aam baat hai                              |
+| Collection      | **Haan**             | Same amount do baar aana aam hai — aur dukaan ko do baar credit dena sabse buri galti |
+| Photo           | **Haan**             | Bytes pehle se ek baar store hote the, par row dobara ban jati thi                    |
+| Check-in        | **Haan**             | RCH-4 me pehle se tha                                                                 |
+| Day start / end | **Nahi**             | Ek rep, ek din — server khud `ALREADY_STARTED` keh deta hai                           |
+| Check-out       | **Nahi**             | Ek rep ki ek dukaan par ek hi khuli visit                                             |
+
+Jahan reference ki zarurat nahi, wahan bheja bhi nahi jaata. Write routes unknown field reject
+karte hain, to galti se bhejne par rep ki poori subah ek 400 ke peeche atak jaati.
+
+### 5. Jab sach me kuch galat ho
+
+Kuch aisa karo jo server pakka mana karega — jaise aisi dukaan par order jo delete ho chuki ho.
+
+- Woh item **red** ho jayega aur patti kahegi **"1 item needs your attention"**
+- Queue screen par uska naam aur **wajah saaf shabdon me** likhi hogi
+- Jo cheezein usi par tiki thi (jaise us visit ka check-out) woh bhi ruk jayengi, aur batayengi
+  ki kis cheez ka intezaar kar rahi hain
+
+**Jo cheez dobara bhejne se theek nahi hoti, woh dobara bheji hi nahi jaati.** 400 ka matlab hai
+server ne padha, samjha aur mana kiya. Hazaar baar bhejne se kuch nahi badlega — isliye ruk jaata
+hai aur rep ko bata diya jaata hai.
+
+Par **ek ruki hui cheez baaki din ko nahi rokti**: agar order price ki wajah se ruka hai, to
+check-out phir bhi chala jayega.
+
+### 6. Admin ke liye — "mera din gaya hi nahi"
+
+Jab koi rep ye kahe, to `Reach → Overview` ke saath ab ye bhi hai: har phone ne aakhri baar kab
+server se baat ki, aur us waqt uske paas kitna pada tha.
+
+API: `GET /api/reach/device/seen`
+
+Isme rep ka kaam nahi hota — sirf ginti. Kab, kaun sa phone, kitna waiting, kitna blocked.
+
+### 7. Seedhe HTTP se dekhna ho to
+
+```bash
+# Phone ko sirf itna pata hona chahiye ki sign in kahan karna hai
+curl -s https://rare.greymetre.io/api/mobile/config
+# {"authUrl":"...","clientId":"rare-os-mobile","realm":"rare-os"}
+# Isme koi secret nahi hai, aur ho bhi nahi sakta — ye public client hai
+
+# Bina sahi token ke kuch nahi
+curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer nonsense" \
+  https://rare.greymetre.io/api/reach/device/day
+# 401
+```
+
+### Kya dhyan rakhna hai
+
+**Phone ka login desk ke login se alag hai.** Keycloak me iska apna client hai —
+`rare-os-mobile`, public, PKCE ke saath, bina kisi secret ke. App ke andar rakha hua secret
+secret nahi hota.
+
+**Jisko MFA chahiye, woh phone se andar nahi aa sakta.** Phone beech request me OTP nahi maang
+sakta, aur chupke se check chhod dena matlab mobile app ko MFA se bachne ka rasta bana dena. Aise
+account web se chalenge, aur app saaf shabdon me yahi kahega. Field rep par ye kabhi lagta nahi —
+MFA sirf administrators par hai.
+
+**Phone sign out karne par rep ka bina bheja kaam nahi mitta.** Woh kaam rep ka hai, session ka
+nahi.
+
+**Rep ko sign out karna ho to** Access → Users se — wahi revocation record phone par bhi lagta
+hai jo browser par lagta hai, aur phone paanch minute ke andar band ho jata hai.
+
+**Refresh token phone ke keystore me hai** — iOS keychain, Android ka EncryptedSharedPreferences.
+Browser wale version me ye majboori thi ki wo IndexedDB me rahe, jahan page ka koi bhi script
+usse padh sakta tha. Asli app hone ka ek thos faida yahi hai, aur isi wajah se itna lamba
+chalne wala token yahan jaayaz hai.
+
+**Store par abhi nahi hai.** Expo Go se chalti hai. Play Store / App Store par daalne ke liye
+Apple aur Google ke developer account chahiye aur ek build service — wo apna kaam hai, is
+milestone me nahi. Internal APK bhi ek raasta hai; bataiye to wo kar denge.

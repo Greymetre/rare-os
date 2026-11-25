@@ -1,4 +1,5 @@
 import { verifySession } from './session-security.js';
+import { deviceIdentity, isDeviceRequest } from './device-auth.js';
 import { HttpException } from '@nestjs/common';
 import type { Request } from 'express';
 import 'express-session';
@@ -77,21 +78,55 @@ async function scoped<T>(tenant: string, run: (db: PoolClient) => Promise<T>): P
     db.release();
   }
 }
+// Who is asking, from whichever of the two ways in they used.
+//
+// RCH-8 gave the field force a phone, and a phone cannot keep a browser's cookie alive across a
+// day with no signal. So there are now two doors into exactly the same building: a web session,
+// and a device token verified in `device-auth.ts`. Everything past this function is identical for
+// both — the same permission, the same tenant scope, the same audit row — because a rep taking an
+// order at a counter is doing the same thing as a clerk taking one at a desk, and the moment the
+// two paths diverge is the moment one of them quietly grows a hole.
+//
+// The device token is verified once per request and remembered, so asking twice is free. That
+// matters because `mutate` checks the permission again inside the transaction, and the two checks
+// must never be able to disagree.
+async function whoIs(req: Request) {
+  const device = await deviceIdentity(req);
+  if (device)
+    return {
+      subject: device.subject as string | undefined,
+      tenantId: device.tenantId as string | undefined,
+      authVersion: device.authVersion as number | undefined,
+      // A phone is never a platform administrator. That work is choosing which company you are
+      // looking at across the whole installation, and it belongs at a desk.
+      platformCompanyVersion: undefined as number | undefined,
+    };
+  return {
+    subject: req.session.subject,
+    tenantId: req.session.tenantId,
+    authVersion: req.session.authVersion,
+    platformCompanyVersion: req.session.platformCompanyVersion,
+  };
+}
 async function access(req: Request, permission: string) {
-  await verifySession(req);
-  if (!req.session.subject || !req.session.tenantId)
+  // A device proves itself by its token on every request, which is the check `verifySession`
+  // performs for a cookie. Running the session checks against a request that carries no session
+  // would only refuse the phone for not being a browser.
+  if (!isDeviceRequest(req)) await verifySession(req);
+  const who = await whoIs(req);
+  if (!who.subject || !who.tenantId)
     fail(401, 'LOGIN_REQUIRED', 'Please sign in to continue. Your session may have expired.');
-  return scoped(req.session.tenantId!, async (db) => {
+  return scoped(who.tenantId!, async (db) => {
     return accessDb(db, req, permission);
   });
 }
 async function accessDb(db: PoolClient, req: Request, permission: string) {
-  if (req.session.platformCompanyVersion !== undefined) {
-    const allowed = (
-      await db.query('SELECT is_platform_admin($1) AS allowed', [req.session.subject])
-    ).rows[0].allowed;
+  const who = await whoIs(req);
+  if (who.platformCompanyVersion !== undefined) {
+    const allowed = (await db.query('SELECT is_platform_admin($1) AS allowed', [who.subject]))
+      .rows[0].allowed;
     const tenant = (await db.query('SELECT id,name,version FROM tenants WHERE active')).rows[0];
-    if (!allowed || !tenant || tenant.version !== req.session.platformCompanyVersion)
+    if (!allowed || !tenant || tenant.version !== who.platformCompanyVersion)
       fail(
         403,
         'PLATFORM_ACCESS_CHANGED',
@@ -112,7 +147,7 @@ async function accessDb(db: PoolClient, req: Request, permission: string) {
       company: tenant.name,
       is_system: true,
       platform_access: true,
-      actor_subject: req.session.subject,
+      actor_subject: who.subject,
       permissions,
     };
   }
@@ -121,7 +156,7 @@ async function accessDb(db: PoolClient, req: Request, permission: string) {
     `SELECT u.id,u.name,u.email,u.tenant_id,u.role_id,u.auth_version,u.version,r.is_system,r.name AS role,t.name AS company
     FROM app_users u JOIN roles r ON r.id=u.role_id AND r.tenant_id=u.tenant_id JOIN tenants t ON t.id=u.tenant_id
     WHERE u.identity_id=$1 AND u.active AND t.active AND (u.sync_state='ready' OR u.identity_id NOT LIKE 'pending:%')`,
-    [req.session.subject],
+    [who.subject],
   );
   if (!r.rowCount)
     fail(
@@ -129,7 +164,7 @@ async function accessDb(db: PoolClient, req: Request, permission: string) {
       'ACCOUNT_UNAVAILABLE',
       'Your account is disabled or no longer has workspace access. Contact your administrator.',
     );
-  if (req.session.authVersion !== r.rows[0].auth_version)
+  if (who.authVersion !== r.rows[0].auth_version)
     fail(401, 'SESSION_CHANGED', 'Your account access changed. Please sign in again.');
   const p = await db.query(
     'SELECT permission_code FROM role_permissions WHERE role_id=$1 AND tenant_id=$2',
@@ -142,7 +177,7 @@ async function accessDb(db: PoolClient, req: Request, permission: string) {
       'PERMISSION_DENIED',
       'You do not have permission for this action. Ask your company administrator for access.',
     );
-  return { ...r.rows[0], actor_subject: req.session.subject, platform_access: false, permissions };
+  return { ...r.rows[0], actor_subject: who.subject, platform_access: false, permissions };
 }
 // How many rows a page holds. The screens offer a few sizes to choose from; the range is wider
 // than those because other callers ask for a single row or a whole short list in one request.

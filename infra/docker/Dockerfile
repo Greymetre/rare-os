@@ -30,6 +30,9 @@ FROM alpine:3.23 AS web
 RUN apk upgrade --no-cache && apk add --no-cache nginx
 COPY infra/docker/nginx.conf /etc/nginx/http.d/default.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
+# RCH-8: the field app is NOT here. It is an Expo / React Native app that installs on a phone,
+# so nothing of it ships in these containers — which is also why it is not an npm workspace and
+# why scripts/audit.mjs audits its tree separately. nginx serves the desk app and nothing else.
 USER nginx
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
