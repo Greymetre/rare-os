@@ -1,7 +1,8 @@
-# Current handoff — 25 November 2026 (RCH-8, the field app, Claude Code)
+# Current handoff — 26 November 2026 (RCH-8, the field app, Claude Code)
 
 RCH-6 and RCH-7 went live on 24 November as `bcfd67d` with 35 migrations. This change adds
-**RCH-8, the field app**, with migration 036. **Nothing is pushed.**
+**RCH-8, the field app**, with migration 036. It is **live**: pushed as `aee728e`, corrected by
+`419e86c`, and deployed to the VPS by CI run #32 on 26 November.
 
 RCH-8 was the last milestone in the plan. With it, Reach RCH-0 to RCH-8 is complete.
 
@@ -149,9 +150,26 @@ it is its own piece of work. An internal APK is the other route.
 - `scripts/audit.mjs` — proved the new section can fail, by removing the field app's lockfile
   (exit 1) and by resolving a known-vulnerable package into a scratch tree (5 advisories found
   through the new `cwd` path).
-- Full regression: **not yet run against this build.** `tests/reach-device.spec.ts` is new and is
-  being iterated on in a disposable stack with `npm run test:regression -- --grep "RCH-8 the
-field app"`.
+- Full regression: **green on CI run #32** — every step, including the browser suite and
+  `tests/reach-device.spec.ts`, in 33m 29s. It was not re-run on this machine for the final
+  commit, because Docker Desktop was down here; CI is what proves it.
+
+### The one thing that was green locally and red on CI
+
+Run #31 failed with a hundred lines of `TS17004: Cannot use JSX unless the --jsx flag is
+provided`, whose real cause was one line further up: `TS6053: File 'expo/tsconfig.base' not
+found`. CI installed only the root tree, and **the field app is not a workspace**, so its own
+tree was never installed.
+
+Locally it passed because `scripts/regression.mjs` runs its first step with `cwd = root` — the
+real working tree, where the field app had been installed by hand. A green regression here says
+nothing about CI unless both install that tree. `ci.yml` now has its own
+`npm --prefix apps/mobile ci`, `regression.mjs` fails with that sentence if the tree is missing,
+and `tests/security-baseline.test.mjs` goes red if either guard is removed.
+
+Simulating `npm ci` then found a second fault: `react-dom` floated to 19.3.1, whose peer is
+`react ^19.3.1`, while SDK 58 pins `react 19.3.0`. `npm install` only warns; `npm ci` refuses.
+`react-dom` is pinned to `19.3.0`.
 
 ## What the client has to be told
 
