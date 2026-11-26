@@ -796,6 +796,26 @@ test('RCH-8 lets a phone in on its own token, and never twice on the same work',
   // Losing a row here loses a real order, so a pass is written in one transaction.
   assert.match(store, /withExclusiveTransactionAsync/);
 
+  // CI has to install the field app's tree by its own line, because the root `npm ci` does not
+  // reach a package that is not a workspace. Without it the typecheck cannot resolve
+  // `expo/tsconfig.base` and every file fails with "Cannot use JSX" — which is exactly what
+  // happened on the first push, where a local run was green because the tree was already
+  // installed on the machine. A green run on a developer's machine means nothing about CI
+  // unless both install it.
+  const workflow = read('.github/workflows/ci.yml');
+  assert.match(
+    workflow,
+    /npm --prefix apps\/mobile ci/,
+    'CI does not install the field app, so its typecheck cannot read its own tsconfig',
+  );
+  // And the scanner must skip its node_modules the way it skips the root's, or it reads 500
+  // installed packages instead of the lockfile that describes them.
+  assert.match(workflow, /--skip-dirs \/workspace\/apps\/mobile\/node_modules/);
+  // The regression's first step runs against the real working tree, not the frozen copy, so it
+  // needs that tree to exist and says so in one sentence rather than a hundred.
+  const regression = read('scripts/regression.mjs');
+  assert.match(regression, /npm run mobile:install/);
+
   // The app talks to one server, named at build time, and never carries a client secret.
   const config = code('apps/mobile/src/config.ts');
   assert.doesNotMatch(config, /secret|password|client_secret/i);

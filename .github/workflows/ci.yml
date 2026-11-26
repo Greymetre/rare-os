@@ -16,6 +16,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # RCH-8: the field app is deliberately not an npm workspace — `expo` declares its own CLI
+      # and bundler as ordinary dependencies, and inside the workspaces those would count as
+      # production dependencies of the API image, which they are not. The cost of that is this
+      # line: the root install does not reach it, and without its own tree its tsconfig cannot
+      # resolve `expo/tsconfig.base`, so every file fails with "Cannot use JSX". It is also what
+      # `scripts/audit.mjs` audits as its third tree.
+      - run: npm --prefix apps/mobile ci
       # Trivy reads what ships: the production dependency tree, the Dockerfiles and any secret
       # that reached the source. Build-time dependencies are deliberately not scanned here,
       # because two gates reasoning about them separately means one of them has to be silenced
@@ -35,6 +42,7 @@ jobs:
           --exit-code 1
           --skip-dirs /workspace/.git
           --skip-dirs /workspace/node_modules
+          --skip-dirs /workspace/apps/mobile/node_modules
           --skip-dirs /workspace/.local
           /workspace
       - name: Built application image vulnerability scan

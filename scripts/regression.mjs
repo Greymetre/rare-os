@@ -129,6 +129,21 @@ try {
         !basename(path).startsWith('.env'),
     });
   symlinkSync(join(root, 'node_modules'), join(workspace, 'node_modules'), 'dir');
+  // RCH-8: the first step below runs `verify:quick` against the **real** working tree, not this
+  // frozen copy, and that step typechecks the field app. The field app is deliberately not an
+  // npm workspace, so the root `npm install` does not reach it — and without its own tree its
+  // tsconfig cannot resolve `expo/tsconfig.base`, which produces a hundred lines of "Cannot use
+  // JSX unless the --jsx flag is provided" from code that is perfectly fine.
+  //
+  // Said here, in one sentence, before any of that. This is also exactly the difference between
+  // a developer's machine and CI, where the tree is installed by its own line in ci.yml: a green
+  // run here means nothing about CI unless both install it.
+  if (!existsSync(join(root, 'apps/mobile/node_modules')))
+    throw Error(
+      'The field app has no node_modules, so `npm run typecheck` cannot read its tsconfig. ' +
+        'Run `npm run mobile:install` first: apps/mobile is not an npm workspace, so the root ' +
+        'install does not reach it.',
+    );
   const ports = new Set();
   while (ports.size < 3) {
     const port = await freePort();
